@@ -96,11 +96,21 @@ async function main() {
 
     // Initialize Telegram handler
     const botToken = process.env.TELEGRAM_BOT_TOKEN;
+    const headlessEnv = process.env.HEADLESS;
+    const headlessOption = headlessEnv === undefined
+      ? 'new'
+      : headlessEnv.toLowerCase() === 'false'
+        ? false
+        : headlessEnv.toLowerCase() === 'true'
+          ? true
+          : headlessEnv;
+
     const handlerOptions = {
       timeoutMs: parseInt(process.env.TIMEOUT_MS, 10) || 60000,
       proxy: process.env.PROXY_SERVER || null,
       screenshotOn: process.env.SCREENSHOT_ON === 'true',
       targetUrl: process.env.TARGET_LOGIN_URL,
+      headless: headlessOption,
     };
 
     console.log('');
@@ -109,6 +119,7 @@ async function main() {
     console.log(`   Target URL:    ${handlerOptions.targetUrl.substring(0, 60)}...`);
     console.log(`   Timeout:       ${handlerOptions.timeoutMs}ms`);
     console.log(`   Screenshots:   ${handlerOptions.screenshotOn ? 'Enabled' : 'Disabled'}`);
+    console.log(`   Headless:      ${handlerOptions.headless}`);
     if (handlerOptions.proxy) {
       console.log(`   Proxy:         ${handlerOptions.proxy}`);
     }

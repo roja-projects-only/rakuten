@@ -1,5 +1,6 @@
 const { Telegraf, Markup } = require('telegraf');
 const { checkCredentials } = require('./puppeteerChecker');
+const fs = require('fs').promises;
 
 /**
  * Validates and parses the credential string format "user:pass".
@@ -104,44 +105,59 @@ function guardInput(credentialString) {
  * @param {string} [username] - Username being checked (masked)
  * @returns {string} Formatted message for Telegram
  */
-function formatResultMessage(result, username = null) {
-  const statusEmoji = {
-    VALID: '✅',
-    INVALID: '❌',
-    BLOCKED: '🔒',
-    ERROR: '⚠️',
-  };
+function escapeV2(text) {
+  if (!text) return '';
+  return text.replace(/([_\*\[\]\(\)~`>#+\-=|{}.!])/g, '\\$1');
+}
 
-  const statusText = {
-    VALID: '*VALID CREDENTIALS*',
-    INVALID: '*INVALID CREDENTIALS*',
-    BLOCKED: '*ACCOUNT BLOCKED*',
-    ERROR: '*ERROR OCCURRED*',
+function codeV2(text) {
+  return '`' + escapeV2(text) + '`';
+}
+
+function boldV2(text) {
+  return '*' + escapeV2(text) + '*';
+}
+
+function formatResultMessage(result, username = null, durationMs = null) {
+  const statusEmoji = { VALID: '✅', INVALID: '❌', BLOCKED: '🔒', ERROR: '⚠️' };
+  const statusLabel = {
+    VALID: 'VALID CREDENTIALS',
+    INVALID: 'INVALID CREDENTIALS',
+    BLOCKED: 'ACCOUNT BLOCKED',
+    ERROR: 'ERROR OCCURRED',
   };
 
   const emoji = statusEmoji[result.status] || '❓';
-  const status = statusText[result.status] || `*${result.status}*`;
-  
-  let message = `${emoji} ${status}\n\n`;
-  
+  const status = boldV2(statusLabel[result.status] || result.status || 'STATUS');
+
+  const parts = [];
+  parts.push(`${emoji} ${status}`);
+
   if (username) {
-    const maskedUser = username.length > 3 
-      ? username.substring(0, 3) + '***' + username.substring(username.length - 2)
+    const maskedUser = username.length > 3
+      ? `${username.substring(0, 3)}***${username.substring(username.length - 2)}`
       : '***';
-    message += `👤 Account: \`${maskedUser}\`\n\n`;
+    parts.push(`${boldV2('👤 Account')}: ${codeV2(maskedUser)}`);
   }
-  
-  message += `📝 ${result.message}`;
-  
+
+  if (durationMs != null) {
+    const seconds = durationMs / 1000;
+    const pretty = seconds >= 10 ? seconds.toFixed(1) : seconds.toFixed(2);
+    parts.push(`${boldV2('🕒 Time')}: ${codeV2(`${pretty}s`)}`);
+  }
+
+  parts.push(`${boldV2('📝 Result')}: ${escapeV2(result.message || '')}`);
+
   if (result.url) {
-    message += `\n\n🔗 Final URL: \`${result.url.substring(0, 60)}...\``;
+    const shortUrl = result.url.length > 60 ? `${result.url.substring(0, 60)}...` : result.url;
+    parts.push(`${boldV2('🔗 Final URL')}: ${codeV2(shortUrl)}`);
   }
-  
+
   if (result.screenshot) {
-    message += '\n\n📸 Screenshot attached';
+    parts.push(boldV2('📸 Screenshot attached'));
   }
-  
-  return message;
+
+  return parts.join('\n');
 }
 
 /**
@@ -195,6 +211,7 @@ function initializeTelegramHandler(botToken, options = {}) {
   bot.hears(/^\.chk\s+(.+)/, async (ctx) => {
     const chatId = ctx.chat.id;
     const credentialString = ctx.match[1].trim();
+    const startedAt = Date.now();
 
     // Guard input
     const guard = guardInput(credentialString);
@@ -213,20 +230,19 @@ function initializeTelegramHandler(botToken, options = {}) {
     }
 
     // Send processing message (will be edited later)
-    const statusMsg = await ctx.replyWithMarkdown(
-      '⏳ *CHECKING CREDENTIALS*\n\n🔄 Launching browser...'
-    );
+    const statusMsg = await ctx.replyWithMarkdown('⏳ Checking credentials...');
+
+    const updateStatus = async (text) => {
+      try {
+        await ctx.telegram.editMessageText(chatId, statusMsg.message_id, null, text, {
+          parse_mode: 'MarkdownV2',
+        });
+      } catch (err) {
+        console.warn('Status edit failed:', err.message);
+      }
+    };
 
     try {
-      // Update status: navigating
-      await ctx.telegram.editMessageText(
-        chatId,
-        statusMsg.message_id,
-        null,
-        '⏳ *CHECKING CREDENTIALS*\n\n🌐 Navigating to login page...',
-        { parse_mode: 'Markdown' }
-      );
-
       // Check credentials
       const result = await checkCredentials(
         creds.username,
@@ -236,20 +252,27 @@ function initializeTelegramHandler(botToken, options = {}) {
           proxy: options.proxy,
           screenshotOn: options.screenshotOn || false,
           targetUrl: options.targetUrl || process.env.TARGET_LOGIN_URL,
+          headless: options.headless,
+          onProgress: async (phase) => {
+            const phaseText = {
+              launch: '⏳ Launching browser...',
+              navigate: '🌐 Navigating to login page...',
+              email: '✉️ Submitting email...',
+              password: '🔑 Submitting password...',
+              analyze: '🔍 Analyzing result...',
+            };
+            const text = phaseText[phase] || '⏳ Working...';
+            await updateStatus(escapeV2(text));
+          },
         }
       );
 
       // Format result message with masked username
-      const resultMessage = formatResultMessage(result, creds.username);
+      const durationMs = Date.now() - startedAt;
+      const resultMessage = formatResultMessage(result, creds.username, durationMs);
       
       // Edit message with final result
-      await ctx.telegram.editMessageText(
-        chatId,
-        statusMsg.message_id,
-        null,
-        resultMessage,
-        { parse_mode: 'Markdown' }
-      );
+      await updateStatus(resultMessage);
 
       // Send screenshot if available
       if (result.screenshot) {
@@ -263,6 +286,8 @@ function initializeTelegramHandler(botToken, options = {}) {
           );
         } catch (err) {
           console.error('Failed to send screenshot:', err.message);
+        } finally {
+          await fs.unlink(result.screenshot).catch(() => {});
         }
       }
 
@@ -294,12 +319,13 @@ function initializeTelegramHandler(botToken, options = {}) {
           chatId,
           statusMsg.message_id,
           null,
-          `⚠️ *ERROR OCCURRED*\n\n❌ ${err.message}\n\n_Try again or contact support_`,
-          { parse_mode: 'Markdown' }
+          `⚠️ *ERROR OCCURRED*\n\n❌ ${escapeV2(err.message)}\n\n_Try again or contact support_`,
+          { parse_mode: 'MarkdownV2' }
         );
       } catch (editErr) {
-        await ctx.replyWithMarkdown(
-          `⚠️ *ERROR OCCURRED*\n\n❌ ${err.message}\n\n_Try again or contact support_`
+        await ctx.reply(
+          `⚠️ *ERROR OCCURRED*\n\n❌ ${escapeV2(err.message)}\n\n_Try again or contact support_`,
+          { parse_mode: 'MarkdownV2' }
         );
       }
     }

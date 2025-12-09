@@ -18,6 +18,8 @@ async function checkCredentials(email, password, options = {}) {
     timeoutMs = 60000,
     proxy = null,
     screenshotOn = false,
+    headless = process.env.HEADLESS,
+    onProgress = null,
   } = options;
 
   if (!targetUrl) {
@@ -30,19 +32,24 @@ async function checkCredentials(email, password, options = {}) {
 
   try {
     console.log('🌐 Launching headless browser...');
-    session = await createBrowserSession({ proxy });
+    onProgress && (await onProgress('launch'));
+    session = await createBrowserSession({ proxy, headless });
     page = session.page;
 
     console.log('📍 Navigating to Rakuten login page...');
+    onProgress && (await onProgress('navigate'));
     await navigateToLogin(page, targetUrl, timeoutMs);
 
     console.log('📧 Submitting email/username step...');
+    onProgress && (await onProgress('email'));
     await submitEmailStep(page, email, timeoutMs);
 
     console.log('🔑 Submitting password step...');
+    onProgress && (await onProgress('password'));
     const loginResponse = await submitPasswordStep(page, password, timeoutMs);
 
     console.log('🔍 Analyzing login result...');
+    onProgress && (await onProgress('analyze'));
     const outcome = await detectOutcome(page, loginResponse);
 
     if (screenshotOn || outcome.status !== 'VALID') {

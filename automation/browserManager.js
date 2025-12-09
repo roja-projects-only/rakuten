@@ -3,7 +3,7 @@ const UserAgent = require('user-agents');
 
 const DEFAULT_VIEWPORT = { width: 1920, height: 1080 };
 
-function buildLaunchOptions(proxy) {
+function buildLaunchOptions(proxy, headless) {
   const args = [
     '--no-sandbox',
     '--disable-setuid-sandbox',
@@ -16,15 +16,21 @@ function buildLaunchOptions(proxy) {
   }
 
   return {
-    headless: 'new',
+    headless: headless ?? 'new',
     args,
   };
 }
 
-async function createBrowserSession({ proxy } = {}) {
-  const launchOptions = buildLaunchOptions(proxy);
+async function createBrowserSession({ proxy, headless } = {}) {
+  const launchOptions = buildLaunchOptions(proxy, headless);
   const browser = await puppeteer.launch(launchOptions);
-  const context = await browser.createIncognitoBrowserContext();
+  // Puppeteer v24+ uses createBrowserContext for incognito; fall back for older versions.
+  const contextFactory = browser.createBrowserContext || browser.createIncognitoBrowserContext;
+  if (!contextFactory) {
+    throw new Error('No browser context factory available on Puppeteer browser instance');
+  }
+
+  const context = await contextFactory.call(browser);
   const page = await context.newPage();
 
   await page.setViewport(DEFAULT_VIEWPORT);
