@@ -1,0 +1,22 @@
+{
+  "name": "rakuten-telegram-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot for validating Rakuten credentials via Puppeteer",
+  "main": "main.js",
+  "scripts": {
+    "start": "node main.js",
+    "dev": "node main.js"
+  },
+  "keywords": [
+    "telegram",
+    "puppeteer",
+    "credential-checker"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "telegraf": "^4.16.3",
+    "puppeteer": "^24.0.0"
+  }
+}
