@@ -42,24 +42,33 @@ function guardInput(credentialString) {
     return { valid: false, error: 'Credential string is required.' };
   }
 
-  if (credentialString.length > 200) {
+  const sanitizedInput = credentialString.trim();
+
+  if (sanitizedInput.length > 200) {
     return { valid: false, error: 'Credential string too long (max 200 characters).' };
   }
 
-  if (credentialString.length < 5) {
+  if (sanitizedInput.length < 5) {
     return { valid: false, error: 'Credential string too short.' };
   }
 
-  if (!credentialString.includes(':')) {
+  if (!sanitizedInput.includes('@')) {
+    return {
+      valid: false,
+      error: 'Email must include "@" symbol. Format: `.chk email@example.com:password`',
+    };
+  }
+
+  if (!sanitizedInput.includes(':')) {
     return { valid: false, error: 'Format must be: `.chk email:password`' };
   }
 
-  const parts = credentialString.split(':');
+  const parts = sanitizedInput.split(':');
   if (parts.length !== 2) {
     return { valid: false, error: 'Multiple colons detected. Use format: `email:password`' };
   }
 
-  const creds = parseCredentials(credentialString);
+  const creds = parseCredentials(sanitizedInput);
   if (!creds) {
     return { valid: false, error: 'Invalid format. Use: `.chk email:password`' };
   }
