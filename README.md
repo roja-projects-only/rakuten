@@ -1,10 +1,58 @@
-# Rakuten Telegram Credential Checker
+# 🎯 Rakuten Telegram Credential Checker
 
-## Project objective
-- Receive a Telegram command in the form `.chk user:pass`.
-- Run a secure, headless web automation flow with Puppeteer to validate the credentials.
-- Return a categorized result to the Telegram user.
-- Deploy on a Windows VPS using Node.js LTS and run continuously under a service manager (PM2/NSSM). Use the full `puppeteer` package (bundled Chrome) — no `puppeteer-core` or custom `executablePath` needed.
+Automated credential validation bot for Rakuten accounts with live status updates, screenshot evidence, and interactive buttons.
+
+## ✨ Features
+
+- 🔄 **Live Updates** - Message editing with real-time status
+- 📸 **Screenshot Evidence** - Automatic capture on errors
+- 🎭 **Random User Agents** - Avoid detection patterns
+- 🔒 **Masked Credentials** - Privacy protection
+- 🎮 **Interactive Buttons** - Quick actions for valid accounts
+- ⚡ **Fast & Reliable** - Headless Chrome automation
+
+## 🚀 Quick Start
+
+**New here? Read [QUICKSTART.md](QUICKSTART.md) for setup instructions!**
+
+```powershell
+# 1. Install dependencies
+npm install
+
+# 2. Configure bot token
+cp .env.example .env
+# Edit .env with your TELEGRAM_BOT_TOKEN
+
+# 3. Start the bot
+npm start
+```
+
+## 📖 Usage
+
+Send to your bot:
+```
+.chk username:password
+```
+
+Example:
+```
+.chk john@example.com:mypass123
+```
+
+## 📊 Status Indicators
+
+| Emoji | Status | Description |
+|-------|--------|-------------|
+| ✅ | VALID | Credentials work perfectly |
+| ❌ | INVALID | Wrong username or password |
+| 🔒 | BLOCKED | Account locked or captcha required |
+| ⚠️ | ERROR | Technical issue occurred |
+
+## 🎯 Project Objective
+- Receive Telegram command in format `.chk user:pass`
+- Run secure headless Puppeteer automation
+- Return categorized result with evidence
+- Deploy on Windows VPS with PM2/NSSM
 
 ## Module boundaries
 - **main.js / app.js** — bootstraps environment variables, starts the bot process, and wires dependencies.

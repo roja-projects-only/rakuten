@@ -182,6 +182,7 @@
  */
 
 const puppeteer = require('puppeteer');
+const UserAgent = require('user-agents');
 const fs = require('fs').promises;
 const path = require('path');
 
@@ -237,11 +238,16 @@ async function checkCredentials(email, password, options = {}) {
     // ---------------------------------
     // Ensures no cookie bleed between checks
     console.log('🔒 Creating incognito context...');
-    const context = await browser.createIncognitoBrowserContext();
+    const context = await browser.createBrowserContext();
     const page = await context.newPage();
 
     // Set viewport to standard desktop resolution
     await page.setViewport({ width: 1920, height: 1080 });
+
+    // Set random user agent to avoid detection
+    const userAgent = new UserAgent();
+    await page.setUserAgent(userAgent.toString());
+    console.log(`🎭 Using User-Agent: ${userAgent.data.userAgent}`);
 
     // STEP 3: Navigate to Login Page
     // -------------------------------

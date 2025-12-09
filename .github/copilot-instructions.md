@@ -1,6 +1,6 @@
 - Default shell is PowerShell so use syntax compatible with it.
 - Never create documentation unless instructed.
-- Modolularize code into small functions.
+- Modularize code into small functions.
 - Always feature-proof this code for future integrations.
 
 # Rakuten Telegram Credential Checker - AI Agent Instructions
@@ -11,20 +11,34 @@ This is a **Telegram bot + Puppeteer automation** system with three core modules
 
 1. **main.js** - Bootstrap layer: validates env vars, wires dependencies, handles SIGINT/SIGTERM gracefully
 2. **telegramHandler.js** - Command interface: listens for `.chk user:pass`, validates input (max 200 chars, requires `:` separator), formats responses with status emojis
-3. **puppeteerChecker.js** - Automation engine: launches headless Chrome with incognito context, navigates to `TARGET_LOGIN_URL`, fills credentials with human-like delays (50ms typing, 300ms between fields), detects outcomes via HTML content matching
+3. **puppeteerChecker.js** - Automation engine: launches headless Chrome with incognito context, automates Rakuten's two-step login flow, detects outcomes via network response interception
 
-**Data flow**: Telegram message → parse/guard → `checkCredentials()` → Puppeteer automation → outcome detection → formatted response + optional screenshot
+**Data flow**: Telegram message → parse/guard → `checkCredentials(email, password, options)` → Puppeteer automation → response interception → outcome detection → formatted response + optional screenshot
+
+### Rakuten-Specific Two-Step Login Flow
+The automation handles Rakuten's OAuth login at `login.account.rakuten.com`:
+1. **Step 1**: Submit email/username → POST to `/v2/login/start` → navigate to password screen
+2. **Step 2**: Submit password → POST to `/v2/login/complete` → intercept response
+   - **200 status + redirect to `www.rakuten.co.jp?code=...`** = VALID credentials
+   - **401 status + `{"errorCode": "INVALID_AUTHORIZATION"}`** = INVALID credentials
+   - **Captcha/challenge content** = BLOCKED status
+
+**Critical**: Outcome detection uses **response interception** (listening to `/v2/login/complete` endpoint), not HTML content parsing. This is more reliable than DOM inspection.
 
 ## Critical Patterns
 
 ### Status Classification System
-The `detectOutcome()` function in puppeteerChecker.js uses **content-based detection**:
-- `BLOCKED`: captcha/recaptcha/challenge indicators in HTML
-- `INVALID`: "invalid"/"incorrect"/"wrong password" text in page content
-- `VALID`: "dashboard"/"welcome" in content OR URL redirect away from login page
-- `ERROR`: exceptions, timeouts, navigation failures
+The `detectOutcome(page, response)` function uses **network response analysis + content fallback**:
 
-When adding new detection logic, always check **both** `page.url()` and `page.content()`.
+**Priority Order** (check in this sequence):
+1. **Response status 200** → check for redirect to `www.rakuten.co.jp` with `code=` parameter → `VALID`
+2. **Response status 401** → parse JSON body for `errorCode` → `INVALID`
+3. **Page content scanning** → search for captcha/challenge indicators → `BLOCKED`
+4. **Page content scanning** → search for error text (incorrect/invalid) → `INVALID`
+5. **URL pattern** → check if already at `www.rakuten.co.jp?code=` → `VALID`
+6. **Fallback** → unable to determine → `ERROR`
+
+**Key Implementation Detail**: The `page.on('response')` listener captures `/v2/login/complete` responses before DOM updates, making detection fast and reliable. Always preserve this listener pattern when modifying login flows.
 
 ### Windows-Specific Puppeteer Configuration
 Always use these launch args (see `buildLaunchOptions()`):
@@ -82,9 +96,18 @@ This project targets Windows VPS deployment with NSSM or PM2 (see DEPLOYMENT.md)
 
 ### Module Exports
 Each module exports a **focused public API**:
-- `puppeteerChecker.js`: only `checkCredentials()` function
-- `telegramHandler.js`: `initializeTelegramHandler()` plus helper utilities for testing
+- `puppeteerChecker.js`: only `checkCredentials(email, password, options)` function (note: positional args, not object)
+- `telegramHandler.js`: `initializeTelegramHandler(botToken, options)` plus helper utilities (`parseCredentials`, `guardInput`, `formatResultMessage`) for testing
 - `main.js`: no exports (entry point only)
+
+**API Signature Warning**: `checkCredentials` uses positional parameters, not destructured object:
+```javascript
+// Correct
+await checkCredentials(email, password, { timeoutMs, proxy, screenshotOn, targetUrl });
+
+// Wrong
+await checkCredentials({ username, password, options });
+```
 
 ### Error Handling Strategy
 Puppeteer operations use **try/finally with always-close**:
@@ -112,8 +135,19 @@ Telegram handlers are async but don't await user responses - each `.chk` command
 
 ## Integration Points
 
-- **Telegram Bot API**: Uses `node-telegram-bot-api` with polling mode (not webhooks)
+- **Telegram Bot API**: Uses `node-telegram-bot-api` with polling mode (not webhooks). **Note**: package.json lists `telegraf` but code actually uses `node-telegram-bot-api`.
 - **Puppeteer**: Full `puppeteer` package (bundled Chrome) - no `puppeteer-core` or custom `executablePath`
 - **File System**: Screenshots written to `screenshots/` directory relative to `process.cwd()`
 
 When adding new external dependencies, consider Windows compatibility and VPS deployment constraints.
+
+## Package Dependencies Issue
+**Critical**: There's a mismatch between package.json and implementation:
+- `package.json` declares: `"telegraf": "^4.16.3"`
+- Code actually uses: `node-telegram-bot-api`
+
+To fix this mismatch:
+```powershell
+npm uninstall telegraf
+npm install node-telegram-bot-api --save
+```
