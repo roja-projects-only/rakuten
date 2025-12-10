@@ -175,6 +175,84 @@ function formatResultMessage(result, username = null, durationMs = null) {
   return parts.join('\n');
 }
 
+// Async batch executor scheduled off the callback to avoid Telegraf 90s timeout.
+async function runBatchExecution(ctx, batch, msgId, statusMsg, options, key) {
+  const chatId = ctx.chat.id;
+  const counts = { VALID: 0, INVALID: 0, BLOCKED: 0, ERROR: 0 };
+  let processed = 0;
+
+  try {
+    for (const cred of batch.creds) {
+      let result;
+      try {
+        result = await checkCredentials(cred.username, cred.password, {
+          timeoutMs: options.timeoutMs || 60000,
+          proxy: options.proxy,
+          screenshotOn: false,
+          targetUrl: options.targetUrl || process.env.TARGET_LOGIN_URL,
+          headless: options.headless,
+        });
+      } catch (err) {
+        result = { status: 'ERROR', message: err.message };
+      }
+
+      counts[result.status] = (counts[result.status] || 0) + 1;
+      processed += 1;
+
+      if (processed === 1 || processed === batch.count || processed % 5 === 0) {
+        const text =
+          `${escapeV2('⏳ Batch progress')}` +
+          `\nFile: ${escapeV2(batch.filename)}` +
+          `\nProcessed: *${processed}/${batch.count}*` +
+          `\n✅ VALID: *${counts.VALID || 0}*` +
+          `\n❌ INVALID: *${counts.INVALID || 0}*` +
+          `\n🔒 BLOCKED: *${counts.BLOCKED || 0}*` +
+          `\n⚠️ ERROR: *${counts.ERROR || 0}*`;
+
+        try {
+          await ctx.telegram.editMessageText(chatId, statusMsg.message_id, undefined, text, {
+            parse_mode: 'MarkdownV2',
+          });
+        } catch (err) {
+          // ignore edit failures
+        }
+      }
+    }
+
+    const summary =
+      `${escapeV2('📊 Batch complete')}` +
+      `\nFile: ${escapeV2(batch.filename)}` +
+      `\nTotal: *${batch.count}*` +
+      `\n✅ VALID: *${counts.VALID || 0}*` +
+      `\n❌ INVALID: *${counts.INVALID || 0}*` +
+      `\n🔒 BLOCKED: *${counts.BLOCKED || 0}*` +
+      `\n⚠️ ERROR: *${counts.ERROR || 0}*`;
+
+    try {
+      await ctx.telegram.editMessageText(chatId, statusMsg.message_id, undefined, summary, {
+        parse_mode: 'MarkdownV2',
+      });
+    } catch (err) {
+      await ctx.reply(summary, {
+        parse_mode: 'MarkdownV2',
+        reply_to_message_id: Number(msgId),
+      });
+    }
+  } catch (err) {
+    console.error('Batch execution error:', err.message);
+    try {
+      await ctx.replyWithMarkdown(
+        `⚠️ Batch failed: ${escapeV2(err.message)}`,
+        { reply_to_message_id: Number(msgId) }
+      );
+    } catch (_) {
+      // swallow
+    }
+  } finally {
+    pendingBatches.delete(key);
+  }
+}
+
 /**
  * Initializes and sets up the Telegram handler.
  * @param {string} botToken - Telegram bot token
@@ -531,73 +609,15 @@ function initializeTelegramHandler(botToken, options = {}) {
         return;
       }
 
-      const chatId = ctx.chat.id;
       const statusMsg = await ctx.replyWithMarkdown(
         `⏳ Starting batch check for *${escapeV2(batch.filename)}*\nEntries: *${batch.count}*`,
         { reply_to_message_id: Number(msgId) }
       );
 
-      const counts = { VALID: 0, INVALID: 0, BLOCKED: 0, ERROR: 0 };
-      let processed = 0;
-
-      for (const cred of batch.creds) {
-        let result;
-        try {
-          result = await checkCredentials(cred.username, cred.password, {
-            timeoutMs: options.timeoutMs || 60000,
-            proxy: options.proxy,
-            screenshotOn: false,
-            targetUrl: options.targetUrl || process.env.TARGET_LOGIN_URL,
-            headless: options.headless,
-          });
-        } catch (err) {
-          result = { status: 'ERROR', message: err.message };
-        }
-
-        counts[result.status] = (counts[result.status] || 0) + 1;
-        processed += 1;
-
-        if (processed === 1 || processed === batch.count || processed % 5 === 0) {
-          const text =
-            `${escapeV2('⏳ Batch progress')}` +
-            `\nFile: ${escapeV2(batch.filename)}` +
-            `\nProcessed: *${processed}/${batch.count}*` +
-            `\n✅ VALID: *${counts.VALID || 0}*` +
-            `\n❌ INVALID: *${counts.INVALID || 0}*` +
-            `\n🔒 BLOCKED: *${counts.BLOCKED || 0}*` +
-            `\n⚠️ ERROR: *${counts.ERROR || 0}*`;
-
-          try {
-            await ctx.telegram.editMessageText(chatId, statusMsg.message_id, undefined, text, {
-              parse_mode: 'MarkdownV2',
-            });
-          } catch (err) {
-            // ignore edit failures
-          }
-        }
-      }
-
-      const summary =
-        `${escapeV2('📊 Batch complete')}` +
-        `\nFile: ${escapeV2(batch.filename)}` +
-        `\nTotal: *${batch.count}*` +
-        `\n✅ VALID: *${counts.VALID || 0}*` +
-        `\n❌ INVALID: *${counts.INVALID || 0}*` +
-        `\n🔒 BLOCKED: *${counts.BLOCKED || 0}*` +
-        `\n⚠️ ERROR: *${counts.ERROR || 0}*`;
-
-      try {
-        await ctx.telegram.editMessageText(chatId, statusMsg.message_id, undefined, summary, {
-          parse_mode: 'MarkdownV2',
-        });
-      } catch (err) {
-        await ctx.reply(summary, {
-          parse_mode: 'MarkdownV2',
-          reply_to_message_id: Number(msgId),
-        });
-      }
-
-      pendingBatches.delete(key);
+      // Run batch asynchronously to avoid Telegraf 90s per-update timeout.
+      setTimeout(() => {
+        runBatchExecution(ctx, batch, msgId, statusMsg, options, key);
+      }, 0);
     } catch (err) {
       console.error('Batch handler error:', err.message);
       await ctx.replyWithMarkdown(
