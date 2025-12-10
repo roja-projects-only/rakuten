@@ -20,6 +20,7 @@ async function checkCredentials(email, password, options = {}) {
     screenshotOn = false,
     headless = process.env.HEADLESS,
     onProgress = null,
+    deferCloseOnValid = false,
   } = options;
 
   if (!targetUrl) {
@@ -29,6 +30,7 @@ async function checkCredentials(email, password, options = {}) {
   let session = null;
   let page = null;
   let screenshotPath = null;
+  let preserveSession = false;
 
   try {
     console.log('🌐 Launching headless browser...');
@@ -52,14 +54,18 @@ async function checkCredentials(email, password, options = {}) {
     onProgress && (await onProgress('analyze'));
     const outcome = await detectOutcome(page, loginResponse);
 
-    if (screenshotOn || outcome.status !== 'VALID') {
+    if (screenshotOn) {
       screenshotPath = await captureScreenshot(page, outcome.status);
       if (screenshotPath) {
         outcome.screenshot = screenshotPath;
       }
     }
 
-    return outcome;
+    preserveSession = deferCloseOnValid && outcome.status === 'VALID';
+    return {
+      ...outcome,
+      session: preserveSession ? session : undefined,
+    };
   } catch (error) {
     console.error('❌ Error during credential check:', error.message);
 
@@ -77,7 +83,9 @@ async function checkCredentials(email, password, options = {}) {
       screenshot: screenshotPath,
     };
   } finally {
-    await closeBrowserSession(session);
+    if (!preserveSession) {
+      await closeBrowserSession(session);
+    }
   }
 }
 

