@@ -12,6 +12,28 @@ const ALLOWED_DOMAINS = [
   'msn.co.jp',
 ];
 
+function parseColonCredential(line) {
+  if (!line || typeof line !== 'string') return null;
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.startsWith('#')) return null;
+
+  const parts = trimmed.split(':');
+  if (parts.length !== 2) return null;
+
+  const user = parts[0].trim();
+  const pass = parts[1].trim();
+  if (!user || !pass || !user.includes('@')) return null;
+
+  return { user, pass };
+}
+
+function isAllowedHotmailUser(user) {
+  const domain = user.split('@')[1];
+  if (!domain) return false;
+  const lower = domain.toLowerCase();
+  return ALLOWED_DOMAINS.some((d) => lower.endsWith(d));
+}
+
 function downloadFileToBuffer(url, maxBytes = MAX_BYTES_HOTMAIL) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -45,16 +67,10 @@ function parseCredentialsFromBuffer(buffer) {
   const lines = text.split(/\r?\n/);
   const creds = [];
   for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const parts = trimmed.split(':');
-    if (parts.length !== 2) continue;
-    const [user, pass] = parts.map((p) => p.trim());
-    if (!user || !pass) continue;
-    if (!user.includes('@')) continue;
-    const domain = user.split('@')[1].toLowerCase();
-    if (!ALLOWED_DOMAINS.some((d) => domain.endsWith(d))) continue;
-    creds.push({ username: user, password: pass });
+    const parsed = parseColonCredential(line);
+    if (!parsed) continue;
+    if (!isAllowedHotmailUser(parsed.user)) continue;
+    creds.push({ username: parsed.user, password: parsed.pass });
   }
   return creds;
 }
@@ -90,16 +106,12 @@ function parseUlpFromUrl(fileUrl, maxBytes = MAX_BYTES_ULP) {
         rl.on('line', (line) => {
           if (!line || typeof line !== 'string') return;
           if (!line.toLowerCase().includes('rakuten.co.jp')) return;
-          const trimmed = line.trim();
-          const parts = trimmed.split(':');
-          if (parts.length !== 2) return;
-          const user = parts[0].trim();
-          const pass = parts[1].trim();
-          if (!user || !pass || !user.includes('@')) return;
-          const key = `${user}:${pass}`;
+          const parsed = parseColonCredential(line);
+          if (!parsed) return;
+          const key = `${parsed.user}:${parsed.pass}`;
           if (seen.has(key)) return;
           seen.add(key);
-          creds.push({ username: user, password: pass });
+          creds.push({ username: parsed.user, password: parsed.pass });
         });
 
         rl.on('close', () => {

