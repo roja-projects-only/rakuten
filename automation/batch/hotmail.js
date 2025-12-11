@@ -1,18 +1,13 @@
-const https = require('https');
 const { MAX_BYTES_HOTMAIL } = require('./constants');
 const { parseColonCredential, isAllowedHotmailUser } = require('./parse');
+const { getWithRedirect } = require('./http');
 
 function downloadFileToBuffer(url, maxBytes = MAX_BYTES_HOTMAIL) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let total = 0;
-    https
-      .get(url, (res) => {
-        if (res.statusCode !== 200) {
-          reject(new Error(`Download failed with status ${res.statusCode}`));
-          res.resume();
-          return;
-        }
+    getWithRedirect(url)
+      .then((res) => {
         res.on('data', (chunk) => {
           total += chunk.length;
           if (total > maxBytes) {
@@ -22,11 +17,9 @@ function downloadFileToBuffer(url, maxBytes = MAX_BYTES_HOTMAIL) {
           }
           chunks.push(chunk);
         });
-        res.on('end', () => {
-          resolve(Buffer.concat(chunks));
-        });
+        res.on('end', () => resolve(Buffer.concat(chunks)));
       })
-      .on('error', (err) => reject(err));
+      .catch((err) => reject(err));
   });
 }
 

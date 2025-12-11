@@ -1,21 +1,15 @@
-const https = require('https');
 const readline = require('readline');
 const { MAX_BYTES_ULP } = require('./constants');
 const { parseColonCredential } = require('./parse');
+const { getWithRedirect } = require('./http');
 
 function parseUlpFromUrl(fileUrl, maxBytes = MAX_BYTES_ULP) {
   return new Promise((resolve, reject) => {
     const seen = new Set();
     const creds = [];
     let total = 0;
-    https
-      .get(fileUrl, (res) => {
-        if (res.statusCode !== 200) {
-          reject(new Error(`Download failed with status ${res.statusCode}`));
-          res.resume();
-          return;
-        }
-
+    getWithRedirect(fileUrl)
+      .then((res) => {
         res.on('data', (chunk) => {
           total += chunk.length;
           if (total > maxBytes) {
@@ -40,7 +34,7 @@ function parseUlpFromUrl(fileUrl, maxBytes = MAX_BYTES_ULP) {
           resolve({ creds, count: creds.length });
         });
       })
-      .on('error', (err) => reject(err));
+      .catch((err) => reject(err));
   });
 }
 
