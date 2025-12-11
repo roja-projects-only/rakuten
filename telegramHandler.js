@@ -102,7 +102,7 @@ function guardInput(raw) {
  */
 function escapeV2(text) {
   if (!text) return '';
-  return text.replace(/([_\*\[\]\(\)~`>#+\-=|{}.!])/g, '\\$1');
+  return text.replace(/([_\*\[\]\(\)~`>#+\-=|{}])/g, '\\$1');
 }
 
 function codeV2(text) {
