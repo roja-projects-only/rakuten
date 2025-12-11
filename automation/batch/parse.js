@@ -1,15 +1,17 @@
 const { ALLOWED_DOMAINS } = require('./constants');
 
-function parseColonCredential(line) {
+function parseColonCredential(line, { allowPrefix = false } = {}) {
   if (!line || typeof line !== 'string') return null;
   const trimmed = line.trim();
   if (!trimmed || trimmed.startsWith('#')) return null;
 
   const parts = trimmed.split(':');
-  if (parts.length !== 2) return null;
+  if (!allowPrefix && parts.length !== 2) return null;
+  if (allowPrefix && parts.length < 2) return null;
 
-  const user = parts[0].trim();
-  const pass = parts[1].trim();
+  // For allowPrefix, accept formats like url:email:pass and use the last two segments.
+  const user = allowPrefix ? parts[parts.length - 2].trim() : parts[0].trim();
+  const pass = allowPrefix ? parts[parts.length - 1].trim() : parts[1].trim();
   if (!user || !pass || !user.includes('@')) return null;
 
   return { user, pass };
