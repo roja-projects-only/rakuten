@@ -25,6 +25,7 @@ function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, 
   let processed = 0;
   const validCreds = [];
   const startedAt = Date.now();
+  let lastProgressAt = startedAt;
 
   const iterator = batch.creds[Symbol.iterator]();
 
@@ -52,7 +53,14 @@ function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, 
 
     if (batch.aborted) return;
 
-    if (processed === 1 || processed === batch.count || processed % 5 === 0) {
+    const now = Date.now();
+    const shouldUpdate =
+      processed === 1 ||
+      processed === batch.count ||
+      processed % 5 === 0 ||
+      now - lastProgressAt >= 5000;
+
+    if (shouldUpdate) {
       const text =
         `${escapeV2('⏳ Batch progress')}` +
         `\nFile: ${codeSpan(batch.filename)}` +
@@ -69,6 +77,8 @@ function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, 
       } catch (_) {
         console.warn('Batch progress edit failed');
       }
+
+      lastProgressAt = now;
     }
   };
 
