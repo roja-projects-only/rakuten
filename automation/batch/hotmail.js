@@ -27,10 +27,14 @@ function parseHotmailCredentialsFromBuffer(buffer) {
   const text = buffer.toString('utf8');
   const lines = text.split(/\r?\n/);
   const creds = [];
+  const seen = new Set();
   for (const line of lines) {
     const parsed = parseColonCredential(line);
     if (!parsed) continue;
     if (!isAllowedHotmailUser(parsed.user)) continue;
+    const key = `${parsed.user}:${parsed.pass}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
     creds.push({ username: parsed.user, password: parsed.pass });
   }
   return creds;
