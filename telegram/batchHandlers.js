@@ -12,6 +12,12 @@ const TELEGRAM_FILE_LIMIT_BYTES = 50 * 1024 * 1024; // Telegram bot API file lim
 const pendingBatches = new Map();
 const pendingFiles = new Map();
 
+function codeSpan(text) {
+  if (text === undefined || text === null) return '``';
+  const safe = String(text).replace(/`/g, '\\`').replace(/\\/g, '\\\\');
+  return `\`${safe}\``;
+}
+
 function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, checkCredentials) {
   const { escapeV2, formatDurationMs } = helpers;
   const chatId = ctx.chat.id;
@@ -49,7 +55,7 @@ function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, 
     if (processed === 1 || processed === batch.count || processed % 5 === 0) {
       const text =
         `${escapeV2('⏳ Batch progress')}` +
-        `\nFile: ${escapeV2(batch.filename)}` +
+        `\nFile: ${codeSpan(batch.filename)}` +
         `\nProcessed: *${processed}/${batch.count}*` +
         `\n✅ VALID: *${counts.VALID || 0}*` +
         `\n❌ INVALID: *${counts.INVALID || 0}*` +
@@ -84,7 +90,7 @@ function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, 
       const summaryTitle = batch.aborted ? '⏹️ Batch aborted' : '📊 Batch complete';
       const summary =
         `${escapeV2(summaryTitle)}` +
-        `\nFile: ${escapeV2(batch.filename)}` +
+        `\nFile: ${codeSpan(batch.filename)}` +
         `\nTotal: *${batch.count}*` +
         `\n✅ VALID: *${counts.VALID || 0}*` +
         `\n❌ INVALID: *${counts.INVALID || 0}*` +
@@ -168,7 +174,7 @@ function registerBatchHandlers(bot, options, helpers) {
 
     await ctx.replyWithMarkdown(
       '📂 *File received*' +
-      `\n• Name: ${escapeV2(doc.file_name || 'file')}` +
+      `\n• Name: ${codeSpan(doc.file_name || 'file')}` +
       `\n• Size: ${formatBytes(doc.file_size)}` +
       '\n\nProcess as HOTMAIL list?',
       {
@@ -226,7 +232,7 @@ function registerBatchHandlers(bot, options, helpers) {
 
     await ctx.replyWithMarkdown(
       '🗂 *ULP URL parsed*' +
-      `\n• Source: ${escapeV2(url.length > 120 ? `${url.slice(0, 117)}...` : url)}` +
+      `\n• Source: ${codeSpan(url.length > 120 ? `${url.slice(0, 117)}...` : url)}` +
       `\n• Eligible credentials: *${batch.count}*` +
       '\n• Filter: lines containing `rakuten.co.jp` (deduped)' +
       '\n\nProceed to check them?',
@@ -258,7 +264,7 @@ function registerBatchHandlers(bot, options, helpers) {
 
       const statusText =
         `${escapeV2('⏳ Starting batch check')}` +
-        `\nFile: ${escapeV2(batch.filename)}` +
+        `\nFile: ${codeSpan(batch.filename)}` +
         `\nEntries: *${escapeV2(String(batch.count))}*`;
 
       const statusMsg = await ctx.reply(statusText, {
@@ -348,7 +354,7 @@ function registerBatchHandlers(bot, options, helpers) {
     const allowedDomainsText = ALLOWED_DOMAINS.map((d) => `\`${d}\``).join(', ');
     await ctx.replyWithMarkdown(
       '📂 *HOTMAIL list parsed*' +
-      `\n• Name: ${escapeV2(file.filename)}` +
+      `\n• Name: ${codeSpan(file.filename)}` +
       `\n• Size: ${formatBytes(file.size)}` +
       `\n• Eligible credentials: *${batch.count}*` +
       '\n• Allowed domains: ' + allowedDomainsText +
