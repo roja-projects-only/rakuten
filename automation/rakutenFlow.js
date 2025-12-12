@@ -10,6 +10,9 @@ const ADVANCE_BUTTON_SELECTORS = [
 const ADVANCE_TEXT_MATCHES = ['next', 'sign in', 'log in', '次へ', '次に進む', 'ログイン'];
 const CLICK_INTERVAL_MS = 300;
 
+const { createLogger } = require('../logger');
+const log = createLogger('flow');
+
 async function queryXPath(page, xpath) {
   try {
     return await page.evaluateHandle((xp) => {
@@ -22,7 +25,7 @@ async function queryXPath(page, xpath) {
       return nodes[0] || null;
     }, xpath);
   } catch (err) {
-    console.warn(`XPath eval failed (${xpath}):`, err.message);
+    log.warn(`XPath eval failed (${xpath}):`, err.message);
     return null;
   }
 }
@@ -63,7 +66,7 @@ async function submitPasswordStep(page, password, timeoutMs) {
     });
     await sleep(page, 150);
   } catch (err) {
-    console.warn('Unable to blur active element:', err.message);
+    log.warn('Unable to blur active element:', err.message);
   }
 
   let capturedResponse = null;
@@ -71,10 +74,10 @@ async function submitPasswordStep(page, password, timeoutMs) {
     try {
       if (resp.url().includes('/v2/login/complete') && !capturedResponse) {
         capturedResponse = await normalizeResponse(resp);
-        console.log('[debug] response listener captured /v2/login/complete', capturedResponse?.status);
+        log.debug('[flow] response listener captured /v2/login/complete', capturedResponse?.status);
       }
     } catch (err) {
-      console.warn('Response listener parse failed:', err.message);
+      log.warn('Response listener parse failed:', err.message);
     }
   };
   page.on('response', listener);
@@ -83,14 +86,14 @@ async function submitPasswordStep(page, password, timeoutMs) {
     .waitForResponse((response) => response.url().includes('/v2/login/complete'), { timeout: timeoutMs })
     .then(async (resp) => {
       const norm = await normalizeResponse(resp);
-      console.log('[debug] waitForResponse resolved /v2/login/complete', norm?.status);
+      log.debug('[flow] waitForResponse resolved /v2/login/complete', norm?.status);
       return norm;
     })
     .catch(() => null);
 
   await clickAdvanceButton(page, timeoutMs);
   const waited = await loginResponsePromise;
-  console.log('[debug] waited response', waited?.status);
+  log.debug('[flow] waited response', waited?.status);
   const loginResponse = waited || capturedResponse;
   page.off('response', listener);
   await sleep(page, 2000);
@@ -114,7 +117,7 @@ async function normalizeResponse(response) {
       payload.body = await response.json();
     }
   } catch (err) {
-    console.warn('Unable to parse login response body:', err.message);
+    log.warn('Unable to parse login response body:', err.message);
   }
 
   return payload;
@@ -152,7 +155,7 @@ async function clickAdvanceButton(page, timeoutMs) {
         await sleep(page, 300); // let UI settle before next actions
         return;
       } catch (err) {
-        console.warn(`Advance click via selector failed (${selector}):`, err.message);
+        log.warn(`Advance click via selector failed (${selector}):`, err.message);
       }
     }
   }
@@ -169,7 +172,7 @@ async function clickAdvanceButton(page, timeoutMs) {
         await sleep(page, 300);
         return;
       } catch (err) {
-        console.warn(`Advance click via XPath failed (${xpath}):`, err.message);
+        log.warn(`Advance click via XPath failed (${xpath}):`, err.message);
       }
     }
   }
@@ -195,7 +198,7 @@ async function clickAdvanceButton(page, timeoutMs) {
     await sleep(page, 300);
     return;
   } catch (err) {
-    console.warn('Advance click via text match failed:', err.message);
+    log.warn('Advance click via text match failed:', err.message);
   }
 
   // Fallback: press Enter to submit the active form.

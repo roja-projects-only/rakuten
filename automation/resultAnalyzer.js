@@ -1,12 +1,15 @@
 const fs = require('fs').promises;
 const path = require('path');
+const { createLogger } = require('../logger');
+
+const log = createLogger('analyzer');
 
 async function detectOutcome(page, response) {
   try {
-    console.log('[debug] detectOutcome start', response?.status, response?.url);
+    log.debug('[detect] start', response?.status, response?.url);
     const currentUrl = page.url();
     const pageContent = await page.content().catch(() => '');
-    console.log('[debug] detectOutcome url', currentUrl);
+    log.debug('[detect] url', currentUrl);
 
     if (response) {
       if (response.status === 200) {
@@ -16,7 +19,7 @@ async function detectOutcome(page, response) {
           await new Promise((resolve) => setTimeout(resolve, 2000));
         }
         const finalUrl = page.url();
-        console.log('[debug] detectOutcome 200 finalUrl', finalUrl);
+        log.debug('[detect] 200 finalUrl', finalUrl);
         if (finalUrl.includes('www.rakuten.co.jp') && finalUrl.includes('code=')) {
           return {
             status: 'VALID',
@@ -29,7 +32,7 @@ async function detectOutcome(page, response) {
       if (response.status === 401) {
         const errorMessage = response.body?.message || 'Invalid Authorization';
         const errorCode = response.body?.errorCode || 'UNKNOWN';
-        console.log('[debug] detectOutcome 401', errorCode, errorMessage);
+        log.debug('[detect] 401', errorCode, errorMessage);
         return {
           status: 'INVALID',
           message: `Invalid credentials - ${errorCode}: ${errorMessage}`,
@@ -58,7 +61,7 @@ async function detectOutcome(page, response) {
     }
 
     if (currentUrl.includes('www.rakuten.co.jp') && currentUrl.includes('code=')) {
-      console.log('[debug] detectOutcome URL-based valid');
+      log.debug('[detect] URL-based valid');
       return {
         status: 'VALID',
         message: 'Login successful - Redirected to main site',
@@ -66,14 +69,14 @@ async function detectOutcome(page, response) {
       };
     }
 
-    console.log('[debug] detectOutcome fallback ERROR');
+    log.debug('[detect] fallback ERROR');
     return {
       status: 'ERROR',
       message: 'Unable to determine login status - Please check manually',
       url: currentUrl,
     };
   } catch (error) {
-    console.warn('[debug] detectOutcome exception', error.message);
+    log.warn('[detect] exception', error.message);
     return {
       status: 'ERROR',
       message: `Detection error: ${error.message}`,
@@ -97,7 +100,7 @@ async function captureScreenshot(page, status) {
     await page.screenshot({ path: filepath, fullPage: true });
     return filepath;
   } catch (error) {
-    console.warn('Failed to capture screenshot:', error.message);
+    log.warn('Failed to capture screenshot:', error.message);
     return null;
   }
 }

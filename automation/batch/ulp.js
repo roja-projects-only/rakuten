@@ -2,13 +2,16 @@ const readline = require('readline');
 const { MAX_BYTES_ULP } = require('./constants');
 const { parseColonCredential } = require('./parse');
 const { getWithRedirect } = require('./http');
+const { createLogger } = require('../../logger');
+
+const log = createLogger('ulp');
 
 function parseUlpFromUrl(fileUrl, maxBytes = MAX_BYTES_ULP) {
   return new Promise((resolve, reject) => {
     const seen = new Set();
     const creds = [];
     let total = 0;
-    console.log(`[ULP] fetching: ${fileUrl}`);
+    log.info(`fetching: ${fileUrl}`);
     getWithRedirect(fileUrl)
       .then((res) => {
         res.on('data', (chunk) => {
@@ -32,7 +35,7 @@ function parseUlpFromUrl(fileUrl, maxBytes = MAX_BYTES_ULP) {
         });
 
         rl.on('close', () => {
-          console.log(`[ULP] parsed creds: ${creds.length}, bytes: ${total}`);
+          log.info(`parsed creds: ${creds.length}, bytes: ${total}`);
           resolve({ creds, count: creds.length });
         });
       })

@@ -11,6 +11,9 @@
 const { createBrowserSession, closeBrowserSession } = require('./automation/browserManager');
 const { navigateToLogin, submitEmailStep, submitPasswordStep } = require('./automation/rakutenFlow');
 const { detectOutcome, captureScreenshot } = require('./automation/resultAnalyzer');
+const { createLogger } = require('./logger');
+
+const log = createLogger('checker');
 
 async function checkCredentials(email, password, options = {}) {
   const {
@@ -33,24 +36,24 @@ async function checkCredentials(email, password, options = {}) {
   let preserveSession = false;
 
   try {
-    console.log('🌐 Launching headless browser...');
+    log.info('Launching headless browser...');
     onProgress && (await onProgress('launch'));
     session = await createBrowserSession({ proxy, headless });
     page = session.page;
 
-    console.log('📍 Navigating to Rakuten login page...');
+    log.info('Navigating to Rakuten login page...');
     onProgress && (await onProgress('navigate'));
     await navigateToLogin(page, targetUrl, timeoutMs);
 
-    console.log('📧 Submitting email/username step...');
+    log.info('Submitting email/username step...');
     onProgress && (await onProgress('email'));
     await submitEmailStep(page, email, timeoutMs);
 
-    console.log('🔑 Submitting password step...');
+    log.info('Submitting password step...');
     onProgress && (await onProgress('password'));
     const loginResponse = await submitPasswordStep(page, password, timeoutMs);
 
-    console.log('🔍 Analyzing login result...');
+    log.info('Analyzing login result...');
     onProgress && (await onProgress('analyze'));
     const outcome = await detectOutcome(page, loginResponse);
 
@@ -67,13 +70,13 @@ async function checkCredentials(email, password, options = {}) {
       session: preserveSession ? session : undefined,
     };
   } catch (error) {
-    console.error('❌ Error during credential check:', error.message);
+    log.error('Error during credential check:', error.message);
 
     if (page && screenshotOn) {
       try {
         screenshotPath = await captureScreenshot(page, 'ERROR');
       } catch (captureErr) {
-        console.warn('Unable to capture error screenshot:', captureErr.message);
+        log.warn('Unable to capture error screenshot:', captureErr.message);
       }
     }
 

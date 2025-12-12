@@ -1,7 +1,10 @@
 const TARGET_ACCOUNT_URL = 'https://my.rakuten.co.jp/?l-id=pc_header_memberinfo_popup_account';
+const { createLogger } = require('../logger');
+
+const log = createLogger('capture');
 
 async function waitForXPathText(page, xpath, timeoutMs) {
-  console.log(`[capture] waiting for xpath: ${xpath}`);
+  log.debug(`waiting for xpath: ${xpath}`);
   try {
     const textHandle = await page.waitForFunction(
       (xp) => {
@@ -32,7 +35,7 @@ async function captureAccountData(session, options = {}) {
   const { page } = session;
   const { timeoutMs = 30000 } = options;
 
-  console.log('[capture] navigating to account page');
+  log.info('navigating to account page');
   await page.goto(TARGET_ACCOUNT_URL, {
     waitUntil: 'networkidle0',
     timeout: timeoutMs,
@@ -44,7 +47,7 @@ async function captureAccountData(session, options = {}) {
   const pointsText = await waitForXPathText(page, pointsXPath, timeoutMs);
   const cashText = await waitForXPathText(page, cashXPath, timeoutMs);
 
-  console.log(`[capture] points: ${pointsText} | cash: ${cashText}`);
+  log.info(`points: ${pointsText} | cash: ${cashText}`);
 
   return {
     points: pointsText,

@@ -4,6 +4,9 @@ const { closeBrowserSession } = require('./automation/browserManager');
 const { captureAccountData } = require('./automation/dataCapture');
 const { registerBatchHandlers } = require('./telegram/batchHandlers');
 const fs = require('fs').promises;
+const { createLogger } = require('./logger');
+
+const log = createLogger('telegram');
 
 // Track sessions kept alive after VALID outcomes for optional data capture.
 const pendingSessions = new Map();
@@ -249,7 +252,7 @@ function initializeTelegramHandler(botToken, options = {}) {
       return;
     }
 
-    console.log(`[chk] start user=${maskUser(creds.username)}`);
+    log.info(`[chk] start user=${maskUser(creds.username)}`);
 
     // Send processing message (will be edited later)
     const statusMsg = await ctx.replyWithMarkdown('⏳ Checking credentials...');
@@ -260,7 +263,7 @@ function initializeTelegramHandler(botToken, options = {}) {
           parse_mode: 'MarkdownV2',
         });
       } catch (err) {
-        console.warn('Status edit failed:', err.message);
+        log.warn('Status edit failed:', err.message);
       }
     };
 
@@ -296,7 +299,7 @@ function initializeTelegramHandler(botToken, options = {}) {
 
       // Format result message with masked username
       const durationMs = Date.now() - startedAt;
-      console.log(`[chk] finish status=${result.status} user=${maskUser(creds.username)} duration_ms=${durationMs}`);
+      log.info(`[chk] finish status=${result.status} user=${maskUser(creds.username)} duration_ms=${durationMs}`);
       const resultMessage = formatResultMessage(result, creds.username, durationMs);
       
       // Edit message with final result
@@ -356,8 +359,8 @@ function initializeTelegramHandler(botToken, options = {}) {
         pendingTimeouts.set(sessionKey, timerId);
       }
     } catch (err) {
-      console.error('Credential check error:', err.message);
-      console.log(`[chk] error user=${maskUser(creds.username || 'unknown')} msg=${err.message}`);
+      log.error('Credential check error:', err.message);
+      log.error(`[chk] error user=${maskUser(creds.username || 'unknown')} msg=${err.message}`);
       
       // Edit status message to show error
       try {
@@ -412,7 +415,7 @@ function initializeTelegramHandler(botToken, options = {}) {
         reply_to_message_id: ctx.update.callback_query.message.message_id,
       });
     } catch (err) {
-      console.error('Capture failed:', err.message);
+      log.error('Capture failed:', err.message);
       await ctx.replyWithMarkdown(
         `⚠️ Capture failed: ${escapeV2(err.message)}`,
         { reply_to_message_id: ctx.update.callback_query.message.message_id }
@@ -475,7 +478,7 @@ function initializeTelegramHandler(botToken, options = {}) {
   // Launch bot
   bot.launch();
   
-  console.log('✓ Bot launched successfully!');
+  log.success('Bot launched successfully!');
 
   return bot;
 }

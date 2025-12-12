@@ -28,6 +28,9 @@ require('dotenv').config();
 const { initializeTelegramHandler } = require('./telegramHandler');
 const fs = require('fs');
 const path = require('path');
+const { createLogger } = require('./logger');
+
+const log = createLogger('main');
 
 /**
  * Validates required environment variables.
@@ -47,7 +50,7 @@ function validateEnvironment() {
     );
   }
 
-  console.log('✓ Environment variables validated.');
+  log.success('Environment variables validated.');
 }
 
 /**
@@ -60,7 +63,7 @@ function ensureDirectories() {
     const dirPath = path.join(process.cwd(), dir);
     if (!fs.existsSync(dirPath)) {
       fs.mkdirSync(dirPath, { recursive: true });
-      console.log(`✓ Created directory: ${dir}/`);
+      log.success(`Created directory: ${dir}/`);
     }
   });
 }
@@ -72,9 +75,9 @@ function displayBanner() {
   console.clear();
   console.log('╔═══════════════════════════════════════════════════════════╗');
   console.log('║                                                           ║');
-  console.log('║        🎌  RAKUTEN CREDENTIAL CHECKER BOT  🎌           ║');
+  console.log('║        🎌  RAKUTEN CREDENTIAL CHECKER BOT  🎌            ║');
   console.log('║                                                           ║');
-  console.log('║           Automated Account Verification System          ║');
+  console.log('║           Automated Account Verification System           ║');
   console.log('║                                                           ║');
   console.log('╚═══════════════════════════════════════════════════════════╝');
   console.log('');
@@ -86,7 +89,7 @@ function displayBanner() {
 async function main() {
   try {
     displayBanner();
-    console.log('🚀 Starting bot initialization...\n');
+    log.info('Starting bot initialization...');
 
     // Validate environment
     validateEnvironment();
@@ -113,41 +116,37 @@ async function main() {
       headless: headlessOption,
     };
 
-    console.log('');
-    console.log('⚙️  Configuration:');
-    console.log('─────────────────────────────────────────────────────');
-    console.log(`   Target URL:    ${handlerOptions.targetUrl.substring(0, 60)}...`);
-    console.log(`   Timeout:       ${handlerOptions.timeoutMs}ms`);
-    console.log(`   Screenshots:   ${handlerOptions.screenshotOn ? 'Enabled' : 'Disabled'}`);
-    console.log(`   Headless:      ${handlerOptions.headless}`);
+    log.info('Configuration:');
+    log.info(`Target URL: ${handlerOptions.targetUrl.substring(0, 60)}...`);
+    log.info(`Timeout: ${handlerOptions.timeoutMs}ms`);
+    log.info(`Screenshots: ${handlerOptions.screenshotOn ? 'Enabled' : 'Disabled'}`);
+    log.info(`Headless: ${handlerOptions.headless}`);
     if (handlerOptions.proxy) {
-      console.log(`   Proxy:         ${handlerOptions.proxy}`);
+      log.info(`Proxy: ${handlerOptions.proxy}`);
     }
-    console.log(`   Random UA:     Enabled`);
-    console.log('─────────────────────────────────────────────────────');
-    console.log('');
+    log.info('Random UA: Enabled');
 
     const bot = initializeTelegramHandler(botToken, handlerOptions);
 
-    console.log('✓ Telegram bot initialized successfully!');
-    console.log('✓ Polling for messages...\n');
-    console.log('📱 Bot is ready! Send messages to start checking credentials.');
-    console.log('💡 Command format: .chk email:password\n');
-    console.log('🔄 Press Ctrl+C to stop the bot\n');
+    log.success('Telegram bot initialized successfully!');
+    log.info('Polling for messages...');
+    log.info('Bot is ready! Send messages to start checking credentials.');
+    log.info('Command format: .chk email:password');
+    log.info('Press Ctrl+C to stop the bot');
 
     // Handle graceful shutdown
     const shutdown = async (signal) => {
-      console.log(`\n\n⏹️  Received ${signal} - Shutting down gracefully...`);
-      console.log('🛑 Stopping polling...');
+      log.warn(`Received ${signal} - Shutting down gracefully...`);
+      log.info('Stopping polling...');
       
       try {
         await bot.stopPolling();
-        console.log('✓ Bot stopped successfully.');
+        log.success('Bot stopped successfully.');
       } catch (err) {
-        console.error('⚠️  Error stopping bot:', err.message);
+        log.error('Error stopping bot:', err.message);
       }
       
-      console.log('👋 Goodbye!\n');
+      log.info('Goodbye!');
       process.exit(0);
     };
 
@@ -156,23 +155,23 @@ async function main() {
 
     // Handle uncaught errors
     process.on('uncaughtException', (err) => {
-      console.error('\n❌ Uncaught Exception:', err.message);
-      console.error(err.stack);
+      log.error('Uncaught Exception:', err.message);
+      log.debug(err.stack);
       process.exit(1);
     });
 
     process.on('unhandledRejection', (reason, promise) => {
-      console.error('\n❌ Unhandled Rejection at:', promise);
-      console.error('Reason:', reason);
+      log.error('Unhandled Rejection at:', promise);
+      log.error('Reason:', reason);
     });
 
   } catch (err) {
-    console.error('\n❌ Fatal startup error:', err.message);
-    console.error('\n💡 Troubleshooting:');
-    console.error('   1. Check your .env file exists and has correct values');
-    console.error('   2. Verify your bot token is valid');
-    console.error('   3. Ensure all dependencies are installed (npm install)');
-    console.error('   4. Check file permissions\n');
+    log.error('Fatal startup error:', err.message);
+    log.error('Troubleshooting:');
+    log.error('1. Check your .env file exists and has correct values');
+    log.error('2. Verify your bot token is valid');
+    log.error('3. Ensure all dependencies are installed (npm install)');
+    log.error('4. Check file permissions');
     process.exit(1);
   }
 }
