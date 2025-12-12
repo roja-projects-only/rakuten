@@ -228,6 +228,10 @@ function initializeTelegramHandler(botToken, options = {}) {
     const chatId = ctx.chat.id;
     const credentialString = ctx.match[1].trim();
     const startedAt = Date.now();
+    const maskUser = (user) => {
+      if (!user || user.length < 3) return '***';
+      return `${user.slice(0, 3)}***${user.slice(-2)}`;
+    };
 
     // Guard input
     const guard = guardInput(credentialString);
@@ -244,6 +248,8 @@ function initializeTelegramHandler(botToken, options = {}) {
       );
       return;
     }
+
+    console.log(`[chk] start user=${maskUser(creds.username)}`);
 
     // Send processing message (will be edited later)
     const statusMsg = await ctx.replyWithMarkdown('⏳ Checking credentials...');
@@ -290,6 +296,7 @@ function initializeTelegramHandler(botToken, options = {}) {
 
       // Format result message with masked username
       const durationMs = Date.now() - startedAt;
+      console.log(`[chk] finish status=${result.status} user=${maskUser(creds.username)} duration_ms=${durationMs}`);
       const resultMessage = formatResultMessage(result, creds.username, durationMs);
       
       // Edit message with final result
@@ -350,6 +357,7 @@ function initializeTelegramHandler(botToken, options = {}) {
       }
     } catch (err) {
       console.error('Credential check error:', err.message);
+      console.log(`[chk] error user=${maskUser(creds.username || 'unknown')} msg=${err.message}`);
       
       // Edit status message to show error
       try {

@@ -27,6 +27,8 @@ function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, 
   const startedAt = Date.now();
   let lastProgressAt = startedAt;
 
+  console.log(`[batch] executing file=${batch.filename} total=${batch.count}`);
+
   const iterator = batch.creds[Symbol.iterator]();
 
   const processCredential = async (cred) => {
@@ -121,6 +123,11 @@ function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, 
           reply_to_message_id: Number(msgId),
         });
       }
+
+      console.log(
+        `[batch] finished file=${batch.filename} aborted=${!!batch.aborted} processed=${processed}/${batch.count} ` +
+          `valid=${counts.VALID} invalid=${counts.INVALID} blocked=${counts.BLOCKED} error=${counts.ERROR} elapsed_ms=${elapsed}`
+      );
     } catch (err) {
       try {
         await ctx.replyWithMarkdown(`⚠️ Batch failed: ${escapeV2(err.message)}`, {
@@ -130,6 +137,7 @@ function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, 
         // swallow
       }
       console.warn('Batch execution error:', err.message);
+      console.warn(`[batch] execution failed file=${batch.filename} msg=${err.message}`);
     } finally {
       pendingBatches.delete(key);
     }
@@ -153,6 +161,8 @@ function registerBatchHandlers(bot, options, helpers) {
 
     const chatId = ctx.chat.id;
     const sourceMessageId = ctx.message && ctx.message.message_id;
+
+    console.log(`[batch] file received name=${doc.file_name || 'unknown'} size=${doc.file_size || 0}`);
 
     if (doc.file_size && doc.file_size > TELEGRAM_FILE_LIMIT_BYTES) {
       await ctx.replyWithMarkdown(
@@ -202,6 +212,8 @@ function registerBatchHandlers(bot, options, helpers) {
     const sourceMessageId = ctx.message && ctx.message.message_id;
     const url = ctx.match[1];
 
+    console.log(`[batch][ulp] start url=${url}`);
+
     if (!url || url.length > 1000) {
       await ctx.replyWithMarkdown('⚠️ Provide a valid URL after `.ulp`.', {
         reply_to_message_id: sourceMessageId,
@@ -218,10 +230,12 @@ function registerBatchHandlers(bot, options, helpers) {
     let batch;
     try {
       batch = await prepareUlpBatch(url, MAX_BYTES_ULP);
+      console.log(`[batch][ulp] parsed count=${batch.count}`);
     } catch (err) {
       await ctx.replyWithMarkdown(`⚠️ Failed to read URL: ${escapeV2(err.message)}`, {
         reply_to_message_id: sourceMessageId,
       });
+      console.warn(`[batch][ulp] parse failed url=${url} msg=${err.message}`);
       return;
     }
 
@@ -283,6 +297,8 @@ function registerBatchHandlers(bot, options, helpers) {
         ...Markup.inlineKeyboard([[Markup.button.callback('⏹ Abort', `batch_abort_${msgId}`)]]),
       });
 
+      console.log(`[batch] starting file=${batch.filename} count=${batch.count}`);
+
       runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, checkCredentials);
     } catch (err) {
       console.warn('Batch confirm handler error:', err.message);
@@ -339,10 +355,12 @@ function registerBatchHandlers(bot, options, helpers) {
     let batch;
     try {
       batch = await prepareBatchFromFile(file.fileUrl, MAX_BYTES_HOTMAIL);
+      console.log(`[batch][hotmail] parsed count=${batch.count} file=${file.filename}`);
     } catch (err) {
       await ctx.replyWithMarkdown(`⚠️ Failed to read file: ${escapeV2(err.message)}`, {
         reply_to_message_id: Number(msgId),
       });
+      console.warn(`[batch][hotmail] parse failed file=${file.filename} msg=${err.message}`);
       return;
     }
 
@@ -388,6 +406,7 @@ function registerBatchHandlers(bot, options, helpers) {
     const batch = pendingBatches.get(key);
     if (batch) {
       batch.aborted = true;
+      console.log(`[batch] abort requested file=${batch.filename}`);
       try {
         await ctx.telegram.editMessageText(
           ctx.chat.id,
