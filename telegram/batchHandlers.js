@@ -61,7 +61,7 @@ function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, 
           parse_mode: 'MarkdownV2',
         });
       } catch (_) {
-        // ignore edit failures
+        console.warn('Batch progress edit failed');
       }
     }
   };
@@ -99,6 +99,7 @@ function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, 
           parse_mode: 'MarkdownV2',
         });
       } catch (err) {
+        console.warn('Batch summary edit failed:', err.message);
         await ctx.reply(summary, {
           parse_mode: 'MarkdownV2',
           reply_to_message_id: Number(msgId),
@@ -112,6 +113,7 @@ function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, 
       } catch (_) {
         // swallow
       }
+      console.warn('Batch execution error:', err.message);
     } finally {
       pendingBatches.delete(key);
     }
@@ -254,16 +256,20 @@ function registerBatchHandlers(bot, options, helpers) {
         return;
       }
 
-      const statusMsg = await ctx.replyWithMarkdown(
-        `⏳ Starting batch check for *${escapeV2(batch.filename)}*\nEntries: *${batch.count}*`,
-        {
-          reply_to_message_id: Number(msgId),
-          ...Markup.inlineKeyboard([[Markup.button.callback('⏹ Abort', `batch_abort_${msgId}`)]]),
-        }
-      );
+      const statusText =
+        `${escapeV2('⏳ Starting batch check')}` +
+        `\nFile: ${escapeV2(batch.filename)}` +
+        `\nEntries: *${escapeV2(String(batch.count))}*`;
+
+      const statusMsg = await ctx.reply(statusText, {
+        parse_mode: 'MarkdownV2',
+        reply_to_message_id: Number(msgId),
+        ...Markup.inlineKeyboard([[Markup.button.callback('⏹ Abort', `batch_abort_${msgId}`)]]),
+      });
 
       runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, checkCredentials);
     } catch (err) {
+      console.warn('Batch confirm handler error:', err.message);
       await ctx.replyWithMarkdown(`⚠️ Batch failed: ${escapeV2(err.message)}`, {
         reply_to_message_id: ctx.update?.callback_query?.message?.message_id,
       });
