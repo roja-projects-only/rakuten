@@ -83,7 +83,7 @@ async function captureAccountData(session, options = {}) {
         const emElements = document.querySelectorAll('em');
         for (let em of emElements) {
           const text = (em.innerText || em.textContent || '').trim();
-          if (text.match(/^(プラチナ|ゴールド|シルバー|ブロンズ|通常)会員$/)) {
+          if (text.match(/^(ダイヤモンド|プラチナ|ゴールド|シルバー|ブロンズ|通常)会員$/)) {
             extraction.membership = text;
             break;
           }
@@ -169,7 +169,7 @@ async function captureAccountData(session, options = {}) {
     }
   }
 
-  // Translate membership status
+  // Translate membership status (re-translate in case it was updated from points page)
   const membershipEnglish = MEMBERSHIP_TRANSLATIONS[membershipText] || membershipText;
 
   log.info(`captured points: ${pointsText}, membership: ${membershipEnglish}`);
@@ -189,7 +189,7 @@ async function captureAccountData(session, options = {}) {
         const emElements = document.querySelectorAll('em');
         for (let em of emElements) {
           const text = (em.innerText || em.textContent || '').trim();
-          if (text.match(/^(プラチナ|ゴールド|シルバー|ブロンズ|通常)会員$/)) {
+          if (text.match(/^(ダイヤモンド|プラチナ|ゴールド|シルバー|ブロンズ|通常)会員$/)) {
             return { membership: text };
           }
         }
@@ -198,8 +198,7 @@ async function captureAccountData(session, options = {}) {
       
       if (pointsPageResult.membership) {
         membershipText = pointsPageResult.membership;
-        const membershipEnglish2 = MEMBERSHIP_TRANSLATIONS[membershipText] || membershipText;
-        log.info(`membership extracted from points page: ${membershipEnglish2}`);
+        log.info(`membership extracted from points page: ${MEMBERSHIP_TRANSLATIONS[membershipText] || membershipText}`);
       }
     } catch (err) {
       log.warn(`membership extraction from points page failed: ${err.message}`);
