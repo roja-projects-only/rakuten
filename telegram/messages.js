@@ -154,11 +154,11 @@ function italicV2(text = '') {
 
 // Capture
 function buildCapturePrompt() {
-  return '🔍 Proceed to capture data?';
+  return escapeV2('🔍 Proceed to capture data?');
 }
 
 function buildCaptureExpired() {
-  return '⌛ Capture session expired. Send `.chk email:password` again to restart.';
+  return escapeV2('⌛ Capture session expired. Send `.chk email:password` again to restart.');
 }
 
 function buildCaptureSummary({ points, cash, username, password }) {
@@ -176,7 +176,7 @@ function buildCaptureFailed(message) {
 }
 
 function buildCaptureSkipped() {
-  return '❎ Data capture skipped. Send `.chk` again if you want to restart.';
+  return escapeV2('❎ Data capture skipped. Send `.chk` again if you want to restart.');
 }
 
 // Batch flows
@@ -185,7 +185,7 @@ function codeSpan(text) {
 }
 
 function buildFileTooLarge() {
-  return '⚠️ File too large for Telegram bots (max ~50MB). For ULP lists, host the file and use `.ulp <url>` instead.';
+  return escapeV2('⚠️ File too large for Telegram bots (max ~50MB). For ULP lists, host the file and use `.ulp <url>` instead.');
 }
 
 function buildFileReceived({ filename, size }) {
@@ -211,7 +211,7 @@ function buildUlpParsed({ url, count }) {
     '🗂 ' + boldV2('ULP URL parsed') +
     `\n• Source: ${codeSpan(trimmed)}` +
     `\n• Eligible credentials: *${escapeV2(String(count))}*` +
-    '\n• Filter: lines containing `rakuten.co.jp` (deduped)' +
+    '\n• Filter: ' + codeSpan('rakuten.co.jp') + ' ' + escapeV2('(deduped)') +
     '\n\nProceed to check them?'
   );
 }
@@ -291,15 +291,15 @@ function buildBatchAborted({ filename, total, processed }) {
 }
 
 function buildBatchCancelled() {
-  return '❎ Batch cancelled. Send a new file to try again.';
+  return escapeV2('❎ Batch cancelled. Send a new file to try again.');
 }
 
 function buildBatchAborting() {
-  return '⏹ Aborting batch, please wait...';
+  return escapeV2('⏹ Aborting batch, please wait...');
 }
 
 function buildNoActiveBatch() {
-  return '⚠️ No active batch to abort.';
+  return escapeV2('⚠️ No active batch to abort.');
 }
 
 function buildBatchFailed(message) {
