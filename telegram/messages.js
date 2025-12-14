@@ -192,7 +192,7 @@ function codeSpan(text) {
 }
 
 function buildFileTooLarge() {
-  return escapeV2('⚠️ File too large for Telegram bots (max ~50MB). For ULP lists, host the file and use `.ulp <url>` instead.');
+  return escapeV2('⚠️ File too large for Telegram bot download (max ~20MB). For bigger lists, host the file and use `.ulp <url>` instead.');
 }
 
 function buildFileReceived({ filename, size }) {
