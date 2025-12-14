@@ -83,78 +83,64 @@ async function captureAccountData(session, options = {}) {
       // Extract via page.evaluate with extensive diagnostics
       log.debug(`evaluating page to extract points`);
       const result = await page.evaluate(() => {
-        // Try exact selector first
-        let links = document.querySelectorAll('a[href*="point.rakuten"]');
-        if (links.length > 0) {
-          const text = links[0].innerText.trim();
-          const match = text.match(/[0-9,]+/);
+        // Strategy 1: Look for links with "保有ポイント" text specifically
+        const allLinks = document.querySelectorAll('a');
+        let holdingPointsLink = null;
+        
+        for (let link of allLinks) {
+          const text = (link.innerText || link.textContent || '').trim();
+          if (text.includes('保有ポイント')) {
+            holdingPointsLink = link;
+            break;
+          }
+        }
+        
+        if (holdingPointsLink) {
+          const text = (holdingPointsLink.innerText || holdingPointsLink.textContent || '').trim();
+          // Extract number from text like "保有ポイント\n5,243" or "保有ポイント 5,243"
+          const match = text.match(/(\d{1,3}(?:,\d{3})*)/);
           if (match) {
-            return { success: true, points: match[0], via: 'exact_selector', linksFound: links.length };
+            return { success: true, points: match[1], via: 'holding_points_link', text: text.substring(0, 50) };
           }
         }
 
-        // Try any link with "point" in href
-        const allLinks = document.querySelectorAll('a[href*="point"]');
-        if (allLinks.length > 0) {
-          for (let i = 0; i < Math.min(5, allLinks.length); i++) {
-            const text = (allLinks[i].innerText || allLinks[i].textContent || '').trim();
-            const match = text.match(/[0-9,]+/);
-            if (match) {
-              return { success: true, points: match[0], via: 'point_href', linksFound: allLinks.length };
+        // Fallback: look for any link with point.rakuten in href
+        const pointLinks = document.querySelectorAll('a[href*="point.rakuten"]');
+        for (let link of pointLinks) {
+          const text = (link.innerText || link.textContent || '').trim();
+          const match = text.match(/(\d{1,3}(?:,\d{3})*)/);
+          if (match) {
+            const numericValue = parseInt(match[1].replace(/,/g, ''), 10);
+            if (numericValue > 100) { // likely account points, not small point values
+              return { success: true, points: match[1], via: 'point_rakuten_href', numericValue };
             }
           }
         }
 
-        // Strategy: Find the LARGEST number with commas (account points are typically large)
-        // This prioritizes 5,243 over 18 or other small point values
-        const allAnchors = document.querySelectorAll('a');
+        // Last resort: search for largest number with comma format
         let largestPoints = null;
         let largestValue = 0;
-        let foundVia = null;
-
-        for (let i = 0; i < allAnchors.length; i++) {
-          const text = (allAnchors[i].innerText || allAnchors[i].textContent || '').trim();
+        
+        for (let link of allLinks) {
+          const text = (link.innerText || link.textContent || '').trim();
+          const matches = text.match(/(\d{1,3}(?:,\d{3})+)/g); // numbers with commas
           
-          // Prioritize "保有ポイント" (holding points) text
-          if (text.includes('保有ポイント')) {
-            const match = text.match(/[0-9,]+/);
-            if (match) {
-              const numericValue = parseInt(match[0].replace(/,/g, ''), 10);
-              if (numericValue > largestValue) {
+          if (matches) {
+            for (let match of matches) {
+              const numericValue = parseInt(match.replace(/,/g, ''), 10);
+              if (numericValue > largestValue && numericValue < 999999) { // reasonable range
                 largestValue = numericValue;
-                largestPoints = match[0];
-                foundVia = 'houyuu_points';
-              }
-            }
-          }
-          // Secondary: any "ポイント" text with numbers, but only if we haven't found larger
-          else if (text.includes('ポイント') && !foundVia) {
-            const match = text.match(/[0-9,]+/);
-            if (match) {
-              const numericValue = parseInt(match[0].replace(/,/g, ''), 10);
-              if (numericValue > largestValue) {
-                largestValue = numericValue;
-                largestPoints = match[0];
-                foundVia = 'jp_text_search';
+                largestPoints = match;
               }
             }
           }
         }
-
-        if (largestPoints) {
-          return { success: true, points: largestPoints, via: foundVia, pointsValue: largestValue };
+        
+        if (largestPoints && largestValue > 100) {
+          return { success: true, points: largestPoints, via: 'largest_comma_number', numericValue: largestValue };
         }
 
-        // Fallback: search for any numeric pattern with commas in links
-        for (let i = 0; i < allAnchors.length; i++) {
-          const text = (allAnchors[i].innerText || allAnchors[i].textContent || '').trim();
-          const match = text.match(/[0-9]{1,3}(?:,[0-9]{3})+/); // numbers with commas (1,000+)
-          if (match && text.length < 100) { // avoid very long text
-            return { success: true, points: match[0], via: 'numeric_fallback', linksFound: allAnchors.length };
-          }
-        }
-
-        return { error: 'no_points_found', linksSearched: allAnchors.length, pageTitle: document.title };
+        return { error: 'no_points_found', checked_links: allLinks.length };
       });
 
       log.debug(`extraction result:`, JSON.stringify(result));
