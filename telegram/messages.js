@@ -200,7 +200,7 @@ function buildFileReceived({ filename, size }) {
     '📂 ' + boldV2('File received') +
     `\n• Name: ${codeSpan(filename || 'file')}` +
     `\n• Size: ${escapeV2(formatBytes(size))}` +
-    '\n\nProcess as HOTMAIL list?'
+    '\n\nChoose processing type:\n• HOTMAIL (.jp Microsoft)\n• ULP (Rakuten filter)'
   );
 }
 
@@ -217,6 +217,17 @@ function buildUlpParsed({ url, count }) {
   return (
     '🗂 ' + boldV2('ULP URL parsed') +
     `\n• Source: ${codeSpan(trimmed)}` +
+    `\n• Eligible credentials: *${escapeV2(String(count))}*` +
+    '\n• Filter: ' + codeSpan('rakuten.co.jp') + ' ' + escapeV2('(deduped)') +
+    '\n\nProceed to check them?'
+  );
+}
+
+function buildUlpFileParsed({ filename, size, count }) {
+  return (
+    '📂 ' + boldV2('ULP file parsed') +
+    `\n• Name: ${codeSpan(filename)}` +
+    `\n• Size: ${escapeV2(formatBytes(size))}` +
     `\n• Eligible credentials: *${escapeV2(String(count))}*` +
     '\n• Filter: ' + codeSpan('rakuten.co.jp') + ' ' + escapeV2('(deduped)') +
     '\n\nProceed to check them?'
@@ -317,6 +328,10 @@ function buildProcessingHotmail() {
   return escapeV2('⏳ Processing HOTMAIL file...');
 }
 
+function buildProcessingUlp() {
+  return escapeV2('⏳ Processing ULP file...');
+}
+
 module.exports = {
   escapeV2,
   codeV2,
@@ -348,6 +363,7 @@ module.exports = {
   buildUnableToLink,
   buildUlpProcessing,
   buildUlpParsed,
+  buildUlpFileParsed,
   buildHotmailParsed,
   buildNoEligible,
   buildAllProcessed,
@@ -361,6 +377,7 @@ module.exports = {
   buildNoActiveBatch,
   buildBatchFailed,
   buildProcessingHotmail,
+  buildProcessingUlp,
   // extras
   codeSpan,
   Markup,
