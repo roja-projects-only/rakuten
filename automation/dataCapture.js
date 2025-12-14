@@ -65,13 +65,12 @@ async function captureAccountData(session, options = {}) {
 }
 
 async function fetchHeaderInfo(page, timeoutMs) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const result = await page.evaluate(
-      async ({ url, signal }) => {
-        const res = await fetch(url, { credentials: 'include', signal });
+  return page.evaluate(
+    async ({ url, timeoutMs: t }) => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), t);
+      try {
+        const res = await fetch(url, { credentials: 'include', signal: controller.signal });
         if (!res.ok) throw new Error(`status ${res.status}`);
         const json = await res.json();
         const pointInfo = json?.body?.memberPointInfo?.data?.pointInfo;
@@ -81,13 +80,12 @@ async function fetchHeaderInfo(page, timeoutMs) {
           rcashPoint: pointInfo.rcashPoint,
           rank: json?.body?.memberRankInfo?.data?.rankInfo?.rankId,
         };
-      },
-      { url: HEADER_INFO_URL, signal: controller.signal }
-    );
-    return result;
-  } finally {
-    clearTimeout(timer);
-  }
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+    { url: HEADER_INFO_URL, timeoutMs }
+  );
 }
 
 module.exports = {
