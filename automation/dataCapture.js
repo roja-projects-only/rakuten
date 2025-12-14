@@ -105,16 +105,44 @@ async function captureAccountData(session, options = {}) {
           }
         }
 
-        // Try any link with "保有ポイント" (holding points) text
+        // Strategy: Find the LARGEST number with commas (account points are typically large)
+        // This prioritizes 5,243 over 18 or other small point values
         const allAnchors = document.querySelectorAll('a');
+        let largestPoints = null;
+        let largestValue = 0;
+        let foundVia = null;
+
         for (let i = 0; i < allAnchors.length; i++) {
           const text = (allAnchors[i].innerText || allAnchors[i].textContent || '').trim();
-          if (text.includes('保有ポイント') || text.includes('ポイント')) {
+          
+          // Prioritize "保有ポイント" (holding points) text
+          if (text.includes('保有ポイント')) {
             const match = text.match(/[0-9,]+/);
             if (match) {
-              return { success: true, points: match[0], via: 'jp_text_search', linksFound: allAnchors.length };
+              const numericValue = parseInt(match[0].replace(/,/g, ''), 10);
+              if (numericValue > largestValue) {
+                largestValue = numericValue;
+                largestPoints = match[0];
+                foundVia = 'houyuu_points';
+              }
             }
           }
+          // Secondary: any "ポイント" text with numbers, but only if we haven't found larger
+          else if (text.includes('ポイント') && !foundVia) {
+            const match = text.match(/[0-9,]+/);
+            if (match) {
+              const numericValue = parseInt(match[0].replace(/,/g, ''), 10);
+              if (numericValue > largestValue) {
+                largestValue = numericValue;
+                largestPoints = match[0];
+                foundVia = 'jp_text_search';
+              }
+            }
+          }
+        }
+
+        if (largestPoints) {
+          return { success: true, points: largestPoints, via: foundVia, pointsValue: largestValue };
         }
 
         // Fallback: search for any numeric pattern with commas in links
