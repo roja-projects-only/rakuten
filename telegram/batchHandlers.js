@@ -43,7 +43,10 @@ const { createLogger } = require('../logger');
 
 const log = createLogger('batch');
 
-const BATCH_CONCURRENCY = 3;
+const BATCH_CONCURRENCY = Math.max(
+  1,
+  parseInt(process.env.BATCH_CONCURRENCY, 10) || 8 // default increased from 3 to 8
+);
 const TELEGRAM_FILE_LIMIT_BYTES = 20 * 1024 * 1024; // Telegram bot API download limit (~20MB)
 const pendingBatches = new Map();
 const pendingFiles = new Map();
