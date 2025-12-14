@@ -71,6 +71,7 @@ async function recycleSharedBrowser() {
 
 function needsRecycle(limits) {
   if (!sharedBrowser) return false;
+  if (typeof sharedBrowser.isConnected === 'function' && !sharedBrowser.isConnected()) return true;
   const now = Date.now();
   if (limits.maxAgeMs && now - sharedLaunchedAt > limits.maxAgeMs) return true;
   if (limits.maxIdleMs && now - sharedLastUsedAt > limits.maxIdleMs) return true;
@@ -107,21 +108,35 @@ async function getSharedBrowser(proxy, headless) {
 }
 
 async function createBrowserSession({ proxy, headless } = {}) {
-  const { browser } = await getSharedBrowser(proxy, headless);
+  const attemptCreate = async (attempt = 1) => {
+    const { browser } = await getSharedBrowser(proxy, headless);
 
-  const contextFactory = browser.createBrowserContext || browser.createIncognitoBrowserContext;
-  if (!contextFactory) {
-    throw new Error('No browser context factory available on Puppeteer browser instance');
-  }
+    const contextFactory = browser.createBrowserContext || browser.createIncognitoBrowserContext;
+    if (!contextFactory) {
+      throw new Error('No browser context factory available on Puppeteer browser instance');
+    }
 
-  const context = await contextFactory.call(browser);
-  const page = await context.newPage();
+    try {
+      const context = await contextFactory.call(browser);
+      const page = await context.newPage();
 
-  await page.setViewport(DEFAULT_VIEWPORT);
-  const userAgent = new UserAgent().toString();
-  await page.setUserAgent(userAgent);
+      await page.setViewport(DEFAULT_VIEWPORT);
+      const userAgent = new UserAgent().toString();
+      await page.setUserAgent(userAgent);
 
-  return { browser, context, page, isShared: true };
+      return { browser, context, page, isShared: true };
+    } catch (err) {
+      // If Chromium was killed while idle, recycle and retry once.
+      if (attempt === 1) {
+        log.warn(`Browser session creation failed (attempt ${attempt}): ${err.message}`);
+        await recycleSharedBrowser();
+        return attemptCreate(attempt + 1);
+      }
+      throw err;
+    }
+  };
+
+  return attemptCreate();
 }
 
 async function closeBrowserSession(session) {
