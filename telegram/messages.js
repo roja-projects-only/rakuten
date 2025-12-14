@@ -200,7 +200,9 @@ function buildFileReceived({ filename, size }) {
     '📂 ' + boldV2('File received') +
     `\n• Name: ${codeSpan(filename || 'file')}` +
     `\n• Size: ${escapeV2(formatBytes(size))}` +
-    '\n\nChoose processing type:\n• HOTMAIL (.jp Microsoft)\n• ULP (Rakuten filter)'
+    '\n\n' + escapeV2('Choose processing type:') +
+    `\n• ${escapeV2('HOTMAIL (.jp Microsoft)')}` +
+    `\n• ${escapeV2('ULP (Rakuten filter)')}`
   );
 }
 
