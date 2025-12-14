@@ -46,61 +46,36 @@ async function captureAccountData(session, options = {}) {
 
   log.info('navigating to rakuten home');
   await page.goto(TARGET_HOME_URL, {
-    waitUntil: 'networkidle0',
+    waitUntil: 'domcontentloaded',
     timeout: timeoutMs,
   });
 
-  // Wait extra time for page to fully render (points element may be lazy-loaded)
-  log.debug('waiting for page to fully stabilize');
-  await sleep(page, 2000);
-
-  // Check current URL and page state
-  const currentUrl = page.url();
-  log.debug(`current URL: ${currentUrl}`);
+  // Minimal wait for dynamic rendering
+  await sleep(page, 300);
 
   // Extract points from the home page header
   log.debug('extracting points from home page header');
   let pointsText = 'n/a';
   let attempts = 0;
-  const maxAttempts = 3;
+  const maxAttempts = 2; // reduced from 3
 
   while (attempts < maxAttempts && pointsText === 'n/a') {
     attempts += 1;
     try {
       log.debug(`points extraction attempt ${attempts}/${maxAttempts}`);
       
-      // First try: wait for selector with long timeout
-      try {
-        log.debug(`waiting for selector with 10s timeout`);
-        await page.waitForSelector('a[href*="point.rakuten"]', { timeout: 10000 });
-        log.debug(`selector found, waiting for render`);
-        await sleep(page, 1000);
-      } catch (selectorErr) {
-        log.warn(`selector wait failed: ${selectorErr.message}, trying direct evaluation`);
-        // Continue to evaluation attempt even if selector wait fails
-      }
-      
-      // Extract via page.evaluate with extensive diagnostics
-      log.debug(`evaluating page to extract points`);
+      // Try to find and extract points directly (without waiting for selector)
       const result = await page.evaluate(() => {
         // Strategy 1: Look for links with "保有ポイント" text specifically
         const allLinks = document.querySelectorAll('a');
-        let holdingPointsLink = null;
         
         for (let link of allLinks) {
           const text = (link.innerText || link.textContent || '').trim();
           if (text.includes('保有ポイント')) {
-            holdingPointsLink = link;
-            break;
-          }
-        }
-        
-        if (holdingPointsLink) {
-          const text = (holdingPointsLink.innerText || holdingPointsLink.textContent || '').trim();
-          // Extract number from text like "保有ポイント\n5,243" or "保有ポイント 5,243"
-          const match = text.match(/(\d{1,3}(?:,\d{3})*)/);
-          if (match) {
-            return { success: true, points: match[1], via: 'holding_points_link', text: text.substring(0, 50) };
+            const match = text.match(/(\d{1,3}(?:,\d{3})*)/);
+            if (match) {
+              return { success: true, points: match[1], via: 'holding_points_link' };
+            }
           }
         }
 
@@ -111,7 +86,7 @@ async function captureAccountData(session, options = {}) {
           const match = text.match(/(\d{1,3}(?:,\d{3})*)/);
           if (match) {
             const numericValue = parseInt(match[1].replace(/,/g, ''), 10);
-            if (numericValue > 100) { // likely account points, not small point values
+            if (numericValue > 100) {
               return { success: true, points: match[1], via: 'point_rakuten_href', numericValue };
             }
           }
@@ -123,12 +98,12 @@ async function captureAccountData(session, options = {}) {
         
         for (let link of allLinks) {
           const text = (link.innerText || link.textContent || '').trim();
-          const matches = text.match(/(\d{1,3}(?:,\d{3})+)/g); // numbers with commas
+          const matches = text.match(/(\d{1,3}(?:,\d{3})+)/g);
           
           if (matches) {
             for (let match of matches) {
               const numericValue = parseInt(match.replace(/,/g, ''), 10);
-              if (numericValue > largestValue && numericValue < 999999) { // reasonable range
+              if (numericValue > largestValue && numericValue < 999999) {
                 largestValue = numericValue;
                 largestPoints = match;
               }
@@ -140,27 +115,23 @@ async function captureAccountData(session, options = {}) {
           return { success: true, points: largestPoints, via: 'largest_comma_number', numericValue: largestValue };
         }
 
-        return { error: 'no_points_found', checked_links: allLinks.length };
+        return { error: 'no_points_found' };
       });
-
-      log.debug(`extraction result:`, JSON.stringify(result));
 
       if (result.success) {
         pointsText = result.points;
         log.info(`points extracted (attempt ${attempts}): ${pointsText} [${result.via}]`);
       } else {
-        log.warn(`extraction failed: ${result.error}`, result);
+        log.warn(`extraction failed on attempt ${attempts}, retrying...`);
         if (attempts < maxAttempts) {
-          log.debug(`waiting ${1500 + attempts * 500}ms before retry`);
-          await sleep(page, 1500 + attempts * 500); // progressive backoff
+          // Shorter wait before retry
+          await sleep(page, 500);
         }
       }
     } catch (err) {
       log.warn(`points extraction error (attempt ${attempts}): ${err.message}`);
-      log.trace(`error stack:`, err.stack);
       if (attempts < maxAttempts) {
-        log.debug(`waiting ${1500 + attempts * 500}ms before retry`);
-        await sleep(page, 1500 + attempts * 500);
+        await sleep(page, 500);
       }
     }
   }
