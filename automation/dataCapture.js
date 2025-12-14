@@ -53,24 +53,57 @@ async function captureAccountData(session, options = {}) {
   // Extract points from the home page header
   log.debug('extracting points from home page header');
   let pointsText = 'n/a';
-  try {
-    // Wait for the points element and extract the numeric text
-    pointsText = await page.evaluate(() => {
-      const links = document.querySelectorAll('a[href*="point.rakuten"]');
-      if (links.length === 0) return null;
+  let attempts = 0;
+  const maxAttempts = 3;
+
+  while (attempts < maxAttempts && pointsText === 'n/a') {
+    attempts += 1;
+    try {
+      log.debug(`points extraction attempt ${attempts}/${maxAttempts}`);
       
-      const text = links[0].innerText.trim();
-      // Extract the numeric part (should be like "保有ポイント\n5,243")
-      const match = text.match(/[0-9,]+/);
-      return match ? match[0] : null;
-    }, timeoutMs);
-    
-    if (!pointsText) {
-      throw new Error('Could not extract points from header');
+      // Wait for the points element to be available
+      await page.waitForSelector('a[href*="point.rakuten"]', { timeout: 5000 });
+      
+      // Wait a bit more for content to render
+      await sleep(page, 500);
+      
+      // Extract the numeric part
+      const result = await page.evaluate(() => {
+        const links = document.querySelectorAll('a[href*="point.rakuten"]');
+        if (links.length === 0) {
+          return { error: 'no_links', count: 0 };
+        }
+        
+        const text = links[0].innerText.trim();
+        if (!text) {
+          return { error: 'empty_text', count: links.length };
+        }
+        
+        const match = text.match(/[0-9,]+/);
+        if (!match) {
+          return { error: 'no_match', text: text };
+        }
+        
+        return { success: true, points: match[0] };
+      });
+
+      log.debug(`extraction result:`, JSON.stringify(result));
+
+      if (result.success) {
+        pointsText = result.points;
+        log.info(`points extracted (attempt ${attempts}): ${pointsText}`);
+      } else {
+        log.warn(`extraction failed: ${result.error}`, result);
+        if (attempts < maxAttempts) {
+          await sleep(page, 1000); // wait before retry
+        }
+      }
+    } catch (err) {
+      log.warn(`points extraction error (attempt ${attempts}): ${err.message}`);
+      if (attempts < maxAttempts) {
+        await sleep(page, 1000);
+      }
     }
-    log.debug(`points extracted: ${pointsText}`);
-  } catch (err) {
-    log.warn(`Unable to extract points from home page: ${err.message}`);
   }
 
   log.info(`captured points: ${pointsText}`);
