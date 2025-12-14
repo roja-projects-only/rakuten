@@ -19,6 +19,11 @@ function spoilerV2(text = '') {
   return `||${escapeV2(text)}||`;
 }
 
+function spoilerCodeV2(text = '') {
+  const safe = String(text).replace(/[`\\]/g, '\\$&');
+  return `||\`${safe}\`||`;
+}
+
 function maskEmail(email = '') {
   const at = email.indexOf('@');
   if (at <= 0) return '***';
@@ -168,8 +173,8 @@ function buildCaptureSummary({ points, cash, username, password }) {
     escapeV2('🗂️ Capture Summary') +
     `\n• ${boldV2('Points')}: ${escapeV2(points || 'n/a')}` +
     `\n• ${boldV2('Rakuten Cash')}: ${escapeV2(cash || 'n/a')}` +
-    `\n• Username: ${spoilerV2(codeV2(username || 'unknown'))}` +
-    `\n• Password: ${spoilerV2(codeV2(password || 'hidden'))}`
+    `\n• Username: ${spoilerCodeV2(username || 'unknown')}` +
+    `\n• Password: ${spoilerCodeV2(password || 'hidden')}`
   );
 }
 
@@ -264,7 +269,7 @@ function buildBatchProgress({ filename, processed, total, counts }) {
 
 function buildBatchSummary({ filename, total, skipped, counts, elapsedMs, validCreds }) {
   const items = (validCreds && validCreds.length)
-    ? validCreds.map((cred) => `• ${spoilerV2(codeV2(`${cred.username}:${cred.password}`))}`)
+    ? validCreds.map((cred) => `• ${spoilerCodeV2(`${cred.username}:${cred.password}`)}`)
     : [escapeV2('• None')];
 
   const title = skipped ? '📊 Batch complete (with skips)' : '📊 Batch complete';
@@ -317,6 +322,7 @@ module.exports = {
   codeV2,
   boldV2,
   spoilerV2,
+  spoilerCodeV2,
   maskEmail,
   formatBytes,
   formatDurationMs,
