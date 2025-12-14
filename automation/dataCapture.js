@@ -36,16 +36,17 @@ async function captureAccountData(session, options = {}) {
   const { page } = session;
   const { timeoutMs = 30000 } = options;
 
-  // Try API-first for accurate points/cash (works when authenticated session is active).
-  const apiResult = await fetchHeaderInfo(page, timeoutMs).catch((err) => {
-    log.warn(`headerinfo fetch failed: ${err.message}`);
-    return null;
-  });
-
   log.info('navigating to account page');
   await page.goto(TARGET_ACCOUNT_URL, {
     waitUntil: 'networkidle0',
     timeout: timeoutMs,
+  });
+
+  // Wait briefly to ensure session cookies are settled, then try API-first for accuracy.
+  await page.waitForTimeout(500).catch(() => {});
+  const apiResult = await fetchHeaderInfo(page, timeoutMs).catch((err) => {
+    log.warn(`headerinfo fetch failed: ${err.message}`);
+    return null;
   });
 
   const pointsXPath = '/html/body/main/div[1]/div[1]/div[2]/div/div[2]/div[1]/a/span[1]/span[1]/span[2]';
@@ -67,21 +68,31 @@ async function captureAccountData(session, options = {}) {
 async function fetchHeaderInfo(page, timeoutMs) {
   return page.evaluate(
     async ({ url, timeoutMs: t }) => {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), t);
+      const attemptFetch = async () => {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), t);
+        try {
+          const res = await fetch(url, { credentials: 'include', signal: controller.signal });
+          if (!res.ok) throw new Error(`status ${res.status}`);
+          const json = await res.json();
+          const pointInfo = json?.body?.memberPointInfo?.data?.pointInfo;
+          if (!pointInfo) throw new Error('missing pointInfo');
+          return {
+            totalPoint: json?.body?.memberPointInfo?.data?.pointInvestInfo?.totalPoint ?? pointInfo.fixedStdPoint ?? pointInfo.unfixedStdPoint,
+            rcashPoint: pointInfo.rcashPoint,
+            rank: json?.body?.memberRankInfo?.data?.rankInfo?.rankId,
+          };
+        } finally {
+          clearTimeout(timer);
+        }
+      };
+
+      // Try up to 2 attempts in case the endpoint isn't ready immediately.
       try {
-        const res = await fetch(url, { credentials: 'include', signal: controller.signal });
-        if (!res.ok) throw new Error(`status ${res.status}`);
-        const json = await res.json();
-        const pointInfo = json?.body?.memberPointInfo?.data?.pointInfo;
-        if (!pointInfo) throw new Error('missing pointInfo');
-        return {
-          totalPoint: json?.body?.memberPointInfo?.data?.pointInvestInfo?.totalPoint ?? pointInfo.fixedStdPoint ?? pointInfo.unfixedStdPoint,
-          rcashPoint: pointInfo.rcashPoint,
-          rank: json?.body?.memberRankInfo?.data?.rankInfo?.rankId,
-        };
-      } finally {
-        clearTimeout(timer);
+        return await attemptFetch();
+      } catch (err) {
+        await new Promise((r) => setTimeout(r, 500));
+        return await attemptFetch();
       }
     },
     { url: HEADER_INFO_URL, timeoutMs }
