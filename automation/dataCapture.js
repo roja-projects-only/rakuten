@@ -75,16 +75,52 @@ async function captureAccountData(session, options = {}) {
     timeout: timeoutMs,
   });
 
-  // Updated XPath to get the points value more accurately
+  // Extract points using accurate XPath
   const pointsXPath = '//*[@id="wrapper"]/div[8]/div/ul[1]/li[3]//div[@class="value--21p0x"][1]';
   const pointsText = await waitForXPathText(page, pointsXPath, timeoutMs);
+  log.debug(`points extracted: ${pointsText}`);
 
-  log.info(`points: ${pointsText}`);
+  // Try to hover over the button to reveal cash/rank data
+  let cashText = 'n/a';
+  let rankText = 'n/a';
+  try {
+    const hoverButtonXPath = '//*[@id="wrapper"]/div[8]/div/ul[2]/li/div/div[1]/button';
+    const hoverResult = await page.waitForXPath(hoverButtonXPath, { timeout: 5000 }).catch(() => null);
+    
+    if (hoverResult) {
+      log.debug('Found hover button, triggering hover...');
+      await page.evaluate((xpath) => {
+        const result = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+        const btn = result.singleNodeValue;
+        if (btn) {
+          btn.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true, cancelable: true }));
+        }
+      }, hoverButtonXPath);
+      
+      await sleep(page, 300); // Wait for hover effect to render
+      
+      // Try to extract cash data
+      const cashXPath = '//*[@id="wrapper"]/div[8]/div/ul[2]/li/div/div[3]/div/div/div/div[3]/div[2]/a/div/div[1]/div';
+      cashText = await waitForXPathText(page, cashXPath, 3000).catch(() => 'n/a');
+      log.debug(`cash extracted: ${cashText}`);
+      
+      // Try to extract membership rank
+      const rankXPath = '//*[@id="wrapper"]/div[8]/div/ul[2]/li/div/div[3]/div/div/div/div[1]/div[2]/div[2]/font/font';
+      rankText = await waitForXPathText(page, rankXPath, 3000).catch(() => 'n/a');
+      log.debug(`rank extracted: ${rankText}`);
+    } else {
+      log.warn('Hover button not found, skipping cash/rank extraction');
+    }
+  } catch (err) {
+    log.warn(`Failed to extract cash/rank via hover: ${err.message}`);
+  }
+
+  log.info(`points: ${pointsText} | cash: ${cashText} | rank: ${rankText}`);
 
   return {
     points: pointsText,
-    cash: 'n/a', // Not reliably available via DOM
-    rank: apiResult && translateRank(apiResult.rank),
+    cash: cashText,
+    rank: rankText !== 'n/a' ? translateRank(rankText) : 'n/a',
     url: page.url(),
   };
 }
