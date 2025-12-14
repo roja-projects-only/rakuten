@@ -64,7 +64,7 @@ async function captureAccountData(session, options = {}) {
   await sleep(page, 1000);
 
   // Extract points from the home page header
-  log.debug('extracting points from home page header');
+  log.debug('extracting points and membership from home page');
   let pointsText = 'n/a';
   let membershipText = 'n/a';
   let attempts = 0;
@@ -78,13 +78,26 @@ async function captureAccountData(session, options = {}) {
       const result = await page.evaluate(() => {
         const extraction = { points: null, membership: null };
 
-        // Extract membership status
+        // Extract membership status from em tags (primary location)
         const emElements = document.querySelectorAll('em');
         for (let em of emElements) {
           const text = (em.innerText || em.textContent || '').trim();
           if (text.match(/^(プラチナ|ゴールド|シルバー|ブロンズ|通常)会員$/)) {
             extraction.membership = text;
+            log.info(`Found membership in em tag: ${text}`);
             break;
+          }
+        }
+
+        // If not found in em, try looking in all elements more broadly
+        if (!extraction.membership) {
+          const allElements = document.querySelectorAll('*');
+          for (let el of allElements) {
+            const text = (el.innerText || el.textContent || '').trim();
+            if (text.match(/^(プラチナ|ゴールド|シルバー|ブロンズ|通常)会員$/) && text.length < 20) {
+              extraction.membership = text;
+              break;
+            }
           }
         }
 
@@ -165,6 +178,36 @@ async function captureAccountData(session, options = {}) {
       if (attempts < maxAttempts) {
         await sleep(page, 800);
       }
+    }
+  }
+
+  // If membership still not found, try navigating to points page
+  if (membershipText === 'n/a') {
+    try {
+      log.info('membership not found on home page, checking points page');
+      await page.goto('https://point.rakuten.co.jp/', {
+        waitUntil: 'networkidle2',
+        timeout: timeoutMs,
+      });
+      await sleep(page, 500);
+
+      const pointsPageMembership = await page.evaluate(() => {
+        const emElements = document.querySelectorAll('em');
+        for (let em of emElements) {
+          const text = (em.innerText || em.textContent || '').trim();
+          if (text.match(/^(プラチナ|ゴールド|シルバー|ブロンズ|通常)会員$/)) {
+            return text;
+          }
+        }
+        return null;
+      });
+
+      if (pointsPageMembership) {
+        membershipText = pointsPageMembership;
+        log.info(`membership found on points page: ${membershipText}`);
+      }
+    } catch (err) {
+      log.warn(`failed to get membership from points page: ${err.message}`);
     }
   }
 
