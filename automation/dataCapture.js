@@ -8,6 +8,7 @@ const MEMBERSHIP_TRANSLATIONS = {
   'ゴールド会員': 'Gold',
   'シルバー会員': 'Silver',
   'ブロンズ会員': 'Bronze',
+  'ダイヤモンド会員': 'Diamond',
   '通常会員': 'Regular',
 };
 
