@@ -147,6 +147,37 @@ function buildCheckResult(result, username = null, durationMs = null) {
   return parts.join('\n');
 }
 
+/**
+ * Build unified check + capture result message
+ */
+function buildCheckAndCaptureResult(result, capture, username, durationMs) {
+  const statusEmoji = { VALID: '✅', INVALID: '❌', BLOCKED: '🔒', ERROR: '⚠️' };
+  const emoji = statusEmoji[result.status] || '❓';
+  
+  const parts = [];
+  parts.push(`${emoji} ${boldV2(result.status === 'VALID' ? 'VALID CREDENTIALS' : 'INVALID CREDENTIALS')}`);
+
+  if (username) {
+    const maskedUser = maskEmail(username);
+    parts.push(`${boldV2('👤 Account')}: ${codeV2(maskedUser)}`);
+  }
+
+  if (durationMs != null) {
+    const seconds = durationMs / 1000;
+    const pretty = seconds >= 10 ? seconds.toFixed(1) : seconds.toFixed(2);
+    parts.push(`${boldV2('⏱️ Time')}: ${codeV2(`${pretty}s`)}`);
+  }
+
+  if (result.status === 'VALID' && capture) {
+    parts.push('');
+    parts.push(boldV2('📊 Account Data:'));
+    parts.push(`• ${boldV2('Points')}: ${escapeV2(capture.points || 'n/a')}`);
+    parts.push(`• ${boldV2('Cash')}: ${escapeV2(capture.cash || 'n/a')}`);
+  }
+
+  return parts.join('\n');
+}
+
 function buildCheckError(message) {
   return (
     '⚠️ ' + boldV2('ERROR OCCURRED') +
@@ -352,6 +383,7 @@ module.exports = {
   buildCheckQueued,
   buildCheckProgress,
   buildCheckResult,
+  buildCheckAndCaptureResult,
   buildCheckError,
   // Capture
   buildCapturePrompt,

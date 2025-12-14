@@ -11,6 +11,7 @@ const {
   buildCheckQueued,
   buildCheckProgress,
   buildCheckResult,
+  buildCheckAndCaptureResult,
   buildCheckError,
   buildCapturePrompt,
   buildCaptureExpired,
@@ -203,10 +204,9 @@ function initializeTelegramHandler(botToken, options = {}) {
       // Format result message with masked username
       const durationMs = Date.now() - startedAt;
       log.info(`[chk] finish status=${result.status} user=${maskUser(creds.username)} duration_ms=${durationMs}`);
-      const resultMessage = buildCheckResult(result, creds.username, durationMs);
       
       // Edit message with final result
-      await updateStatus(resultMessage);
+      await updateStatus(buildCheckResult(result, creds.username, durationMs));
 
       // Always remove any screenshot file quietly
       if (result.screenshot) {
@@ -220,26 +220,14 @@ function initializeTelegramHandler(botToken, options = {}) {
           await updateStatus(buildCheckProgress('capture'));
           
           const capture = await captureAccountData(result.session, { timeoutMs: options.timeoutMs || 60000 });
-          const captureMessage = buildCaptureSummary({
-            points: capture.points,
-            cash: capture.cash,
-            username: creds.username,
-            password: creds.password,
-          });
-
-          await ctx.reply(captureMessage, {
-            parse_mode: 'MarkdownV2',
-            reply_to_message_id: statusMsg.message_id,
-          });
+          const finalMessage = buildCheckAndCaptureResult(result, capture, creds.username, durationMs);
+          await updateStatus(finalMessage);
 
           log.info(`[chk] capture complete - points: ${capture.points}`);
         } catch (captureErr) {
           log.warn(`[chk] data capture failed: ${captureErr.message}`);
-          // Send error but don't block - credentials were already verified
-          await ctx.reply(buildCaptureFailed(captureErr.message), {
-            parse_mode: 'MarkdownV2',
-            reply_to_message_id: statusMsg.message_id,
-          });
+          // Still show the check result even if capture failed
+          await updateStatus(buildCheckResult(result, creds.username, durationMs));
         } finally {
           // Clean up session regardless
           await closeBrowserSession(result.session).catch(() => {});
