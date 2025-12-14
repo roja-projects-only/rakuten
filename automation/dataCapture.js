@@ -1,4 +1,5 @@
 const TARGET_ACCOUNT_URL = 'https://my.rakuten.co.jp/?l-id=pc_header_memberinfo_popup_account';
+const HEADER_INFO_URL = 'https://ichiba-common-web-gateway.rakuten.co.jp/ichiba-common/headerinfo/get/v1';
 const { createLogger } = require('../logger');
 
 const log = createLogger('capture');
@@ -35,6 +36,12 @@ async function captureAccountData(session, options = {}) {
   const { page } = session;
   const { timeoutMs = 30000 } = options;
 
+  // Try API-first for accurate points/cash (works when authenticated session is active).
+  const apiResult = await fetchHeaderInfo(page, timeoutMs).catch((err) => {
+    log.warn(`headerinfo fetch failed: ${err.message}`);
+    return null;
+  });
+
   log.info('navigating to account page');
   await page.goto(TARGET_ACCOUNT_URL, {
     waitUntil: 'networkidle0',
@@ -50,10 +57,37 @@ async function captureAccountData(session, options = {}) {
   log.info(`points: ${pointsText} | cash: ${cashText}`);
 
   return {
-    points: pointsText,
-    cash: cashText,
+    points: (apiResult && apiResult.totalPoint != null ? String(apiResult.totalPoint) : pointsText),
+    cash: (apiResult && apiResult.rcashPoint != null ? String(apiResult.rcashPoint) : cashText),
+    rank: apiResult && apiResult.rank,
     url: page.url(),
   };
+}
+
+async function fetchHeaderInfo(page, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const result = await page.evaluate(
+      async ({ url, signal }) => {
+        const res = await fetch(url, { credentials: 'include', signal });
+        if (!res.ok) throw new Error(`status ${res.status}`);
+        const json = await res.json();
+        const pointInfo = json?.body?.memberPointInfo?.data?.pointInfo;
+        if (!pointInfo) throw new Error('missing pointInfo');
+        return {
+          totalPoint: json?.body?.memberPointInfo?.data?.pointInvestInfo?.totalPoint ?? pointInfo.fixedStdPoint ?? pointInfo.unfixedStdPoint,
+          rcashPoint: pointInfo.rcashPoint,
+          rank: json?.body?.memberRankInfo?.data?.rankInfo?.rankId,
+        };
+      },
+      { url: HEADER_INFO_URL, signal: controller.signal }
+    );
+    return result;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 module.exports = {
