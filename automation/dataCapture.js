@@ -46,25 +46,24 @@ async function captureAccountData(session, options = {}) {
 
   log.info('navigating to rakuten home');
   await page.goto(TARGET_HOME_URL, {
-    waitUntil: 'domcontentloaded',
+    waitUntil: 'networkidle2',
     timeout: timeoutMs,
   });
 
-  // Minimal wait for dynamic rendering
-  await sleep(page, 300);
+  // Wait for page to fully render
+  await sleep(page, 1000);
 
   // Extract points from the home page header
   log.debug('extracting points from home page header');
   let pointsText = 'n/a';
   let attempts = 0;
-  const maxAttempts = 2; // reduced from 3
+  const maxAttempts = 2;
 
   while (attempts < maxAttempts && pointsText === 'n/a') {
     attempts += 1;
     try {
       log.debug(`points extraction attempt ${attempts}/${maxAttempts}`);
       
-      // Try to find and extract points directly (without waiting for selector)
       const result = await page.evaluate(() => {
         // Strategy 1: Look for links with "保有ポイント" text specifically
         const allLinks = document.querySelectorAll('a');
@@ -124,14 +123,13 @@ async function captureAccountData(session, options = {}) {
       } else {
         log.warn(`extraction failed on attempt ${attempts}, retrying...`);
         if (attempts < maxAttempts) {
-          // Shorter wait before retry
-          await sleep(page, 500);
+          await sleep(page, 800);
         }
       }
     } catch (err) {
       log.warn(`points extraction error (attempt ${attempts}): ${err.message}`);
       if (attempts < maxAttempts) {
-        await sleep(page, 500);
+        await sleep(page, 800);
       }
     }
   }
