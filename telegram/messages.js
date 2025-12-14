@@ -228,11 +228,11 @@ function buildHotmailParsed({ filename, size, count, allowedDomains }) {
 }
 
 function buildNoEligible(contextText) {
-  return `ℹ️ No eligible ${escapeV2(contextText)} credentials found.`;
+  return escapeV2(`ℹ️ No eligible ${contextText} credentials found.`);
 }
 
 function buildAllProcessed(contextText) {
-  return `ℹ️ All eligible credentials ${escapeV2(contextText)} were processed in the last 24h.`;
+  return escapeV2(`ℹ️ All eligible credentials ${contextText} were processed in the last 24h.`);
 }
 
 function buildBatchParseFailed(message) {
@@ -303,7 +303,7 @@ function buildNoActiveBatch() {
 }
 
 function buildBatchFailed(message) {
-  return `⚠️ Batch failed: ${escapeV2(message)}`;
+  return escapeV2(`⚠️ Batch failed: ${message}`);
 }
 
 function buildProcessingHotmail() {
