@@ -58,10 +58,12 @@ async function captureAccountData(session, options = {}) {
   });
 
   if (apiResult && (apiResult.totalPoint != null || apiResult.rcashPoint != null)) {
+    // Translate rank to English if present
+    const rankEn = translateRank(apiResult.rank);
     return {
       points: apiResult.totalPoint != null ? String(apiResult.totalPoint) : 'n/a',
       cash: apiResult.rcashPoint != null ? String(apiResult.rcashPoint) : 'n/a',
-      rank: apiResult.rank,
+      rank: rankEn,
       url: page.url(),
     };
   }
@@ -73,20 +75,38 @@ async function captureAccountData(session, options = {}) {
     timeout: timeoutMs,
   });
 
-  const pointsXPath = '/html/body/main/div[1]/div[1]/div[2]/div/div[2]/div[1]/a/span[1]/span[1]/span[2]';
-  const cashXPath = '/html/body/main/div[1]/div[1]/div[2]/div/div[2]/div[1]/div[4]/span[2]';
-
+  // Updated XPath to get the points value more accurately
+  const pointsXPath = '//*[@id="wrapper"]/div[8]/div/ul[1]/li[3]//div[@class="value--21p0x"][1]';
   const pointsText = await waitForXPathText(page, pointsXPath, timeoutMs);
-  const cashText = await waitForXPathText(page, cashXPath, timeoutMs);
 
-  log.info(`points: ${pointsText} | cash: ${cashText}`);
+  log.info(`points: ${pointsText}`);
 
   return {
     points: pointsText,
-    cash: cashText,
-    rank: apiResult && apiResult.rank,
+    cash: 'n/a', // Not reliably available via DOM
+    rank: apiResult && translateRank(apiResult.rank),
     url: page.url(),
   };
+}
+
+/**
+ * Translate Japanese membership rank names to English.
+ * @param {string} rank - Japanese rank name (e.g., 'ゴールド')
+ * @returns {string} English rank name or original if not found
+ */
+function translateRank(rank) {
+  if (!rank) return 'n/a';
+  
+  const rankMap = {
+    'ダイヤモンド': 'Diamond',
+    'プラチナ': 'Platinum',
+    'ゴールド': 'Gold',
+    'シルバー': 'Silver',
+    '通常': 'Regular',
+    '楽天会員': 'Rakuten Member',
+  };
+  
+  return rankMap[rank] || rank;
 }
 
 async function fetchHeaderInfo(page, timeoutMs) {
