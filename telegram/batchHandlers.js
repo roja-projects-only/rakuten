@@ -23,6 +23,7 @@ const {
   buildUnableToLink,
   buildUlpProcessing,
   buildUlpParsed,
+  buildUlpFileParsed,
   buildHotmailParsed,
   buildNoEligible,
   buildAllProcessed,
