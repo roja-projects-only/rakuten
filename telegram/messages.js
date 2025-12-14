@@ -173,6 +173,9 @@ function buildCheckAndCaptureResult(result, capture, username, durationMs) {
     parts.push(boldV2('📊 Account Data:'));
     parts.push(`• ${boldV2('Points')}: ${escapeV2(capture.points || 'n/a')}`);
     parts.push(`• ${boldV2('Cash')}: ${escapeV2(capture.cash || 'n/a')}`);
+    if (capture.rank && capture.rank !== 'n/a') {
+      parts.push(`• ${boldV2('Rank')}: ${escapeV2(capture.rank)}`);
+    }
   }
 
   return parts.join('\n');

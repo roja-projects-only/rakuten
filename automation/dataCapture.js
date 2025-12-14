@@ -1,6 +1,16 @@
 const TARGET_ACCOUNT_URL = 'https://my.rakuten.co.jp/?l-id=pc_header_memberinfo_popup_account';
 const TARGET_HOME_URL = 'https://www.rakuten.co.jp/';
 const HEADER_INFO_URL = 'https://ichiba-common-web-gateway.rakuten.co.jp/ichiba-common/headerinfo/get/v1';
+
+// Membership rank translations
+const MEMBERSHIP_TRANSLATIONS = {
+  'プラチナ会員': 'Platinum',
+  'ゴールド会員': 'Gold',
+  'シルバー会員': 'Silver',
+  'ブロンズ会員': 'Bronze',
+  '通常会員': 'Regular',
+};
+
 const { createLogger } = require('../logger');
 
 const log = createLogger('capture');
@@ -56,16 +66,29 @@ async function captureAccountData(session, options = {}) {
   // Extract points from the home page header
   log.debug('extracting points from home page header');
   let pointsText = 'n/a';
+  let membershipText = 'n/a';
   let attempts = 0;
   const maxAttempts = 2;
 
   while (attempts < maxAttempts && pointsText === 'n/a') {
     attempts += 1;
     try {
-      log.debug(`points extraction attempt ${attempts}/${maxAttempts}`);
+      log.debug(`extraction attempt ${attempts}/${maxAttempts}`);
       
       const result = await page.evaluate(() => {
-        // Strategy 1: Look for links with "保有ポイント" text specifically
+        const extraction = { points: null, membership: null };
+
+        // Extract membership status
+        const emElements = document.querySelectorAll('em');
+        for (let em of emElements) {
+          const text = (em.innerText || em.textContent || '').trim();
+          if (text.match(/^(プラチナ|ゴールド|シルバー|ブロンズ|通常)会員$/)) {
+            extraction.membership = text;
+            break;
+          }
+        }
+
+        // Extract points
         const allLinks = document.querySelectorAll('a');
         
         for (let link of allLinks) {
@@ -73,12 +96,13 @@ async function captureAccountData(session, options = {}) {
           if (text.includes('保有ポイント')) {
             const match = text.match(/(\d{1,3}(?:,\d{3})*)/);
             if (match) {
-              return { success: true, points: match[1], via: 'holding_points_link' };
+              extraction.points = match[1];
+              return extraction;
             }
           }
         }
 
-        // Fallback: look for any link with point.rakuten in href
+        // Fallback for points
         const pointLinks = document.querySelectorAll('a[href*="point.rakuten"]');
         for (let link of pointLinks) {
           const text = (link.innerText || link.textContent || '').trim();
@@ -86,12 +110,13 @@ async function captureAccountData(session, options = {}) {
           if (match) {
             const numericValue = parseInt(match[1].replace(/,/g, ''), 10);
             if (numericValue > 100) {
-              return { success: true, points: match[1], via: 'point_rakuten_href', numericValue };
+              extraction.points = match[1];
+              return extraction;
             }
           }
         }
 
-        // Last resort: search for largest number with comma format
+        // Last resort for points
         let largestPoints = null;
         let largestValue = 0;
         
@@ -111,15 +136,24 @@ async function captureAccountData(session, options = {}) {
         }
         
         if (largestPoints && largestValue > 100) {
-          return { success: true, points: largestPoints, via: 'largest_comma_number', numericValue: largestValue };
+          extraction.points = largestPoints;
         }
 
-        return { error: 'no_points_found' };
+        return extraction;
       });
 
-      if (result.success) {
+      if (result.points) {
         pointsText = result.points;
-        log.info(`points extracted (attempt ${attempts}): ${pointsText} [${result.via}]`);
+        log.info(`points extracted (attempt ${attempts}): ${pointsText}`);
+      }
+      
+      if (result.membership) {
+        membershipText = result.membership;
+        log.info(`membership extracted: ${membershipText}`);
+      }
+
+      if (result.points) {
+        break; // Success, exit loop
       } else {
         log.warn(`extraction failed on attempt ${attempts}, retrying...`);
         if (attempts < maxAttempts) {
@@ -127,19 +161,22 @@ async function captureAccountData(session, options = {}) {
         }
       }
     } catch (err) {
-      log.warn(`points extraction error (attempt ${attempts}): ${err.message}`);
+      log.warn(`extraction error (attempt ${attempts}): ${err.message}`);
       if (attempts < maxAttempts) {
         await sleep(page, 800);
       }
     }
   }
 
-  log.info(`captured points: ${pointsText}`);
+  // Translate membership status
+  const membershipEnglish = MEMBERSHIP_TRANSLATIONS[membershipText] || membershipText;
+
+  log.info(`captured points: ${pointsText}, membership: ${membershipEnglish}`);
 
   return {
     points: pointsText,
     cash: 'n/a',
-    rank: 'n/a',
+    rank: membershipEnglish,
     url: page.url(),
   };
 }
