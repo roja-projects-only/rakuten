@@ -6,6 +6,14 @@ const {
   MAX_BYTES_HOTMAIL,
   MAX_BYTES_ULP,
 } = require('../automation/batchProcessor');
+const {
+  DEFAULT_TTL_MS,
+  initProcessedStore,
+  getProcessedStatus,
+  markProcessedStatus,
+  isSkippableStatus,
+  makeKey,
+} = require('../automation/batch/processedStore');
 const { createLogger } = require('../logger');
 
 const log = createLogger('batch');
@@ -14,11 +22,30 @@ const BATCH_CONCURRENCY = 3;
 const TELEGRAM_FILE_LIMIT_BYTES = 50 * 1024 * 1024; // Telegram bot API file limit (~50MB)
 const pendingBatches = new Map();
 const pendingFiles = new Map();
+const PROCESSED_TTL_MS = parseInt(process.env.PROCESSED_TTL_MS, 10) || DEFAULT_TTL_MS;
 
 function codeSpan(text) {
   if (text === undefined || text === null) return '``';
   const safe = String(text).replace(/`/g, '\\`').replace(/\\/g, '\\\\');
   return `\`${safe}\``;
+}
+
+async function filterAlreadyProcessed(creds) {
+  await initProcessedStore(PROCESSED_TTL_MS);
+  const filtered = [];
+  let skipped = 0;
+
+  for (const cred of creds) {
+    const key = makeKey(cred.username, cred.password);
+    const status = getProcessedStatus(key, PROCESSED_TTL_MS);
+    if (status && isSkippableStatus(status)) {
+      skipped += 1;
+      continue;
+    }
+    filtered.push({ ...cred, _dedupeKey: key });
+  }
+
+  return { filtered, skipped };
 }
 
 function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, checkCredentials) {
@@ -37,6 +64,7 @@ function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, 
   const processCredential = async (cred) => {
     if (batch.aborted) return;
     let result;
+    const credKey = cred._dedupeKey || makeKey(cred.username, cred.password);
     try {
       result = await checkCredentials(cred.username, cred.password, {
         timeoutMs: options.timeoutMs || 60000,
@@ -55,6 +83,10 @@ function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, 
     if (result.status === 'VALID') {
       validCreds.push(`• ||\`${escapeV2(cred.username)}:${escapeV2(cred.password)}\`||`);
     }
+
+    markProcessedStatus(credKey, result.status, PROCESSED_TTL_MS).catch((err) => {
+      log.warn(`Unable to record processed status: ${err.message}`);
+    });
 
     if (batch.aborted) return;
 
@@ -107,6 +139,7 @@ function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, 
         `${escapeV2(summaryTitle)}` +
         `\nFile: ${codeSpan(batch.filename)}` +
         `\nTotal: *${batch.count}*` +
+        `\nSkipped (24h): *${batch.skipped || 0}*` +
         `\n✅ VALID: *${counts.VALID || 0}*` +
         `\n❌ INVALID: *${counts.INVALID || 0}*` +
         `\n🔒 BLOCKED: *${counts.BLOCKED || 0}*` +
@@ -249,11 +282,24 @@ function registerBatchHandlers(bot, options, helpers) {
       return;
     }
 
+    const { filtered, skipped } = await filterAlreadyProcessed(batch.creds);
+    if (!filtered.length) {
+      await ctx.replyWithMarkdown('ℹ️ All eligible credentials from this URL were processed in the last 24h.', {
+        reply_to_message_id: sourceMessageId,
+      });
+      return;
+    }
+
+    batch.creds = filtered;
+    batch.count = filtered.length;
+    batch.skipped = skipped;
+
     const key = `${chatId}:${sourceMessageId}`;
     pendingBatches.set(key, {
       creds: batch.creds,
       filename: url,
       count: batch.count,
+      skipped: batch.skipped,
       sourceMessageId: Number(sourceMessageId),
     });
 
@@ -292,7 +338,8 @@ function registerBatchHandlers(bot, options, helpers) {
       const statusText =
         `${escapeV2('⏳ Starting batch check')}` +
         `\nFile: ${codeSpan(batch.filename)}` +
-        `\nEntries: *${escapeV2(String(batch.count))}*`;
+        `\nEntries: *${escapeV2(String(batch.count))}*` +
+        `\nSkipped (24h): *${escapeV2(String(batch.skipped || 0))}*`;
 
       const statusMsg = await ctx.reply(statusText, {
         parse_mode: 'MarkdownV2',
@@ -374,11 +421,24 @@ function registerBatchHandlers(bot, options, helpers) {
       return;
     }
 
+    const { filtered, skipped } = await filterAlreadyProcessed(batch.creds);
+    if (!filtered.length) {
+      await ctx.replyWithMarkdown('ℹ️ All eligible credentials in this file were processed in the last 24h.', {
+        reply_to_message_id: Number(msgId),
+      });
+      return;
+    }
+
+    batch.creds = filtered;
+    batch.count = filtered.length;
+    batch.skipped = skipped;
+
     pendingFiles.delete(key);
     pendingBatches.set(key, {
       creds: batch.creds,
       filename: file.filename,
       count: batch.count,
+      skipped: batch.skipped,
       sourceMessageId: Number(msgId),
     });
 
