@@ -1,7 +1,36 @@
 const puppeteer = require('puppeteer');
 const UserAgent = require('user-agents');
+const { createLogger } = require('../logger');
+
+const log = createLogger('browser');
 
 const DEFAULT_VIEWPORT = { width: 1920, height: 1080 };
+const DEFAULT_LIMITS = {
+  maxAgeMs: 10 * 60 * 1000, // recycle after 10 minutes
+  maxIdleMs: 5 * 60 * 1000, // recycle if idle for 5 minutes
+  maxUses: 50, // recycle after N sessions
+};
+
+let sharedBrowser = null;
+let sharedSignature = null;
+let sharedLaunchedAt = 0;
+let sharedLastUsedAt = 0;
+let sharedUseCount = 0;
+
+function parseLimit(envKey, fallback) {
+  const val = process.env[envKey];
+  if (!val) return fallback;
+  const num = parseInt(val, 10);
+  return Number.isFinite(num) && num > 0 ? num : fallback;
+}
+
+function getLimits() {
+  return {
+    maxAgeMs: parseLimit('BROWSER_MAX_AGE_MS', DEFAULT_LIMITS.maxAgeMs),
+    maxIdleMs: parseLimit('BROWSER_MAX_IDLE_MS', DEFAULT_LIMITS.maxIdleMs),
+    maxUses: parseLimit('BROWSER_MAX_USES', DEFAULT_LIMITS.maxUses),
+  };
+}
 
 function buildLaunchOptions(proxy, headless) {
   const args = [
@@ -21,10 +50,65 @@ function buildLaunchOptions(proxy, headless) {
   };
 }
 
+function signatureFor(proxy, headless) {
+  return JSON.stringify({ proxy: proxy || null, headless: headless ?? 'new' });
+}
+
+async function recycleSharedBrowser() {
+  if (sharedBrowser) {
+    try {
+      await sharedBrowser.close();
+    } catch (_) {
+      // swallow
+    }
+  }
+  sharedBrowser = null;
+  sharedSignature = null;
+  sharedLaunchedAt = 0;
+  sharedLastUsedAt = 0;
+  sharedUseCount = 0;
+}
+
+function needsRecycle(limits) {
+  if (!sharedBrowser) return false;
+  const now = Date.now();
+  if (limits.maxAgeMs && now - sharedLaunchedAt > limits.maxAgeMs) return true;
+  if (limits.maxIdleMs && now - sharedLastUsedAt > limits.maxIdleMs) return true;
+  if (limits.maxUses && sharedUseCount >= limits.maxUses) return true;
+  return false;
+}
+
+async function getSharedBrowser(proxy, headless) {
+  const limits = getLimits();
+  const desiredSignature = signatureFor(proxy, headless);
+
+  if (sharedBrowser && sharedSignature !== desiredSignature) {
+    log.info('Browser signature changed, recycling existing browser');
+    await recycleSharedBrowser();
+  }
+
+  if (needsRecycle(limits)) {
+    log.info('Recycling browser due to age/idle/use limits');
+    await recycleSharedBrowser();
+  }
+
+  if (!sharedBrowser) {
+    const launchOptions = buildLaunchOptions(proxy, headless);
+    sharedBrowser = await puppeteer.launch(launchOptions);
+    sharedSignature = desiredSignature;
+    sharedLaunchedAt = Date.now();
+    sharedUseCount = 0;
+    log.info('Launched shared browser');
+  }
+
+  sharedUseCount += 1;
+  sharedLastUsedAt = Date.now();
+  return { browser: sharedBrowser, limits };
+}
+
 async function createBrowserSession({ proxy, headless } = {}) {
-  const launchOptions = buildLaunchOptions(proxy, headless);
-  const browser = await puppeteer.launch(launchOptions);
-  // Puppeteer v24+ uses createBrowserContext for incognito; fall back for older versions.
+  const { browser } = await getSharedBrowser(proxy, headless);
+
   const contextFactory = browser.createBrowserContext || browser.createIncognitoBrowserContext;
   if (!contextFactory) {
     throw new Error('No browser context factory available on Puppeteer browser instance');
@@ -37,7 +121,7 @@ async function createBrowserSession({ proxy, headless } = {}) {
   const userAgent = new UserAgent().toString();
   await page.setUserAgent(userAgent);
 
-  return { browser, context, page };
+  return { browser, context, page, isShared: true };
 }
 
 async function closeBrowserSession(session) {
@@ -45,19 +129,24 @@ async function closeBrowserSession(session) {
     return;
   }
 
-  const { context, browser } = session;
+  const { context, browser, isShared } = session;
 
   if (context) {
     await context.close().catch(() => {});
   }
 
-  if (browser) {
+  if (!isShared && browser) {
     await browser.close().catch(() => {});
   }
+}
+
+async function closeSharedBrowser() {
+  await recycleSharedBrowser();
 }
 
 module.exports = {
   buildLaunchOptions,
   createBrowserSession,
   closeBrowserSession,
+  closeSharedBrowser,
 };
