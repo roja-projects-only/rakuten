@@ -50,6 +50,10 @@ async function captureAccountData(session, options = {}) {
     timeout: timeoutMs,
   });
 
+  // Wait extra time for page to fully render (points element may be lazy-loaded)
+  log.debug('waiting for page to fully stabilize');
+  await sleep(page, 2000);
+
   // Extract points from the home page header
   log.debug('extracting points from home page header');
   let pointsText = 'n/a';
@@ -61,47 +65,77 @@ async function captureAccountData(session, options = {}) {
     try {
       log.debug(`points extraction attempt ${attempts}/${maxAttempts}`);
       
-      // Wait for the points element to be available
-      await page.waitForSelector('a[href*="point.rakuten"]', { timeout: 5000 });
+      // First try: wait for selector with long timeout
+      try {
+        log.debug(`waiting for selector with 10s timeout`);
+        await page.waitForSelector('a[href*="point.rakuten"]', { timeout: 10000 });
+        log.debug(`selector found, waiting for render`);
+        await sleep(page, 1000);
+      } catch (selectorErr) {
+        log.warn(`selector wait failed: ${selectorErr.message}, trying direct evaluation`);
+        // Continue to evaluation attempt even if selector wait fails
+      }
       
-      // Wait a bit more for content to render
-      await sleep(page, 500);
-      
-      // Extract the numeric part
+      // Extract via page.evaluate
+      log.debug(`evaluating page to extract points`);
       const result = await page.evaluate(() => {
         const links = document.querySelectorAll('a[href*="point.rakuten"]');
         if (links.length === 0) {
-          return { error: 'no_links', count: 0 };
+          // Try broader search
+          const allLinks = document.querySelectorAll('a');
+          let found = null;
+          for (let link of allLinks) {
+            if (link.href && link.href.includes('point.rakuten')) {
+              found = link;
+              break;
+            }
+          }
+          if (!found) {
+            return { error: 'no_links', linksSearched: allLinks.length };
+          }
+          links.push(found);
         }
         
         const text = links[0].innerText.trim();
         if (!text) {
-          return { error: 'empty_text', count: links.length };
+          // Try textContent as fallback
+          const textContent = (links[0].textContent || '').trim();
+          if (!textContent) {
+            return { error: 'empty_text', count: links.length };
+          }
+          const match = textContent.match(/[0-9,]+/);
+          if (!match) {
+            return { error: 'no_match_content', text: textContent.substring(0, 100) };
+          }
+          return { success: true, points: match[0], via: 'textContent' };
         }
         
         const match = text.match(/[0-9,]+/);
         if (!match) {
-          return { error: 'no_match', text: text };
+          return { error: 'no_match', text: text.substring(0, 100) };
         }
         
-        return { success: true, points: match[0] };
+        return { success: true, points: match[0], via: 'innerText' };
       });
 
       log.debug(`extraction result:`, JSON.stringify(result));
 
       if (result.success) {
         pointsText = result.points;
-        log.info(`points extracted (attempt ${attempts}): ${pointsText}`);
+        log.info(`points extracted (attempt ${attempts}): ${pointsText} [${result.via}]`);
       } else {
         log.warn(`extraction failed: ${result.error}`, result);
         if (attempts < maxAttempts) {
-          await sleep(page, 1000); // wait before retry
+          log.debug(`waiting ${1500 + attempts * 500}ms before retry`);
+          await sleep(page, 1500 + attempts * 500); // progressive backoff
         }
       }
     } catch (err) {
       log.warn(`points extraction error (attempt ${attempts}): ${err.message}`);
+      log.trace(`error stack:`, err.stack);
       if (attempts < maxAttempts) {
-        await sleep(page, 1000);
+        log.debug(`waiting ${1500 + attempts * 500}ms before retry`);
+        await sleep(page, 1500 + attempts * 500);
       }
     }
   }
