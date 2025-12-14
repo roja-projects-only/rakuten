@@ -54,6 +54,10 @@ async function captureAccountData(session, options = {}) {
   log.debug('waiting for page to fully stabilize');
   await sleep(page, 2000);
 
+  // Check current URL and page state
+  const currentUrl = page.url();
+  log.debug(`current URL: ${currentUrl}`);
+
   // Extract points from the home page header
   log.debug('extracting points from home page header');
   let pointsText = 'n/a';
@@ -76,46 +80,53 @@ async function captureAccountData(session, options = {}) {
         // Continue to evaluation attempt even if selector wait fails
       }
       
-      // Extract via page.evaluate
+      // Extract via page.evaluate with extensive diagnostics
       log.debug(`evaluating page to extract points`);
       const result = await page.evaluate(() => {
-        const links = document.querySelectorAll('a[href*="point.rakuten"]');
-        if (links.length === 0) {
-          // Try broader search
-          const allLinks = document.querySelectorAll('a');
-          let found = null;
-          for (let link of allLinks) {
-            if (link.href && link.href.includes('point.rakuten')) {
-              found = link;
-              break;
+        // Try exact selector first
+        let links = document.querySelectorAll('a[href*="point.rakuten"]');
+        if (links.length > 0) {
+          const text = links[0].innerText.trim();
+          const match = text.match(/[0-9,]+/);
+          if (match) {
+            return { success: true, points: match[0], via: 'exact_selector', linksFound: links.length };
+          }
+        }
+
+        // Try any link with "point" in href
+        const allLinks = document.querySelectorAll('a[href*="point"]');
+        if (allLinks.length > 0) {
+          for (let i = 0; i < Math.min(5, allLinks.length); i++) {
+            const text = (allLinks[i].innerText || allLinks[i].textContent || '').trim();
+            const match = text.match(/[0-9,]+/);
+            if (match) {
+              return { success: true, points: match[0], via: 'point_href', linksFound: allLinks.length };
             }
           }
-          if (!found) {
-            return { error: 'no_links', linksSearched: allLinks.length };
-          }
-          links.push(found);
         }
-        
-        const text = links[0].innerText.trim();
-        if (!text) {
-          // Try textContent as fallback
-          const textContent = (links[0].textContent || '').trim();
-          if (!textContent) {
-            return { error: 'empty_text', count: links.length };
+
+        // Try any link with "保有ポイント" (holding points) text
+        const allAnchors = document.querySelectorAll('a');
+        for (let i = 0; i < allAnchors.length; i++) {
+          const text = (allAnchors[i].innerText || allAnchors[i].textContent || '').trim();
+          if (text.includes('保有ポイント') || text.includes('ポイント')) {
+            const match = text.match(/[0-9,]+/);
+            if (match) {
+              return { success: true, points: match[0], via: 'jp_text_search', linksFound: allAnchors.length };
+            }
           }
-          const match = textContent.match(/[0-9,]+/);
-          if (!match) {
-            return { error: 'no_match_content', text: textContent.substring(0, 100) };
+        }
+
+        // Fallback: search for any numeric pattern with commas in links
+        for (let i = 0; i < allAnchors.length; i++) {
+          const text = (allAnchors[i].innerText || allAnchors[i].textContent || '').trim();
+          const match = text.match(/[0-9]{1,3}(?:,[0-9]{3})+/); // numbers with commas (1,000+)
+          if (match && text.length < 100) { // avoid very long text
+            return { success: true, points: match[0], via: 'numeric_fallback', linksFound: allAnchors.length };
           }
-          return { success: true, points: match[0], via: 'textContent' };
         }
-        
-        const match = text.match(/[0-9,]+/);
-        if (!match) {
-          return { error: 'no_match', text: text.substring(0, 100) };
-        }
-        
-        return { success: true, points: match[0], via: 'innerText' };
+
+        return { error: 'no_points_found', linksSearched: allAnchors.length, pageTitle: document.title };
       });
 
       log.debug(`extraction result:`, JSON.stringify(result));
