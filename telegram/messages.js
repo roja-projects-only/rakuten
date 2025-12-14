@@ -244,7 +244,7 @@ function buildBatchConfirmStart({ filename, count, skipped }) {
     escapeV2('⏳ Starting batch check') +
     `\nFile: ${codeSpan(filename)}` +
     `\nEntries: *${escapeV2(String(count))}*` +
-    `\nSkipped (24h): *${escapeV2(String(skipped || 0))}*`
+    `\n${escapeV2('Skipped (24h)')}: *${escapeV2(String(skipped || 0))}*`
   );
 }
 
@@ -271,7 +271,7 @@ function buildBatchSummary({ filename, total, skipped, counts, elapsedMs, validC
     escapeV2(title) +
     `\nFile: ${codeSpan(filename)}` +
     `\nTotal: *${total}*` +
-    `\nSkipped (24h): *${skipped || 0}*` +
+    `\n${escapeV2('Skipped (24h)')}: *${escapeV2(String(skipped || 0))}*` +
     `\n✅ VALID: *${counts.VALID || 0}*` +
     `\n❌ INVALID: *${counts.INVALID || 0}*` +
     `\n🔒 BLOCKED: *${counts.BLOCKED || 0}*` +
