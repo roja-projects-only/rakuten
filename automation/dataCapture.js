@@ -1,8 +1,16 @@
 const TARGET_ACCOUNT_URL = 'https://my.rakuten.co.jp/?l-id=pc_header_memberinfo_popup_account';
+const TARGET_HOME_URL = 'https://www.rakuten.co.jp/';
 const HEADER_INFO_URL = 'https://ichiba-common-web-gateway.rakuten.co.jp/ichiba-common/headerinfo/get/v1';
 const { createLogger } = require('../logger');
 
 const log = createLogger('capture');
+
+function sleep(page, ms) {
+  if (page && typeof page.waitForTimeout === 'function') {
+    return page.waitForTimeout(ms);
+  }
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 async function waitForXPathText(page, xpath, timeoutMs) {
   log.debug(`waiting for xpath: ${xpath}`);
@@ -36,17 +44,33 @@ async function captureAccountData(session, options = {}) {
   const { page } = session;
   const { timeoutMs = 30000 } = options;
 
-  log.info('navigating to account page');
-  await page.goto(TARGET_ACCOUNT_URL, {
+  log.info('navigating to rakuten home');
+  await page.goto(TARGET_HOME_URL, {
     waitUntil: 'networkidle0',
     timeout: timeoutMs,
   });
 
   // Wait briefly to ensure session cookies are settled, then try API-first for accuracy.
-  await page.waitForTimeout(500).catch(() => {});
+  await sleep(page, 500).catch(() => {});
   const apiResult = await fetchHeaderInfo(page, timeoutMs).catch((err) => {
     log.warn(`headerinfo fetch failed: ${err.message}`);
     return null;
+  });
+
+  if (apiResult && (apiResult.totalPoint != null || apiResult.rcashPoint != null)) {
+    return {
+      points: apiResult.totalPoint != null ? String(apiResult.totalPoint) : 'n/a',
+      cash: apiResult.rcashPoint != null ? String(apiResult.rcashPoint) : 'n/a',
+      rank: apiResult.rank,
+      url: page.url(),
+    };
+  }
+
+  // Fallback to account page DOM scrape if API is unavailable.
+  log.info('headerinfo unavailable, falling back to account page scrape');
+  await page.goto(TARGET_ACCOUNT_URL, {
+    waitUntil: 'networkidle0',
+    timeout: timeoutMs,
   });
 
   const pointsXPath = '/html/body/main/div[1]/div[1]/div[2]/div/div[2]/div[1]/a/span[1]/span[1]/span[2]';
@@ -58,8 +82,8 @@ async function captureAccountData(session, options = {}) {
   log.info(`points: ${pointsText} | cash: ${cashText}`);
 
   return {
-    points: (apiResult && apiResult.totalPoint != null ? String(apiResult.totalPoint) : pointsText),
-    cash: (apiResult && apiResult.rcashPoint != null ? String(apiResult.rcashPoint) : cashText),
+    points: pointsText,
+    cash: cashText,
     rank: apiResult && apiResult.rank,
     url: page.url(),
   };
