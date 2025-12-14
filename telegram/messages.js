@@ -6,7 +6,9 @@ function escapeV2(text = '') {
 }
 
 function codeV2(text = '') {
-  return `\`${escapeV2(text)}\``;
+  // For code spans in MarkdownV2, only backticks and backslashes need escaping.
+  const safe = String(text).replace(/[`\\]/g, '\\$&');
+  return `\`${safe}\``;
 }
 
 function boldV2(text = '') {
