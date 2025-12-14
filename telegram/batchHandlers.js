@@ -14,6 +14,30 @@ const {
   isSkippableStatus,
   makeKey,
 } = require('../automation/batch/processedStore');
+const {
+  escapeV2,
+  formatBytes,
+  formatDurationMs,
+  buildFileTooLarge,
+  buildFileReceived,
+  buildUnableToLink,
+  buildUlpProcessing,
+  buildUlpParsed,
+  buildHotmailParsed,
+  buildNoEligible,
+  buildAllProcessed,
+  buildBatchParseFailed,
+  buildBatchConfirmStart,
+  buildBatchProgress,
+  buildBatchSummary,
+  buildBatchAborted,
+  buildBatchCancelled,
+  buildBatchAborting,
+  buildNoActiveBatch,
+  buildBatchFailed,
+  buildProcessingHotmail,
+  codeSpan,
+} = require('./messages');
 const { createLogger } = require('../logger');
 
 const log = createLogger('batch');
@@ -23,12 +47,6 @@ const TELEGRAM_FILE_LIMIT_BYTES = 50 * 1024 * 1024; // Telegram bot API file lim
 const pendingBatches = new Map();
 const pendingFiles = new Map();
 const PROCESSED_TTL_MS = parseInt(process.env.PROCESSED_TTL_MS, 10) || DEFAULT_TTL_MS;
-
-function codeSpan(text) {
-  if (text === undefined || text === null) return '``';
-  const safe = String(text).replace(/`/g, '\\`').replace(/\\/g, '\\\\');
-  return `\`${safe}\``;
-}
 
 async function filterAlreadyProcessed(creds) {
   await initProcessedStore(PROCESSED_TTL_MS);
@@ -81,7 +99,7 @@ function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, 
     processed += 1;
 
     if (result.status === 'VALID') {
-      validCreds.push(`• ||\`${escapeV2(cred.username)}:${escapeV2(cred.password)}\`||`);
+      validCreds.push({ username: cred.username, password: cred.password });
     }
 
     markProcessedStatus(credKey, result.status, PROCESSED_TTL_MS).catch((err) => {
@@ -98,14 +116,12 @@ function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, 
       now - lastProgressAt >= 5000;
 
     if (shouldUpdate) {
-      const text =
-        `${escapeV2('⏳ Batch progress')}` +
-        `\nFile: ${codeSpan(batch.filename)}` +
-        `\nProcessed: *${processed}/${batch.count}*` +
-        `\n✅ VALID: *${counts.VALID || 0}*` +
-        `\n❌ INVALID: *${counts.INVALID || 0}*` +
-        `\n🔒 BLOCKED: *${counts.BLOCKED || 0}*` +
-        `\n⚠️ ERROR: *${counts.ERROR || 0}*`;
+      const text = buildBatchProgress({
+        filename: batch.filename,
+        processed,
+        total: batch.count,
+        counts,
+      });
 
       try {
         await ctx.telegram.editMessageText(chatId, statusMsg.message_id, undefined, text, {
@@ -134,19 +150,16 @@ function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, 
       await Promise.all(Array.from({ length: poolSize }, () => worker()));
 
       const elapsed = Date.now() - startedAt;
-      const summaryTitle = batch.aborted ? '⏹️ Batch aborted' : '📊 Batch complete';
-      const summary =
-        `${escapeV2(summaryTitle)}` +
-        `\nFile: ${codeSpan(batch.filename)}` +
-        `\nTotal: *${batch.count}*` +
-        `\nSkipped (24h): *${batch.skipped || 0}*` +
-        `\n✅ VALID: *${counts.VALID || 0}*` +
-        `\n❌ INVALID: *${counts.INVALID || 0}*` +
-        `\n🔒 BLOCKED: *${counts.BLOCKED || 0}*` +
-        `\n⚠️ ERROR: *${counts.ERROR || 0}*` +
-        `\n🕒 Time: *${escapeV2(formatDurationMs(elapsed))}*` +
-        `\n\n${escapeV2('VALID accounts:')}` +
-        `\n${validCreds.length ? validCreds.join('\n') : escapeV2('• None')}`;
+      const summary = batch.aborted
+        ? buildBatchAborted({ filename: batch.filename, total: batch.count, processed })
+        : buildBatchSummary({
+            filename: batch.filename,
+            total: batch.count,
+            skipped: batch.skipped || 0,
+            counts,
+            elapsedMs: elapsed,
+            validCreds,
+          });
 
       try {
         await ctx.telegram.editMessageText(chatId, statusMsg.message_id, undefined, summary, {
@@ -166,7 +179,8 @@ function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, 
       );
     } catch (err) {
       try {
-        await ctx.replyWithMarkdown(`⚠️ Batch failed: ${escapeV2(err.message)}`, {
+        await ctx.reply(buildBatchFailed(err.message), {
+          parse_mode: 'MarkdownV2',
           reply_to_message_id: Number(msgId),
         });
       } catch (_) {
@@ -184,7 +198,6 @@ function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, 
 }
 
 function registerBatchHandlers(bot, options, helpers) {
-  const { escapeV2, formatBytes } = helpers;
   const checkCredentials = options.checkCredentials;
 
   if (typeof checkCredentials !== 'function') {
@@ -201,10 +214,10 @@ function registerBatchHandlers(bot, options, helpers) {
     log.info(`[batch] file received name=${doc.file_name || 'unknown'} size=${doc.file_size || 0}`);
 
     if (doc.file_size && doc.file_size > TELEGRAM_FILE_LIMIT_BYTES) {
-      await ctx.replyWithMarkdown(
-        '⚠️ File too large for Telegram bots (max ~50MB). For ULP lists, host the file and use `.ulp <url>` instead.',
-        { reply_to_message_id: sourceMessageId }
-      );
+      await ctx.reply(buildFileTooLarge(), {
+        parse_mode: 'MarkdownV2',
+        reply_to_message_id: sourceMessageId,
+      });
       return;
     }
 
@@ -213,10 +226,10 @@ function registerBatchHandlers(bot, options, helpers) {
       const link = await ctx.telegram.getFileLink(doc.file_id);
       fileUrl = link.href || link.toString();
     } catch (err) {
-      await ctx.replyWithMarkdown(
-        `⚠️ Unable to get file link: ${escapeV2(err.message)}`,
-        { reply_to_message_id: doc.message_id }
-      );
+      await ctx.reply(buildUnableToLink(err.message), {
+        parse_mode: 'MarkdownV2',
+        reply_to_message_id: doc.message_id,
+      });
       return;
     }
 
@@ -228,19 +241,14 @@ function registerBatchHandlers(bot, options, helpers) {
       sourceMessageId,
     });
 
-    await ctx.replyWithMarkdown(
-      '📂 *File received*' +
-      `\n• Name: ${codeSpan(doc.file_name || 'file')}` +
-      `\n• Size: ${formatBytes(doc.file_size)}` +
-      '\n\nProcess as HOTMAIL list?',
-      {
-        reply_to_message_id: sourceMessageId,
-        ...Markup.inlineKeyboard([
-          [Markup.button.callback('📧 Proceed (HOTMAIL)', `batch_type_hotmail_${sourceMessageId}`)],
-          [Markup.button.callback('⛔ Cancel', `batch_cancel_${sourceMessageId}`)],
-        ]),
-      }
-    );
+    await ctx.reply(buildFileReceived({ filename: doc.file_name || 'file', size: doc.file_size }), {
+      parse_mode: 'MarkdownV2',
+      reply_to_message_id: sourceMessageId,
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback('📧 Proceed (HOTMAIL)', `batch_type_hotmail_${sourceMessageId}`)],
+        [Markup.button.callback('⛔ Cancel', `batch_cancel_${sourceMessageId}`)],
+      ]),
+    });
   });
 
   bot.hears(/^\.ulp\s+(https?:\/\/\S+)/i, async (ctx) => {
@@ -251,14 +259,16 @@ function registerBatchHandlers(bot, options, helpers) {
     log.info(`[batch][ulp] start url=${url}`);
 
     if (!url || url.length > 1000) {
-      await ctx.replyWithMarkdown('⚠️ Provide a valid URL after `.ulp`.', {
+      await ctx.reply(escapeV2('⚠️ Provide a valid URL after `.ulp`.'), {
+        parse_mode: 'MarkdownV2',
         reply_to_message_id: sourceMessageId,
       });
       return;
     }
 
     try {
-      await ctx.replyWithMarkdown('⏳ Processing ULP URL (this may take a while)...', {
+      await ctx.reply(buildUlpProcessing(), {
+        parse_mode: 'MarkdownV2',
         reply_to_message_id: sourceMessageId,
       });
     } catch (_) {}
@@ -268,7 +278,8 @@ function registerBatchHandlers(bot, options, helpers) {
       batch = await prepareUlpBatch(url, MAX_BYTES_ULP);
       log.info(`[batch][ulp] parsed count=${batch.count}`);
     } catch (err) {
-      await ctx.replyWithMarkdown(`⚠️ Failed to read URL: ${escapeV2(err.message)}`, {
+      await ctx.reply(buildBatchParseFailed(err.message), {
+        parse_mode: 'MarkdownV2',
         reply_to_message_id: sourceMessageId,
       });
       log.warn(`[batch][ulp] parse failed url=${url} msg=${err.message}`);
@@ -276,7 +287,8 @@ function registerBatchHandlers(bot, options, helpers) {
     }
 
     if (!batch.count) {
-      await ctx.replyWithMarkdown('ℹ️ No eligible Rakuten credentials found at this URL.', {
+      await ctx.reply(buildNoEligible('Rakuten'), {
+        parse_mode: 'MarkdownV2',
         reply_to_message_id: sourceMessageId,
       });
       return;
@@ -284,7 +296,8 @@ function registerBatchHandlers(bot, options, helpers) {
 
     const { filtered, skipped } = await filterAlreadyProcessed(batch.creds);
     if (!filtered.length) {
-      await ctx.replyWithMarkdown('ℹ️ All eligible credentials from this URL were processed in the last 24h.', {
+      await ctx.reply(buildAllProcessed('from this URL'), {
+        parse_mode: 'MarkdownV2',
         reply_to_message_id: sourceMessageId,
       });
       return;
@@ -303,22 +316,16 @@ function registerBatchHandlers(bot, options, helpers) {
       sourceMessageId: Number(sourceMessageId),
     });
 
-    await ctx.replyWithMarkdown(
-      '🗂 *ULP URL parsed*' +
-      `\n• Source: ${codeSpan(url.length > 120 ? `${url.slice(0, 117)}...` : url)}` +
-      `\n• Eligible credentials: *${batch.count}*` +
-      '\n• Filter: lines containing `rakuten.co.jp` (deduped)' +
-      '\n\nProceed to check them?',
-      {
-        reply_to_message_id: sourceMessageId,
-        ...Markup.inlineKeyboard([
-          [
-            Markup.button.callback('✅ Proceed', `batch_confirm_${sourceMessageId}`),
-            Markup.button.callback('⛔ Cancel', `batch_cancel_${sourceMessageId}`),
-          ],
-        ]),
-      }
-    );
+    await ctx.reply(buildUlpParsed({ url, count: batch.count }), {
+      parse_mode: 'MarkdownV2',
+      reply_to_message_id: sourceMessageId,
+      ...Markup.inlineKeyboard([
+        [
+          Markup.button.callback('✅ Proceed', `batch_confirm_${sourceMessageId}`),
+          Markup.button.callback('⛔ Cancel', `batch_cancel_${sourceMessageId}`),
+        ],
+      ]),
+    });
   });
 
   bot.action(/batch_confirm_(.+)/, async (ctx) => {
@@ -328,18 +335,18 @@ function registerBatchHandlers(bot, options, helpers) {
       const key = `${ctx.chat.id}:${msgId}`;
       const batch = pendingBatches.get(key);
       if (!batch) {
-        await ctx.replyWithMarkdown(
-          '⚠️ Batch expired. Send the file again to restart.',
-          { reply_to_message_id: Number(msgId) }
-        );
+        await ctx.reply(buildBatchFailed('Batch expired. Send the file again to restart.'), {
+          parse_mode: 'MarkdownV2',
+          reply_to_message_id: Number(msgId),
+        });
         return;
       }
 
-      const statusText =
-        `${escapeV2('⏳ Starting batch check')}` +
-        `\nFile: ${codeSpan(batch.filename)}` +
-        `\nEntries: *${escapeV2(String(batch.count))}*` +
-        `\nSkipped (24h): *${escapeV2(String(batch.skipped || 0))}*`;
+      const statusText = buildBatchConfirmStart({
+        filename: batch.filename,
+        count: batch.count,
+        skipped: batch.skipped,
+      });
 
       const statusMsg = await ctx.reply(statusText, {
         parse_mode: 'MarkdownV2',
@@ -352,7 +359,8 @@ function registerBatchHandlers(bot, options, helpers) {
       runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, checkCredentials);
     } catch (err) {
       log.warn('Batch confirm handler error:', err.message);
-      await ctx.replyWithMarkdown(`⚠️ Batch failed: ${escapeV2(err.message)}`, {
+      await ctx.reply(buildBatchFailed(err.message), {
+        parse_mode: 'MarkdownV2',
         reply_to_message_id: ctx.update?.callback_query?.message?.message_id,
       });
     }
@@ -369,14 +377,14 @@ function registerBatchHandlers(bot, options, helpers) {
         ctx.chat.id,
         ctx.update.callback_query.message.message_id,
         undefined,
-        '❎ Batch cancelled. Send a new file to try again.',
-        { parse_mode: 'Markdown' }
+        buildBatchCancelled(),
+        { parse_mode: 'MarkdownV2' }
       );
     } catch (_) {
-      await ctx.replyWithMarkdown(
-        '❎ Batch cancelled. Send a new file to try again.',
-        { reply_to_message_id: Number(msgId) }
-      );
+      await ctx.reply(buildBatchCancelled(), {
+        parse_mode: 'MarkdownV2',
+        reply_to_message_id: Number(msgId),
+      });
     }
   });
 
@@ -386,7 +394,8 @@ function registerBatchHandlers(bot, options, helpers) {
     const key = `${ctx.chat.id}:${msgId}`;
     const file = pendingFiles.get(key);
     if (!file) {
-      await ctx.replyWithMarkdown('⚠️ File info expired. Send the file again.', {
+      await ctx.reply(buildBatchFailed('File info expired. Send the file again.'), {
+        parse_mode: 'MarkdownV2',
         reply_to_message_id: Number(msgId),
       });
       return;
@@ -397,8 +406,8 @@ function registerBatchHandlers(bot, options, helpers) {
         ctx.chat.id,
         ctx.update.callback_query.message.message_id,
         undefined,
-        '⏳ Processing HOTMAIL file...',
-        { parse_mode: 'Markdown' }
+        buildProcessingHotmail(),
+        { parse_mode: 'MarkdownV2' }
       );
     } catch (_) {}
 
@@ -407,7 +416,8 @@ function registerBatchHandlers(bot, options, helpers) {
       batch = await prepareBatchFromFile(file.fileUrl, MAX_BYTES_HOTMAIL);
       log.info(`[batch][hotmail] parsed count=${batch.count} file=${file.filename}`);
     } catch (err) {
-      await ctx.replyWithMarkdown(`⚠️ Failed to read file: ${escapeV2(err.message)}`, {
+      await ctx.reply(buildBatchParseFailed(err.message), {
+        parse_mode: 'MarkdownV2',
         reply_to_message_id: Number(msgId),
       });
       log.warn(`[batch][hotmail] parse failed file=${file.filename} msg=${err.message}`);
@@ -415,7 +425,8 @@ function registerBatchHandlers(bot, options, helpers) {
     }
 
     if (!batch.count) {
-      await ctx.replyWithMarkdown('ℹ️ No eligible Microsoft .jp credentials found.', {
+      await ctx.reply(buildNoEligible('Microsoft .jp'), {
+        parse_mode: 'MarkdownV2',
         reply_to_message_id: Number(msgId),
       });
       return;
@@ -423,7 +434,8 @@ function registerBatchHandlers(bot, options, helpers) {
 
     const { filtered, skipped } = await filterAlreadyProcessed(batch.creds);
     if (!filtered.length) {
-      await ctx.replyWithMarkdown('ℹ️ All eligible credentials in this file were processed in the last 24h.', {
+      await ctx.reply(buildAllProcessed('in this file'), {
+        parse_mode: 'MarkdownV2',
         reply_to_message_id: Number(msgId),
       });
       return;
@@ -442,15 +454,10 @@ function registerBatchHandlers(bot, options, helpers) {
       sourceMessageId: Number(msgId),
     });
 
-    const allowedDomainsText = ALLOWED_DOMAINS.map((d) => `\`${d}\``).join(', ');
-    await ctx.replyWithMarkdown(
-      '📂 *HOTMAIL list parsed*' +
-      `\n• Name: ${codeSpan(file.filename)}` +
-      `\n• Size: ${formatBytes(file.size)}` +
-      `\n• Eligible credentials: *${batch.count}*` +
-      '\n• Allowed domains: ' + allowedDomainsText +
-      '\n\nProceed to check them?',
+    await ctx.reply(
+      buildHotmailParsed({ filename: file.filename, size: file.size, count: batch.count, allowedDomains: ALLOWED_DOMAINS }),
       {
+        parse_mode: 'MarkdownV2',
         reply_to_message_id: Number(msgId),
         ...Markup.inlineKeyboard([
           [
@@ -475,15 +482,16 @@ function registerBatchHandlers(bot, options, helpers) {
           ctx.chat.id,
           ctx.update.callback_query.message.message_id,
           undefined,
-          '⏹ Aborting batch, please wait...',
+          buildBatchAborting(),
           {
-            parse_mode: 'Markdown',
+            parse_mode: 'MarkdownV2',
             ...Markup.inlineKeyboard([]),
           }
         );
       } catch (_) {}
     } else {
-      await ctx.replyWithMarkdown('⚠️ No active batch to abort.', {
+      await ctx.reply(buildNoActiveBatch(), {
+        parse_mode: 'MarkdownV2',
         reply_to_message_id: ctx.update.callback_query.message.message_id,
       });
     }
