@@ -4,7 +4,7 @@ const { createLogger } = require('../../logger');
 
 const log = createLogger('processed-store');
 
-const DEFAULT_TTL_MS = parseInt(process.env.PROCESSED_TTL_MS, 10) || 24 * 60 * 60 * 1000;
+const DEFAULT_TTL_MS = parseInt(process.env.PROCESSED_TTL_MS, 10) || 7 * 24 * 60 * 60 * 1000;
 const STORE_PATH = path.join(process.cwd(), 'data', 'processed', 'processed-creds.jsonl');
 
 let initialized = false;
