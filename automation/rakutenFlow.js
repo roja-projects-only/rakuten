@@ -39,7 +39,7 @@ function sleep(page, ms) {
 
 async function navigateToLogin(page, targetUrl, timeoutMs) {
   await page.goto(targetUrl, {
-    waitUntil: 'networkidle0',
+    waitUntil: 'networkidle2',
     timeout: timeoutMs,
   });
 }

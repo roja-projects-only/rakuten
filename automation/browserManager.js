@@ -6,9 +6,9 @@ const log = createLogger('browser');
 
 const DEFAULT_VIEWPORT = { width: 1920, height: 1080 };
 const DEFAULT_LIMITS = {
-  maxAgeMs: 10 * 60 * 1000, // recycle after 10 minutes
-  maxIdleMs: 5 * 60 * 1000, // recycle if idle for 5 minutes
-  maxUses: 50, // recycle after N sessions
+  maxAgeMs: 15 * 60 * 1000, // recycle after 15 minutes
+  maxIdleMs: 10 * 60 * 1000, // recycle if idle for 10 minutes
+  maxUses: 100, // recycle after N sessions
 };
 
 let sharedBrowser = null;
