@@ -634,41 +634,41 @@ async function fetchProfileData(client, jar, timeoutMs) {
       }
       bearerToken = null;
       log.debug('Calling gateway/initiate to get proper Bearer token (session is established via Im cookie)...');
-    const initiateUrl = 'https://profile.id.rakuten.co.jp/gateway/initiate?clientId=jpn&last_visited_path=/';
-    const initiateResponse = await client.get(initiateUrl, {
-      timeout: timeoutMs,
-      maxRedirects: 5,
-      headers: { 
-        'Accept': 'application/json, text/html, */*',
-        'Referer': 'https://profile.id.rakuten.co.jp/',
-      },
-    });
-    
-    log.debug(`Initiate response status: ${initiateResponse.status}, type: ${typeof initiateResponse.data}`);
-    
-    // Check if initiate returns JSON with access_token
-    const initiateData = initiateResponse.data;
-    if (typeof initiateData === 'object' && initiateData.access_token) {
-      bearerToken = initiateData.access_token;
-      log.debug(`Found Bearer token from initiate JSON: ${bearerToken.substring(0, 60)}... (${bearerToken.length} chars)`);
-    } else if (typeof initiateData === 'string') {
-      log.debug(`Initiate response preview: ${initiateData.substring(0, 300).replace(/\s+/g, ' ')}`);
-      // Try to find access_token in HTML/JS
-      const tokenPatterns = [
-        /"access_token"\s*:\s*"(@St\.[^"]+)"/,
-        /"accessToken"\s*:\s*"(@St\.[^"]+)"/,
-        /accessToken=(@St\.[^&"'\s]+)/,
-      ];
-      for (const pattern of tokenPatterns) {
-        const tokenMatch = initiateData.match(pattern);
-        if (tokenMatch) {
-          bearerToken = tokenMatch[1];
-          log.debug(`Found Bearer token from initiate HTML: ${bearerToken.substring(0, 60)}... (${bearerToken.length} chars)`);
-          break;
+      const initiateUrl = 'https://profile.id.rakuten.co.jp/gateway/initiate?clientId=jpn&last_visited_path=/';
+      const initiateResponse = await client.get(initiateUrl, {
+        timeout: timeoutMs,
+        maxRedirects: 5,
+        headers: { 
+          'Accept': 'application/json, text/html, */*',
+          'Referer': 'https://profile.id.rakuten.co.jp/',
+        },
+      });
+      
+      log.debug(`Initiate response status: ${initiateResponse.status}, type: ${typeof initiateResponse.data}`);
+      
+      // Check if initiate returns JSON with access_token
+      const initiateData = initiateResponse.data;
+      if (typeof initiateData === 'object' && initiateData.access_token) {
+        bearerToken = initiateData.access_token;
+        log.debug(`Found Bearer token from initiate JSON: ${bearerToken.substring(0, 60)}... (${bearerToken.length} chars)`);
+      } else if (typeof initiateData === 'string') {
+        log.debug(`Initiate response preview: ${initiateData.substring(0, 300).replace(/\s+/g, ' ')}`);
+        // Try to find access_token in HTML/JS
+        const tokenPatterns = [
+          /"access_token"\s*:\s*"(@St\.[^"]+)"/,
+          /"accessToken"\s*:\s*"(@St\.[^"]+)"/,
+          /accessToken=(@St\.[^&"'\s]+)/,
+        ];
+        for (const pattern of tokenPatterns) {
+          const tokenMatch = initiateData.match(pattern);
+          if (tokenMatch) {
+            bearerToken = tokenMatch[1];
+            log.debug(`Found Bearer token from initiate HTML: ${bearerToken.substring(0, 60)}... (${bearerToken.length} chars)`);
+            break;
+          }
         }
       }
-    }
-    
+      
       if (!bearerToken) {
         log.warn('Could not obtain Bearer token from gateway/initiate');
         return null;
