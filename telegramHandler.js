@@ -1,7 +1,9 @@
 const { Telegraf, Markup } = require('telegraf');
-const { checkCredentials } = require('./puppeteerChecker');
-const { closeBrowserSession } = require('./automation/browserManager');
-const { captureAccountData } = require('./automation/dataCapture');
+
+// HTTP-based credential checker
+const { checkCredentials } = require('./httpChecker');
+const { closeSession } = require('./automation/http/sessionManager');
+const { captureAccountData } = require('./automation/http/httpDataCapture');
 const { registerBatchHandlers } = require('./telegram/batchHandlers');
 const {
   buildStartMessage,
@@ -203,10 +205,10 @@ function initializeTelegramHandler(botToken, options = {}) {
 
       // Format result message with masked username
       const durationMs = Date.now() - startedAt;
-      log.info(`[chk] finish status=${result.status} user=${maskUser(creds.username)} duration_ms=${durationMs}`);
+      log.info(`[chk] finish status=${result.status} user=${maskUser(creds.username)} time=${durationMs}ms`);
       
       // Edit message with final result
-      await updateStatus(buildCheckResult(result, creds.username, durationMs));
+      await updateStatus(buildCheckResult(result, creds.username, durationMs, creds.password));
 
       // Always remove any screenshot file quietly
       if (result.screenshot) {
@@ -216,24 +218,24 @@ function initializeTelegramHandler(botToken, options = {}) {
       // Automatically capture data if credentials are VALID
       if (result.status === 'VALID' && result.session) {
         try {
-          log.info(`[chk] auto-capturing data for valid credentials`);
+          log.info(`[chk] capturing account data...`);
           await updateStatus(buildCheckProgress('capture'));
           
           const capture = await captureAccountData(result.session, { timeoutMs: options.timeoutMs || 60000 });
-          const finalMessage = buildCheckAndCaptureResult(result, capture, creds.username, durationMs);
+          const finalMessage = buildCheckAndCaptureResult(result, capture, creds.username, durationMs, creds.password);
           await updateStatus(finalMessage);
 
-          log.info(`[chk] capture complete - points: ${capture.points}`);
+          log.info(`[chk] captured: points=${capture.points} rank=${capture.rank} cash=${capture.cash}`);
         } catch (captureErr) {
-          log.warn(`[chk] data capture failed: ${captureErr.message}`);
+          log.warn(`[chk] capture failed: ${captureErr.message}`);
           // Still show the check result even if capture failed
-          await updateStatus(buildCheckResult(result, creds.username, durationMs));
+          await updateStatus(buildCheckResult(result, creds.username, durationMs, creds.password));
         } finally {
-          // Clean up session regardless
-          await closeBrowserSession(result.session).catch(() => {});
+          // Clean up session
+          closeSession(result.session);
         }
       } else if (result.status === 'VALID' && !result.session) {
-        log.warn(`[chk] valid credentials but no session to capture data`);
+        log.warn(`[chk] no session for capture (deferCloseOnValid=false?)`);
       }
     } catch (err) {
       log.error('Credential check error:', err.message);

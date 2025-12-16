@@ -3,14 +3,7 @@
  * RAKUTEN TELEGRAM BOT - MAIN ENTRY POINT
  * =============================================================================
  * 
- * This is the bootstrap layer for the Rakuten credential checker bot.
- * 
- * Responsibilities:
- *   - Load environment configuration
- *   - Validate required settings
- *   - Initialize Telegram bot handler
- *   - Setup graceful shutdown handlers
- *   - Display startup configuration
+ * High-speed HTTP-based Rakuten credential checker bot.
  * 
  * Environment Variables Required:
  *   - TELEGRAM_BOT_TOKEN: Bot token from @BotFather
@@ -18,8 +11,8 @@
  * 
  * Optional Environment Variables:
  *   - TIMEOUT_MS: Operation timeout (default: 60000)
- *   - SCREENSHOT_ON: Enable screenshots (default: false)
  *   - PROXY_SERVER: Proxy URL for requests
+ *   - BATCH_CONCURRENCY: Parallel batch checks (default: 1)
  * 
  * =============================================================================
  */
@@ -57,15 +50,7 @@ function validateEnvironment() {
  * Ensures required directories exist.
  */
 function ensureDirectories() {
-  const dirs = ['screenshots'];
-  
-  dirs.forEach(dir => {
-    const dirPath = path.join(process.cwd(), dir);
-    if (!fs.existsSync(dirPath)) {
-      fs.mkdirSync(dirPath, { recursive: true });
-      log.success(`Created directory: ${dir}/`);
-    }
-  });
+  // No directories needed for HTTP-based checker
 }
 
 /**
@@ -99,32 +84,20 @@ async function main() {
 
     // Initialize Telegram handler
     const botToken = process.env.TELEGRAM_BOT_TOKEN;
-    const headlessEnv = process.env.HEADLESS;
-    const headlessOption = headlessEnv === undefined
-      ? 'new'
-      : headlessEnv.toLowerCase() === 'false'
-        ? false
-        : headlessEnv.toLowerCase() === 'true'
-          ? true
-          : headlessEnv;
+    const batchConcurrency = parseInt(process.env.BATCH_CONCURRENCY, 10) || 1;
 
     const handlerOptions = {
       timeoutMs: parseInt(process.env.TIMEOUT_MS, 10) || 60000,
       proxy: process.env.PROXY_SERVER || null,
-      screenshotOn: process.env.SCREENSHOT_ON === 'true',
       targetUrl: process.env.TARGET_LOGIN_URL,
-      headless: headlessOption,
     };
 
     log.info('Configuration:');
-    log.info(`Target URL: ${handlerOptions.targetUrl.substring(0, 60)}...`);
     log.info(`Timeout: ${handlerOptions.timeoutMs}ms`);
-    log.info(`Screenshots: ${handlerOptions.screenshotOn ? 'Enabled' : 'Disabled'}`);
-    log.info(`Headless: ${handlerOptions.headless}`);
+    log.info(`Batch Concurrency: ${batchConcurrency}`);
     if (handlerOptions.proxy) {
       log.info(`Proxy: ${handlerOptions.proxy}`);
     }
-    log.info('Random UA: Enabled');
 
     const bot = initializeTelegramHandler(botToken, handlerOptions);
 

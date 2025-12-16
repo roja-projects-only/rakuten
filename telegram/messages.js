@@ -50,30 +50,32 @@ function formatDurationMs(ms) {
 function buildStartMessage() {
   return (
     '🎌 ' + boldV2('Rakuten Credential Checker') +
-    '\n\n' + '✨ Fast, secure, automated validation' +
-    '\n' + '📖 How to use: ' + codeV2('.chk email:password') +
-    '\n' + '🧭 Example: ' + codeV2('.chk user@example.com:mypass123') +
-    '\n\n' + '🔒 Features:' +
-    '\n• Live status edits' +
-    '\n• Evidence on demand' +
-    '\n• Masked credentials' +
-    '\n• Inline actions'
+    '\n\n' + '⚡ High\\-speed HTTP\\-based validation' +
+    '\n\n' + '📖 ' + boldV2('Usage:') +
+    '\n' + codeV2('.chk email:password') +
+    '\n\n' + '🧭 ' + boldV2('Example:') +
+    '\n' + codeV2('.chk user@rakuten.co.jp:mypass123') +
+    '\n\n' + '✨ ' + boldV2('Features:') +
+    '\n• Real\\-time status updates' +
+    '\n• Auto\\-capture points \\& rank' +
+    '\n• Batch file processing' +
+    '\n• Credential masking'
   );
 }
 
 function buildHelpMessage() {
   return (
-    '❓ ' + boldV2('Help & Support') +
-    '\n\nFormat: ' + codeV2('.chk email:password') +
-    '\nStatus:' +
-    '\n✅ VALID — works' +
-    '\n❌ INVALID — wrong creds' +
-    '\n🔒 BLOCKED — locked/verification' +
-    '\n⚠️ ERROR — technical issue' +
-    '\n\nNotes:' +
-    '\n• Max 200 chars' +
-    '\n• Single colon separator' +
-    '\n• Replies stay in this chat'
+    '❓ ' + boldV2('Help & Commands') +
+    '\n\n' + boldV2('Single Check:') +
+    '\n' + codeV2('.chk email:password') +
+    '\n\n' + boldV2('Status Codes:') +
+    '\n✅ ' + codeV2('VALID') + ' — Login successful' +
+    '\n❌ ' + codeV2('INVALID') + ' — Wrong credentials' +
+    '\n🔒 ' + codeV2('BLOCKED') + ' — Account locked' +
+    '\n⚠️ ' + codeV2('ERROR') + ' — Technical issue' +
+    '\n\n' + boldV2('Batch Processing:') +
+    '\n• Upload ' + codeV2('.txt') + ' file with credentials' +
+    '\n• One per line: ' + codeV2('email:password')
   );
 }
 
@@ -98,50 +100,51 @@ function buildCheckQueued() {
 
 function buildCheckProgress(phase) {
   const map = {
-    launch: '⏳ Launching browser...',
-    navigate: '🌐 Navigating to login page...',
-    email: '✉️ Submitting email...',
-    password: '🔑 Submitting password...',
-    analyze: '🔍 Analyzing result...',
+    launch: '⏳ Initializing...',
+    navigate: '🌐 Connecting to Rakuten...',
+    email: '✉️ Verifying account...',
+    password: '🔑 Authenticating...',
+    analyze: '🔍 Analyzing response...',
+    capture: '📊 Capturing data...',
   };
-  return escapeV2(map[phase] || '⏳ Working...');
+  return escapeV2(map[phase] || '⏳ Processing...');
 }
 
-function buildCheckResult(result, username = null, durationMs = null) {
+function buildCheckResult(result, username = null, durationMs = null, password = null) {
   const statusEmoji = { VALID: '✅', INVALID: '❌', BLOCKED: '🔒', ERROR: '⚠️' };
   const statusLabel = {
-    VALID: 'VALID CREDENTIALS',
-    INVALID: 'INVALID CREDENTIALS',
+    VALID: 'LOGIN SUCCESSFUL',
+    INVALID: 'LOGIN FAILED',
     BLOCKED: 'ACCOUNT BLOCKED',
-    ERROR: 'ERROR OCCURRED',
+    ERROR: 'CHECK FAILED',
   };
 
   const emoji = statusEmoji[result.status] || '❓';
-  const status = boldV2(statusLabel[result.status] || result.status || 'STATUS');
+  const label = statusLabel[result.status] || result.status || 'UNKNOWN';
 
   const parts = [];
-  parts.push(`${emoji} ${status}`);
-
+  
+  // Header
+  parts.push(`${emoji} ${boldV2(label)}`);
+  parts.push('');
+  
+  // Credentials section
+  parts.push(boldV2('🔐 Credentials'));
   if (username) {
-    const maskedUser = maskEmail(username);
-    parts.push(`${boldV2('👤 Account')}: ${codeV2(maskedUser)}`);
+    parts.push(`├ User: ${codeV2(username)}`);
+  }
+  if (password) {
+    parts.push(`└ Pass: ${spoilerCodeV2(password)}`);
+  } else if (username) {
+    parts.push(`└ Pass: ${codeV2('••••••••')}`);
   }
 
+  // Time
   if (durationMs != null) {
+    parts.push('');
     const seconds = durationMs / 1000;
     const pretty = seconds >= 10 ? seconds.toFixed(1) : seconds.toFixed(2);
-    parts.push(`${boldV2('🕒 Time')}: ${codeV2(`${pretty}s`)}`);
-  }
-
-  parts.push(`${boldV2('📝 Result')}: ${escapeV2(result.message || '')}`);
-
-  if (result.url) {
-    const shortUrl = result.url.length > 120 ? `${result.url.substring(0, 117)}...` : result.url;
-    parts.push(`${boldV2('🔗 Final URL')}: ${codeV2(shortUrl)}`);
-  }
-
-  if (result.screenshot) {
-    parts.push(boldV2('📸 Screenshot attached'));
+    parts.push(`⏱ ${codeV2(`${pretty}s`)}`);
   }
 
   return parts.join('\n');
@@ -149,33 +152,56 @@ function buildCheckResult(result, username = null, durationMs = null) {
 
 /**
  * Build unified check + capture result message
+ * @param {Object} result - Check result
+ * @param {Object} capture - Captured account data
+ * @param {string} username - Username/email
+ * @param {number} durationMs - Duration in milliseconds
+ * @param {string} password - Password (optional, for display)
  */
-function buildCheckAndCaptureResult(result, capture, username, durationMs) {
+function buildCheckAndCaptureResult(result, capture, username, durationMs, password = null) {
   const statusEmoji = { VALID: '✅', INVALID: '❌', BLOCKED: '🔒', ERROR: '⚠️' };
+  const statusLabel = {
+    VALID: 'LOGIN SUCCESSFUL',
+    INVALID: 'LOGIN FAILED',
+    BLOCKED: 'ACCOUNT BLOCKED',
+    ERROR: 'CHECK FAILED',
+  };
+  
   const emoji = statusEmoji[result.status] || '❓';
+  const label = statusLabel[result.status] || result.status;
   
   const parts = [];
-  parts.push(`${emoji} ${boldV2(result.status === 'VALID' ? 'VALID CREDENTIALS' : 'INVALID CREDENTIALS')}`);
-
-  if (username) {
-    const maskedUser = maskEmail(username);
-    parts.push(`${boldV2('👤 Account')}: ${codeV2(maskedUser)}`);
+  
+  // Header
+  parts.push(`${emoji} ${boldV2(label)}`);
+  parts.push('');
+  
+  // Account Data section (for valid)
+  if (result.status === 'VALID' && capture) {
+    parts.push(boldV2('📊 Account Data'));
+    parts.push(`├ Points: ${codeV2(capture.points || '0')}`);
+    parts.push(`├ Cash: ${codeV2(capture.cash || '0')}`);
+    parts.push(`└ Rank: ${codeV2(capture.rank || 'n/a')}`);
+    parts.push('');
   }
-
+  
+  // Credentials section
+  parts.push(boldV2('🔐 Credentials'));
+  if (username) {
+    parts.push(`├ User: ${codeV2(username)}`);
+  }
+  if (password) {
+    parts.push(`└ Pass: ${spoilerCodeV2(password)}`);
+  } else if (username) {
+    parts.push(`└ Pass: ${codeV2('••••••••')}`);
+  }
+  
+  // Time
   if (durationMs != null) {
+    parts.push('');
     const seconds = durationMs / 1000;
     const pretty = seconds >= 10 ? seconds.toFixed(1) : seconds.toFixed(2);
-    parts.push(`${boldV2('⏱️ Time')}: ${codeV2(`${pretty}s`)}`);
-  }
-
-  if (result.status === 'VALID' && capture) {
-    parts.push('');
-    parts.push(boldV2('📊 Account Data:'));
-    parts.push(`• ${boldV2('Points')}: ${escapeV2(capture.points || 'n/a')}`);
-    parts.push(`• ${boldV2('Cash')}: ${escapeV2(capture.cash || 'n/a')}`);
-    if (capture.rank && capture.rank !== 'n/a') {
-      parts.push(`• ${boldV2('Rank')}: ${escapeV2(capture.rank)}`);
-    }
+    parts.push(`⏱ ${codeV2(`${pretty}s`)}`);
   }
 
   return parts.join('\n');
@@ -183,9 +209,9 @@ function buildCheckAndCaptureResult(result, capture, username, durationMs) {
 
 function buildCheckError(message) {
   return (
-    '⚠️ ' + boldV2('ERROR OCCURRED') +
-    '\n\n❌ ' + escapeV2(message) +
-    '\n\n' + italicV2('Try again or contact support')
+    '⚠️ ' + boldV2('CHECK FAILED') +
+    '\n\n' + escapeV2(message) +
+    '\n\n' + italicV2('Please try again')
   );
 }
 
@@ -303,37 +329,55 @@ function buildBatchConfirmStart({ filename, count, skipped }) {
 }
 
 function buildBatchProgress({ filename, processed, total, counts }) {
-  return (
-    escapeV2('⏳ Batch progress') +
-    `\nFile: ${codeSpan(filename)}` +
-    `\nProcessed: *${processed}/${total}*` +
-    `\n✅ VALID: *${counts.VALID || 0}*` +
-    `\n❌ INVALID: *${counts.INVALID || 0}*` +
-    `\n🔒 BLOCKED: *${counts.BLOCKED || 0}*` +
-    `\n⚠️ ERROR: *${counts.ERROR || 0}*`
-  );
+  const pct = total > 0 ? Math.round((processed / total) * 100) : 0;
+  const bar = '█'.repeat(Math.floor(pct / 10)) + '░'.repeat(10 - Math.floor(pct / 10));
+  
+  const parts = [];
+  parts.push(`⏳ ${boldV2('Processing...')}`);
+  parts.push('');
+  parts.push(`${escapeV2(bar)} ${codeV2(`${pct}%`)}`);
+  parts.push(`${codeV2(`${processed}/${total}`)} credentials`);
+  parts.push('');
+  parts.push(`✅ ${codeV2(String(counts.VALID || 0))} ❌ ${codeV2(String(counts.INVALID || 0))} 🔒 ${codeV2(String(counts.BLOCKED || 0))} ⚠️ ${codeV2(String(counts.ERROR || 0))}`);
+  
+  return parts.join('\n');
 }
 
 function buildBatchSummary({ filename, total, skipped, counts, elapsedMs, validCreds }) {
-  const items = (validCreds && validCreds.length)
-    ? validCreds.map((cred) => `• ${spoilerCodeV2(`${cred.username}:${cred.password}`)}`)
-    : [escapeV2('• None')];
+  const parts = [];
+  
+  // Header
+  parts.push(`📊 ${boldV2('BATCH COMPLETE')}`);
+  parts.push('');
+  
+  // Stats
+  parts.push(boldV2('📈 Statistics'));
+  parts.push(`├ File: ${codeSpan(filename)}`);
+  parts.push(`├ Total: ${codeV2(String(total))}`);
+  if (skipped) {
+    parts.push(`├ Skipped: ${codeV2(String(skipped))}`);
+  }
+  parts.push(`└ Time: ${codeV2(formatDurationMs(elapsedMs))}`);
+  parts.push('');
+  
+  // Results breakdown
+  parts.push(boldV2('📋 Results'));
+  parts.push(`├ ✅ Valid: ${codeV2(String(counts.VALID || 0))}`);
+  parts.push(`├ ❌ Invalid: ${codeV2(String(counts.INVALID || 0))}`);
+  parts.push(`├ 🔒 Blocked: ${codeV2(String(counts.BLOCKED || 0))}`);
+  parts.push(`└ ⚠️ Error: ${codeV2(String(counts.ERROR || 0))}`);
+  
+  // Valid credentials
+  if (validCreds && validCreds.length > 0) {
+    parts.push('');
+    parts.push(boldV2('🔐 Valid Credentials'));
+    validCreds.forEach((cred, i) => {
+      const prefix = i === validCreds.length - 1 ? '└' : '├';
+      parts.push(`${prefix} ${spoilerCodeV2(`${cred.username}:${cred.password}`)}`);
+    });
+  }
 
-  const title = skipped ? '📊 Batch complete (with skips)' : '📊 Batch complete';
-
-  return (
-    escapeV2(title) +
-    `\nFile: ${codeSpan(filename)}` +
-    `\nTotal: *${total}*` +
-    `\n${escapeV2('Skipped (24h)')}: *${escapeV2(String(skipped || 0))}*` +
-    `\n✅ VALID: *${counts.VALID || 0}*` +
-    `\n❌ INVALID: *${counts.INVALID || 0}*` +
-    `\n🔒 BLOCKED: *${counts.BLOCKED || 0}*` +
-    `\n⚠️ ERROR: *${counts.ERROR || 0}*` +
-    `\n🕒 Time: *${escapeV2(formatDurationMs(elapsedMs))}*` +
-    `\n\n${escapeV2('VALID accounts:')}` +
-    `\n${items.join('\n')}`
-  );
+  return parts.join('\n');
 }
 
 function buildBatchAborted({ filename, total, processed }) {
