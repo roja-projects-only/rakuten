@@ -1,5 +1,7 @@
 Default shell is PowerShell; keep commands compatible. Avoid generating docs unless asked. Favor small, composable functions.
 
+The user's has an apostraphe and it should required to be closed in quote.
+
 # Rakuten Telegram Credential Checker — AI Agent Playbook
 
 ## Architecture Overview

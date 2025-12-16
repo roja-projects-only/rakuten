@@ -229,7 +229,7 @@ async function navigateToLogin(session, targetUrl, timeoutMs) {
   const { client } = session;
   const correlationId = generateCorrelationId();
   
-  log.info('Navigating to login page...');
+  log.debug('Navigating to login page');
   touchSession(session);
   
   try {
@@ -248,7 +248,7 @@ async function navigateToLogin(session, targetUrl, timeoutMs) {
       },
     });
     
-    log.info(`Loaded login page: ${response.status}`);
+    log.debug(`Login page loaded: ${response.status}`);
     
     // Step 2: Initialize login session with POST /v2/login
     await humanDelay(300, 600);
@@ -272,7 +272,7 @@ async function navigateToLogin(session, targetUrl, timeoutMs) {
       },
     });
     
-    log.info(`Login init response: ${initResponse.status}`);
+    log.debug(`Session initialized: ${initResponse.status}`);
     
     return {
       status: response.status,
@@ -301,7 +301,7 @@ async function submitEmailStep(session, email, context, timeoutMs) {
   const { client } = session;
   const { correlationId } = context;
   
-  log.info('Submitting email step...');
+  log.debug('Submitting email');
   touchSession(session);
   
   // Generate fingerprinting data
@@ -408,7 +408,7 @@ async function submitEmailStep(session, email, context, timeoutMs) {
       },
     });
     
-    log.info(`Email step response: ${response.status}`);
+    log.debug(`Email step: ${response.status}`);
     
     // Log full response for debugging 400 errors
     if (response.status === 400) {
@@ -464,7 +464,7 @@ async function submitEmailStep(session, email, context, timeoutMs) {
 async function submitPasswordStep(session, password, emailStepResult, username, timeoutMs) {
   const { client } = session;
   
-  log.info('Submitting password step...');
+  log.debug('Submitting password');
   touchSession(session);
   
   // Get token and correlation ID from email step
@@ -562,7 +562,7 @@ async function submitPasswordStep(session, password, emailStepResult, username, 
       },
     });
     
-    log.info(`Password step response: ${response.status}`);
+    log.debug(`Password step: ${response.status}`);
     
     // Store response details for outcome analysis
     const result = {
@@ -577,7 +577,7 @@ async function submitPasswordStep(session, password, emailStepResult, username, 
     if (isRedirect(response)) {
       const redirectUrl = getRedirectUrl(response);
       if (redirectUrl) {
-        log.info(`Following redirect to: ${redirectUrl}`);
+        log.debug(`Following redirect: ${redirectUrl.substring(0, 60)}...`);
         try {
           const finalResponse = await followRedirects(session, redirectUrl, timeoutMs);
           result.finalUrl = finalResponse.url;

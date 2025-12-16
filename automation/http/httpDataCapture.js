@@ -1,35 +1,37 @@
 /**
  * =============================================================================
- * HTTP DATA CAPTURE - HTML-BASED ACCOUNT DATA EXTRACTION
+ * HTTP DATA CAPTURE - API-BASED ACCOUNT DATA EXTRACTION
  * =============================================================================
  * 
- * Extracts account data (points, membership rank, etc.) from HTML responses.
- * HTTP-based equivalent of dataCapture.js which used Puppeteer page objects.
+ * Extracts account data (points, membership rank, Rakuten Cash) from API.
+ * Uses ichiba-common-web-gateway API for direct data retrieval.
  * 
  * =============================================================================
  */
 
 const cheerio = require('cheerio');
 const { createLogger } = require('../../logger');
+const { getCookieString } = require('./httpClient');
 
 const log = createLogger('http-capture');
 
-// Target URLs for data extraction
-const TARGET_HOME_URL = 'https://www.rakuten.co.jp/';
-const TARGET_POINTS_URL = 'https://point.rakuten.co.jp/';
+// API endpoint for account data
+const HEADER_INFO_API = 'https://ichiba-common-web-gateway.rakuten.co.jp/ichiba-common/headerinfo/get/v1';
 
-// Membership rank translations
-const MEMBERSHIP_TRANSLATIONS = {
-  'プラチナ会員': 'Platinum',
-  'ゴールド会員': 'Gold',
-  'シルバー会員': 'Silver',
-  'ブロンズ会員': 'Bronze',
-  'ダイヤモンド会員': 'Diamond',
-  '通常会員': 'Regular',
+// Target URL for data extraction
+const TARGET_HOME_URL = 'https://www.rakuten.co.jp/';
+
+// Membership rank number to string mapping (1=lowest, 5=highest)
+const RANK_MAP = {
+  1: 'Regular',
+  2: 'Silver',
+  3: 'Gold',
+  4: 'Platinum',
+  5: 'Diamond',
 };
 
 /**
- * Captures account data from authenticated session.
+ * Captures account data from authenticated session using API.
  * HTTP equivalent of dataCapture.captureAccountData()
  * 
  * @param {Object} session - Authenticated HTTP session
@@ -39,71 +41,151 @@ const MEMBERSHIP_TRANSLATIONS = {
  */
 async function captureAccountData(session, options = {}) {
   const { timeoutMs = 30000 } = options;
-  const { client } = session;
+  const { client, jar } = session;
   
-  log.info('Capturing account data from home page...');
+  log.debug('Fetching account data');
   
   try {
-    // Navigate to Rakuten home page
-    const homeResponse = await client.get(TARGET_HOME_URL, {
-      timeout: timeoutMs,
-      headers: {
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Sec-Fetch-User': '?1',
-      },
-    });
-    
-    // Parse HTML
-    const $ = cheerio.load(homeResponse.data);
-    
-    // Extract points from home page
-    let pointsText = 'n/a';
-    let membershipText = 'n/a';
-    
-    // Try multiple extraction strategies
-    pointsText = extractPoints($, homeResponse.data) || 'n/a';
-    membershipText = extractMembership($, homeResponse.data) || 'n/a';
-    
-    // If membership not found on home page, try points page
-    if (membershipText === 'n/a') {
-      try {
-        log.info('Membership not found on home page, checking points page...');
-        const pointsResponse = await client.get(TARGET_POINTS_URL, {
-          timeout: timeoutMs,
-          headers: {
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Referer': TARGET_HOME_URL,
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'cross-site',
-          },
-        });
-        
-        const $points = cheerio.load(pointsResponse.data);
-        membershipText = extractMembership($points, pointsResponse.data) || 'n/a';
-      } catch (err) {
-        log.warn('Failed to fetch points page:', err.message);
-      }
+    // Try API-based capture directly (we already have session cookies from login)
+    const apiResult = await captureViaApi(client, jar, timeoutMs);
+    if (apiResult) {
+      log.info(`API capture - points: ${apiResult.points}, rank: ${apiResult.rank}, cash: ${apiResult.cash}`);
+      return apiResult;
     }
     
-    // Translate membership status
-    const membershipEnglish = MEMBERSHIP_TRANSLATIONS[membershipText] || membershipText;
-    
-    log.info(`Captured - points: ${pointsText}, membership: ${membershipEnglish}`);
-    
-    return {
-      points: pointsText,
-      cash: 'n/a',
-      rank: membershipEnglish,
-      url: TARGET_HOME_URL,
-    };
+    // Fallback to HTML scraping if API fails
+    log.warn('API capture failed, falling back to HTML scraping...');
+    return await captureViaHtml(client, jar, timeoutMs);
   } catch (error) {
     log.error('Data capture failed:', error.message);
     throw new Error(`Failed to capture account data: ${error.message}`);
   }
+}
+
+// Static authkey for ichiba API (appears to be constant)
+const HEADER_INFO_AUTHKEY = 'hin9ruj3haAPxBP0nBQBlaga6haUCobPR';
+
+/**
+ * Captures account data via ichiba-common API.
+ * @param {Object} client - HTTP client
+ * @param {Object} jar - Cookie jar
+ * @param {number} timeoutMs - Request timeout
+ * @returns {Promise<Object|null>} Account data or null on failure
+ */
+async function captureViaApi(client, jar, timeoutMs) {
+  try {
+    // Get cookies for the API request
+    const cookieString = await getCookieString(jar, 'https://www.rakuten.co.jp/');
+    
+    // Request body - only request memberPointInfo
+    const requestBody = {
+      common: {
+        params: { source: 'pc' },
+        exclude: [null]
+      },
+      features: {
+        memberPointInfo: {
+          exclude: [null]
+        }
+      }
+    };
+    
+    log.debug(`API request with cookies: ${cookieString.substring(0, 50)}...`);
+    
+    const response = await client.post(HEADER_INFO_API, requestBody, {
+      timeout: timeoutMs,
+      headers: {
+        'Accept': '*/*',
+        'Content-Type': 'application/json',
+        'authkey': HEADER_INFO_AUTHKEY,
+        'Origin': 'https://www.rakuten.co.jp',
+        'Referer': 'https://www.rakuten.co.jp/',
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'same-site',
+        'Cookie': cookieString,
+      },
+    });
+    
+    log.debug(`API response status: ${response.status}`);
+    
+    if (response.status !== 200 && response.status !== 207) {
+      log.warn(`API returned status ${response.status}`);
+      return null;
+    }
+    
+    const data = response.data;
+    log.debug('API response:', JSON.stringify(data).substring(0, 500));
+    
+    // Parse the response structure
+    const memberPointInfo = data?.body?.memberPointInfo?.data;
+    if (!memberPointInfo) {
+      log.warn('No memberPointInfo in API response');
+      return null;
+    }
+    
+    const pointInfo = memberPointInfo.pointInfo || {};
+    const pointInvestInfo = memberPointInfo.pointInvestInfo || {};
+    
+    // Extract values - use holdingPoint as primary, fallback to fixedStdPoint
+    const points = pointInvestInfo.holdingPoint ?? pointInfo.fixedStdPoint ?? 'n/a';
+    const cash = pointInfo.rcashPoint ?? 'n/a';
+    const rankNum = pointInfo.rank;
+    const rank = RANK_MAP[rankNum] || (rankNum ? `Rank ${rankNum}` : 'n/a');
+    
+    return {
+      points: String(points),
+      cash: String(cash),
+      rank,
+      url: TARGET_HOME_URL,
+      rawData: {
+        fixedStdPoint: pointInfo.fixedStdPoint,
+        unfixedStdPoint: pointInfo.unfixedStdPoint,
+        rcashPoint: pointInfo.rcashPoint,
+        rank: rankNum,
+        holdingPoint: pointInvestInfo.holdingPoint,
+      },
+    };
+  } catch (error) {
+    log.warn('API capture error:', error.message);
+    return null;
+  }
+}
+
+/**
+ * Captures account data via HTML scraping (fallback).
+ * @param {Object} client - HTTP client
+ * @param {Object} jar - Cookie jar  
+ * @param {number} timeoutMs - Request timeout
+ * @returns {Promise<Object>} Account data
+ */
+async function captureViaHtml(client, jar, timeoutMs) {
+  // Navigate to Rakuten home page
+  const homeResponse = await client.get(TARGET_HOME_URL, {
+    timeout: timeoutMs,
+    headers: {
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Sec-Fetch-Dest': 'document',
+      'Sec-Fetch-Mode': 'navigate',
+      'Sec-Fetch-Site': 'none',
+      'Sec-Fetch-User': '?1',
+    },
+  });
+  
+  // Parse HTML
+  const $ = cheerio.load(homeResponse.data);
+  
+  // Extract points from home page
+  const pointsText = extractPoints($, homeResponse.data) || 'n/a';
+  
+  log.info(`HTML capture - points: ${pointsText}`);
+  
+  return {
+    points: pointsText,
+    cash: 'n/a',
+    rank: 'n/a',
+    url: TARGET_HOME_URL,
+  };
 }
 
 /**
@@ -169,45 +251,10 @@ function extractPoints($, html) {
   return null;
 }
 
-/**
- * Extracts membership rank from page content.
- * @param {CheerioAPI} $ - Cheerio instance
- * @param {string} html - Raw HTML
- * @returns {string|null} Membership rank
- */
-function extractMembership($, html) {
-  // Strategy 1: Look for <em> tags containing membership text
-  const emElements = $('em');
-  for (let i = 0; i < emElements.length; i++) {
-    const text = $(emElements[i]).text().trim();
-    if (text.match(/^(ダイヤモンド|プラチナ|ゴールド|シルバー|ブロンズ|通常)会員$/)) {
-      return text;
-    }
-  }
-  
-  // Strategy 2: Search in raw HTML
-  const membershipPattern = /(ダイヤモンド|プラチナ|ゴールド|シルバー|ブロンズ|通常)会員/;
-  const htmlMatch = html.match(membershipPattern);
-  if (htmlMatch) {
-    return htmlMatch[0];
-  }
-  
-  // Strategy 3: Look in specific common locations
-  const headerInfo = $('.header-info, .user-info, .member-info');
-  if (headerInfo.length > 0) {
-    const text = headerInfo.text();
-    const match = text.match(membershipPattern);
-    if (match) {
-      return match[0];
-    }
-  }
-  
-  return null;
-}
-
 module.exports = {
   captureAccountData,
+  captureViaApi,
+  captureViaHtml,
   extractPoints,
-  extractMembership,
-  MEMBERSHIP_TRANSLATIONS,
+  RANK_MAP,
 };

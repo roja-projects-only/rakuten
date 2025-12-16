@@ -116,15 +116,18 @@ async function main() {
       headless: headlessOption,
     };
 
+    const useHttpChecker = process.env.USE_HTTP_CHECKER === 'true';
+    
     log.info('Configuration:');
+    log.info(`Mode: ${useHttpChecker ? 'HTTP (fast)' : 'Puppeteer (browser)'}`);
     log.info(`Target URL: ${handlerOptions.targetUrl.substring(0, 60)}...`);
     log.info(`Timeout: ${handlerOptions.timeoutMs}ms`);
-    log.info(`Screenshots: ${handlerOptions.screenshotOn ? 'Enabled' : 'Disabled'}`);
-    log.info(`Headless: ${handlerOptions.headless}`);
+    if (!useHttpChecker) {
+      log.info(`Headless: ${handlerOptions.headless}`);
+    }
     if (handlerOptions.proxy) {
       log.info(`Proxy: ${handlerOptions.proxy}`);
     }
-    log.info('Random UA: Enabled');
 
     const bot = initializeTelegramHandler(botToken, handlerOptions);
 

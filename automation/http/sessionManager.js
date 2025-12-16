@@ -47,7 +47,7 @@ function createSession(options = {}) {
   };
 
   activeSessions.set(sessionId, session);
-  log.info(`Session created: ${sessionId}`);
+  log.debug(`Session: ${sessionId}`);
   
   return session;
 }
@@ -99,7 +99,7 @@ function closeSession(session) {
   if (!session) return;
   
   activeSessions.delete(session.id);
-  log.info(`Session closed: ${session.id}`);
+  log.debug(`Session closed: ${session.id}`);
 }
 
 /**

@@ -34,7 +34,7 @@ automation/http/
 ├── sessionManager.js       # Session lifecycle management and recycling
 ├── httpFlow.js             # Login flow implementation (navigate → email → password)
 ├── htmlAnalyzer.js         # HTML parsing and outcome detection (Cheerio-based)
-├── httpDataCapture.js      # Account data extraction from HTML
+├── httpDataCapture.js      # Account data extraction via API (points, rcash, rank)
 └── fingerprinting/
     ├── ratGenerator.js     # RAT (Rakuten Analytics Tracking) generator
     ├── bioGenerator.js     # Behavioral biometrics (keystroke/mouse)
@@ -102,6 +102,88 @@ This POW ensures each cres requires computational work, preventing automated bru
 ### Key Files
 - `challengeGenerator.js` - Contains `computeCresFromMdata()`, `murmurHash3_x64_128()`, `solvePow()`
 - Reverse-engineered from `r10-challenger-0.2.1-a6173d7.js`
+
+## Data Capture API
+
+After successful login, account data (points, Rakuten Cash, membership rank) is captured via API:
+
+### API Endpoint
+```
+POST https://ichiba-common-web-gateway.rakuten.co.jp/ichiba-common/headerinfo/get/v1
+```
+
+### Required Headers
+```
+authkey: hin9ruj3haAPxBP0nBQBlaga6haUCobPR
+Content-Type: application/json
+Origin: https://www.rakuten.co.jp
+Referer: https://www.rakuten.co.jp/
+Cookie: <session cookies from login>
+```
+
+### Request Body
+```json
+{
+  "common": {
+    "params": { "source": "pc" },
+    "exclude": [null]
+  },
+  "features": {
+    "memberPointInfo": {
+      "exclude": [null]
+    },
+    "spux": {
+      "params": {
+        "viewType": "TOP_START_POINT",
+        "isServiceListRequired": true
+      }
+    }
+  }
+}
+```
+
+### Response Structure
+```json
+{
+  "body": {
+    "memberPointInfo": {
+      "data": {
+        "pointInfo": {
+          "fixedStdPoint": 0,       // Confirmed standard points
+          "unfixedStdPoint": 0,     // Pending points
+          "rcashPoint": 0,          // Rakuten Cash
+          "rank": 5,                // Membership rank
+          "spuPoint": 159,          // SPU multiplier points
+          "termPoint": 116,         // Term-limited points
+          "card": 2                 // Card status
+        },
+        "pointInvestInfo": {
+          "holdingPoint": 2366,     // Total holding points (use this!)
+          "totalPoint": 2250,       // Total invested points
+          "investedPoints": 191,    // Currently invested
+          "status": "OK"
+        }
+      }
+    }
+  }
+}
+```
+
+### Rank Mapping
+| Number | Rank |
+|--------|------|
+| 1 | Regular |
+| 2 | Bronze |
+| 3 | Silver |
+| 4 | Gold |
+| 5 | Platinum |
+| 6 | Diamond |
+
+### Implementation
+`httpDataCapture.js` contains:
+- `captureViaApi()` - Primary API-based capture
+- `captureViaHtml()` - Fallback HTML scraping
+- `captureAccountData()` - Main entry point (tries API first, falls back to HTML)
 
 ## Testing
 
