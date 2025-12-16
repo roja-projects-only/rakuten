@@ -28,6 +28,7 @@ const ORDER_HISTORY_URL = 'https://order.my.rakuten.co.jp/purchase-history/order
 const PROFILE_GATEWAY_START = 'https://profile.id.rakuten.co.jp/gateway/start?clientId=jpn&state=/';
 const PROFILE_SUMMARY_API = 'https://profile.id.rakuten.co.jp/v2/member/summary/';
 const PROFILE_ADDRESS_API = 'https://profile.id.rakuten.co.jp/v2/member/address';
+const PROFILE_CARD_API = 'https://profile.id.rakuten.co.jp/v2/member/card';
 
 // Membership rank number to string mapping (1=lowest, 5=highest)
 const RANK_MAP = {
@@ -726,7 +727,26 @@ async function fetchProfileData(client, jar, timeoutMs) {
       log.debug(`Address API error: ${err.message}`);
     }
     
-    if (!summary && !address) {
+    // Fetch cards (can have multiple)
+    let cards = null;
+    try {
+      const cardResponse = await client.get(PROFILE_CARD_API, {
+        timeout: timeoutMs,
+        headers,
+      });
+      
+      log.debug(`Card API status: ${cardResponse.status}`);
+      if (cardResponse.status === 200 && cardResponse.data) {
+        // Response is array of cards
+        cards = Array.isArray(cardResponse.data) ? cardResponse.data : [cardResponse.data];
+        log.debug(`Card API response: ${JSON.stringify(cards).substring(0, 300)}...`);
+        log.info(`Found ${cards.length} card(s) on account`);
+      }
+    } catch (err) {
+      log.debug(`Card API error: ${err.message}`);
+    }
+    
+    if (!summary && !address && !cards) {
       log.warn('Profile APIs returned no data despite having token');
       return null;
     }
@@ -746,11 +766,20 @@ async function fetchProfileData(client, jar, timeoutMs) {
       state: address?.state || null,
       city: address?.city || null,
       addressLine1: address?.addressLine1 || null,
+      // Cards array - each card has: brandName, ownerName, expireYear, expireMonth, numberLast, isPrimary
+      cards: cards ? cards.map(c => ({
+        brand: c.brandName || null,
+        owner: c.ownerName || null,
+        expiry: (c.expireYear && c.expireMonth) ? `${c.expireMonth}/${c.expireYear}` : null,
+        last4: c.numberLast || null,
+        isPrimary: c.isPrimary || false,
+      })) : null,
     };
     
     // Get primary phone for logging (prefer mobile)
     const primaryPhone = result.mobilePhone || result.homePhone || 'n/a';
-    log.info(`Profile captured - name: ${result.name} (${result.nameKana}), email: ${result.email}, dob: ${result.dob}, phone: ${primaryPhone}`);
+    const cardCount = result.cards ? result.cards.length : 0;
+    log.info(`Profile captured - name: ${result.name} (${result.nameKana}), email: ${result.email}, dob: ${result.dob}, phone: ${primaryPhone}, cards: ${cardCount}`);
     
     return result;
   } catch (error) {
