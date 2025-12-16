@@ -109,6 +109,7 @@ function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, 
       processed,
       total: batch.count,
       counts,
+      validCreds, // Include valid credentials found so far
     });
 
     try {

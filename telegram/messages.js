@@ -390,7 +390,7 @@ function buildBatchConfirmStart({ filename, count, skipped }) {
   );
 }
 
-function buildBatchProgress({ filename, processed, total, counts }) {
+function buildBatchProgress({ filename, processed, total, counts, validCreds = [] }) {
   const pct = total > 0 ? Math.round((processed / total) * 100) : 0;
   const bar = '█'.repeat(Math.floor(pct / 10)) + '░'.repeat(10 - Math.floor(pct / 10));
   
@@ -401,6 +401,18 @@ function buildBatchProgress({ filename, processed, total, counts }) {
   parts.push(`${codeV2(`${processed}/${total}`)} credentials`);
   parts.push('');
   parts.push(`✅ ${codeV2(String(counts.VALID || 0))} ❌ ${codeV2(String(counts.INVALID || 0))} 🔒 ${codeV2(String(counts.BLOCKED || 0))} ⚠️ ${codeV2(String(counts.ERROR || 0))}`);
+  
+  // Show valid credentials found so far
+  if (validCreds && validCreds.length > 0) {
+    parts.push('');
+    parts.push(boldV2('💎 Valid Found:'));
+    validCreds.slice(0, 10).forEach((cred) => {
+      parts.push(`• ${codeV2(`${cred.username}:${cred.password}`)}`);
+    });
+    if (validCreds.length > 10) {
+      parts.push(`• ${boldV2(`...and ${validCreds.length - 10} more`)}`);
+    }
+  }
   
   return parts.join('\n');
 }
