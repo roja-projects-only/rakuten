@@ -110,10 +110,10 @@ async function main() {
     // Handle graceful shutdown
     const shutdown = async (signal) => {
       log.warn(`Received ${signal} - Shutting down gracefully...`);
-      log.info('Stopping polling...');
+      log.info('Stopping bot...');
       
       try {
-        await bot.stopPolling();
+        bot.stop(signal);
         log.success('Bot stopped successfully.');
       } catch (err) {
         log.error('Error stopping bot:', err.message);
