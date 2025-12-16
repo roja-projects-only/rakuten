@@ -12,7 +12,7 @@
  * Optional Environment Variables:
  *   - TIMEOUT_MS: Operation timeout (default: 60000)
  *   - PROXY_SERVER: Proxy URL for requests
- *   - BATCH_CONCURRENCY: Parallel batch checks (default: 30)
+ *   - BATCH_CONCURRENCY: Parallel batch checks (default: 1)
  * 
  * =============================================================================
  */
@@ -84,7 +84,7 @@ async function main() {
 
     // Initialize Telegram handler
     const botToken = process.env.TELEGRAM_BOT_TOKEN;
-    const batchConcurrency = parseInt(process.env.BATCH_CONCURRENCY, 10) || 30;
+    const batchConcurrency = parseInt(process.env.BATCH_CONCURRENCY, 10) || 1;
 
     const handlerOptions = {
       timeoutMs: parseInt(process.env.TIMEOUT_MS, 10) || 60000,

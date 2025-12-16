@@ -45,12 +45,16 @@ const { createLogger } = require('../logger');
 
 const log = createLogger('batch');
 
-const BATCH_CONCURRENCY = Math.max(
-  1,
-  parseInt(process.env.BATCH_CONCURRENCY, 10) || 30 // default for HTTP-based checker
-);
-const MAX_RETRIES = parseInt(process.env.BATCH_MAX_RETRIES, 10) || 2; // retry ERROR results
-const TELEGRAM_FILE_LIMIT_BYTES = 20 * 1024 * 1024; // Telegram bot API download limit (~20MB)
+// Batch processing configuration
+const BATCH_CONCURRENCY = Math.max(1, parseInt(process.env.BATCH_CONCURRENCY, 10) || 1); // default 1 for stability
+const MAX_RETRIES = parseInt(process.env.BATCH_MAX_RETRIES, 10) || 1; // reduced retries
+const REQUEST_DELAY_MS = parseInt(process.env.BATCH_DELAY_MS, 10) || 500; // delay between requests
+const PROGRESS_UPDATE_INTERVAL_MS = 2000; // update every 2s
+const ERROR_THRESHOLD_PERCENT = 60; // pause if error rate exceeds this
+const ERROR_WINDOW_SIZE = 5; // check last N results for error rate
+const CIRCUIT_BREAKER_PAUSE_MS = 3000; // pause when circuit breaker triggers
+
+const TELEGRAM_FILE_LIMIT_BYTES = 20 * 1024 * 1024;
 const pendingBatches = new Map();
 const pendingFiles = new Map();
 const PROCESSED_TTL_MS = parseInt(process.env.PROCESSED_TTL_MS, 10) || DEFAULT_TTL_MS;
@@ -81,18 +85,80 @@ function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, 
   const validCreds = [];
   const startedAt = Date.now();
   let lastProgressAt = startedAt;
+  
+  // Circuit breaker state
+  const recentResults = []; // sliding window of recent results
+  let circuitBreakerTripped = false;
+  let consecutiveErrors = 0;
 
-  log.info(`[batch] executing file=${batch.filename} total=${batch.count}`);
+  log.info(`[batch] executing file=${batch.filename} total=${batch.count} concurrency=${BATCH_CONCURRENCY}`);
 
   const iterator = batch.creds[Symbol.iterator]();
 
+  // Progress update - blocking to ensure message gets updated
+  const updateProgress = async (force = false) => {
+    if (batch.aborted) return;
+    
+    const now = Date.now();
+    if (!force && now - lastProgressAt < PROGRESS_UPDATE_INTERVAL_MS) return;
+    
+    lastProgressAt = now;
+    
+    const text = buildBatchProgress({
+      filename: batch.filename,
+      processed,
+      total: batch.count,
+      counts,
+    });
+
+    try {
+      await ctx.telegram.editMessageText(chatId, statusMsg.message_id, undefined, text, {
+        parse_mode: 'MarkdownV2',
+      });
+    } catch (err) {
+      // Only log if not a "message not modified" error
+      if (!err.message?.includes('message is not modified')) {
+        log.debug(`Progress update failed: ${err.message}`);
+      }
+    }
+  };
+
+  // Check if we should pause due to high error rate
+  const checkCircuitBreaker = () => {
+    if (recentResults.length < ERROR_WINDOW_SIZE) return false;
+    
+    const errorCount = recentResults.filter(r => r === 'ERROR').length;
+    const errorRate = (errorCount / recentResults.length) * 100;
+    
+    if (errorRate >= ERROR_THRESHOLD_PERCENT) {
+      if (!circuitBreakerTripped) {
+        circuitBreakerTripped = true;
+        log.warn(`[batch] Circuit breaker: ${errorRate.toFixed(0)}% errors in last ${ERROR_WINDOW_SIZE} - pausing ${CIRCUIT_BREAKER_PAUSE_MS}ms`);
+      }
+      return true;
+    }
+    
+    circuitBreakerTripped = false;
+    return false;
+  };
+
   const processCredential = async (cred) => {
     if (batch.aborted) return;
+    
+    // Check circuit breaker before processing
+    if (checkCircuitBreaker()) {
+      await new Promise(r => setTimeout(r, CIRCUIT_BREAKER_PAUSE_MS));
+      recentResults.length = 0; // reset window after pause
+      consecutiveErrors = 0;
+    }
+    
     let result;
     const credKey = cred._dedupeKey || makeKey(cred.username, cred.password);
     
-    // Retry loop for ERROR results (e.g., POW failures, network issues)
+    // Retry loop for ERROR results
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      if (batch.aborted) return;
+      
       try {
         result = await checkCredentials(cred.username, cred.password, {
           timeoutMs: options.timeoutMs || 60000,
@@ -103,14 +169,23 @@ function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, 
         result = { status: 'ERROR', message: err.message };
       }
       
-      // Only retry on ERROR, not INVALID/BLOCKED/VALID
-      if (result.status !== 'ERROR' || attempt >= MAX_RETRIES) {
-        break;
-      }
+      // Only retry on ERROR
+      if (result.status !== 'ERROR' || attempt >= MAX_RETRIES) break;
       
-      log.debug(`[batch] Retrying ${cred.username} (attempt ${attempt + 2}/${MAX_RETRIES + 1}) after ERROR: ${result.message}`);
-      // Small delay before retry
-      await new Promise(r => setTimeout(r, 500 + Math.random() * 500));
+      log.debug(`[batch] Retry ${cred.username} (${attempt + 2}/${MAX_RETRIES + 1}): ${result.message}`);
+      // Exponential backoff: 500ms, 1000ms, 2000ms...
+      await new Promise(r => setTimeout(r, (500 * Math.pow(2, attempt)) + Math.random() * 300));
+    }
+
+    // Track for circuit breaker
+    recentResults.push(result.status);
+    if (recentResults.length > ERROR_WINDOW_SIZE) recentResults.shift();
+    
+    // Track consecutive errors
+    if (result.status === 'ERROR') {
+      consecutiveErrors++;
+    } else {
+      consecutiveErrors = 0;
     }
 
     counts[result.status] = (counts[result.status] || 0) + 1;
@@ -120,52 +195,52 @@ function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, 
       validCreds.push({ username: cred.username, password: cred.password });
     }
 
-    markProcessedStatus(credKey, result.status, PROCESSED_TTL_MS).catch((err) => {
-      log.warn(`Unable to record processed status: ${err.message}`);
-    });
-
-    if (batch.aborted) return;
-
-    const now = Date.now();
-    const shouldUpdate =
-      processed === 1 ||
-      processed === batch.count ||
-      processed % 5 === 0 ||
-      now - lastProgressAt >= 5000;
-
-    if (shouldUpdate) {
-      const text = buildBatchProgress({
-        filename: batch.filename,
-        processed,
-        total: batch.count,
-        counts,
-      });
-
-      try {
-        await ctx.telegram.editMessageText(chatId, statusMsg.message_id, undefined, text, {
-          parse_mode: 'MarkdownV2',
-        });
-      } catch (_) {
-        log.warn('Batch progress edit failed');
-      }
-
-      lastProgressAt = now;
-    }
+    // Non-blocking cache update
+    markProcessedStatus(credKey, result.status, PROCESSED_TTL_MS).catch(() => {});
+    
+    return result;
   };
 
-  const worker = async () => {
-    for (;;) {
-      if (batch.aborted) return;
-      const next = iterator.next();
-      if (next.done) return;
-      await processCredential(next.value);
+  // Process credentials in chunks - wait for entire chunk to complete before next
+  const processInChunks = async () => {
+    const allCreds = batch.creds;
+    const chunkSize = BATCH_CONCURRENCY;
+    
+    for (let i = 0; i < allCreds.length; i += chunkSize) {
+      if (batch.aborted) break;
+      
+      // Check circuit breaker before each chunk
+      if (checkCircuitBreaker()) {
+        await new Promise(r => setTimeout(r, CIRCUIT_BREAKER_PAUSE_MS));
+        recentResults.length = 0;
+      }
+      
+      const chunk = allCreds.slice(i, i + chunkSize);
+      const chunkNum = Math.floor(i / chunkSize) + 1;
+      const totalChunks = Math.ceil(allCreds.length / chunkSize);
+      
+      log.debug(`[batch] Processing chunk ${chunkNum}/${totalChunks} (${chunk.length} credentials)`);
+      
+      // Process credentials - sequentially if concurrency is 1, parallel otherwise
+      if (chunkSize === 1) {
+        await processCredential(chunk[0]);
+      } else {
+        await Promise.all(chunk.map(cred => processCredential(cred)));
+      }
+      
+      // Update progress after each chunk completes (blocking)
+      await updateProgress(true);
+      
+      // Delay between chunks to avoid overwhelming the server
+      if (i + chunkSize < allCreds.length && REQUEST_DELAY_MS > 0) {
+        await new Promise(r => setTimeout(r, REQUEST_DELAY_MS));
+      }
     }
   };
 
   const execute = async () => {
     try {
-      const poolSize = Math.min(BATCH_CONCURRENCY, batch.creds.length);
-      await Promise.all(Array.from({ length: poolSize }, () => worker()));
+      await processInChunks();
 
       const elapsed = Date.now() - startedAt;
       const summary = batch.aborted

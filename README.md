@@ -31,8 +31,9 @@ npm start
 | `TELEGRAM_BOT_TOKEN` | ✅ | - | Bot token from @BotFather |
 | `TARGET_LOGIN_URL` | ✅ | - | Rakuten OAuth login URL |
 | `TIMEOUT_MS` | ❌ | `60000` | Request timeout (ms) |
-| `BATCH_CONCURRENCY` | ❌ | `30` | Parallel batch checks |
-| `BATCH_MAX_RETRIES` | ❌ | `2` | Retry count for ERROR results |
+| `BATCH_CONCURRENCY` | ❌ | `1` | Parallel batch checks (1 = sequential) |
+| `BATCH_MAX_RETRIES` | ❌ | `1` | Retry count for ERROR results |
+| `BATCH_DELAY_MS` | ❌ | `500` | Delay between requests |
 | `PROXY_SERVER` | ❌ | - | Proxy URL (http://host:port) |
 | `LOG_LEVEL` | ❌ | `info` | Logging: error\|warn\|info\|debug |
 

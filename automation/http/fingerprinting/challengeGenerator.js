@@ -17,6 +17,7 @@
  */
 
 const crypto = require('crypto');
+const MurmurHash3 = require('murmurhash3js-revisited');
 const { createLogger } = require('../../../logger');
 
 const log = createLogger('challenge-gen');
@@ -46,223 +47,18 @@ function generateRandomSuffix(keyLen, totalLen) {
  * @returns {boolean} True if hash starts with mask
  */
 function checkMask(hash, mask) {
-  mask = mask || '';
-  const prefix = hash.substring(0, mask.length);
-  return prefix.localeCompare(mask) === 0;
-}
-
-// ============================================================================
-// MurmurHash3 128-bit implementation (x64 variant)
-// Ported from r10-challenger JavaScript
-// ============================================================================
-
-/**
- * 64-bit addition using two 32-bit integers [high, low]
- */
-function add64(a, b) {
-  const a0 = a[0] >>> 16, a1 = a[0] & 65535, a2 = a[1] >>> 16, a3 = a[1] & 65535;
-  const b0 = b[0] >>> 16, b1 = b[0] & 65535, b2 = b[1] >>> 16, b3 = b[1] & 65535;
-  const c = [0, 0, 0, 0];
-  
-  c[3] += a3 + b3;
-  c[2] += c[3] >>> 16;
-  c[3] &= 65535;
-  c[2] += a2 + b2;
-  c[1] += c[2] >>> 16;
-  c[2] &= 65535;
-  c[1] += a1 + b1;
-  c[0] += c[1] >>> 16;
-  c[1] &= 65535;
-  c[0] += a0 + b0;
-  c[0] &= 65535;
-  
-  return [c[0] << 16 | c[1], c[2] << 16 | c[3]];
+  if (!mask) return true;
+  // Use simple string comparison (both should be lowercase hex)
+  return hash.toLowerCase().startsWith(mask.toLowerCase());
 }
 
 /**
- * 64-bit multiplication using two 32-bit integers [high, low]
+ * Converts a string to a byte array (UTF-8).
+ * @param {string} str - Input string
+ * @returns {Uint8Array} Byte array
  */
-function mul64(a, b) {
-  const a0 = a[0] >>> 16, a1 = a[0] & 65535, a2 = a[1] >>> 16, a3 = a[1] & 65535;
-  const b0 = b[0] >>> 16, b1 = b[0] & 65535, b2 = b[1] >>> 16, b3 = b[1] & 65535;
-  const c = [0, 0, 0, 0];
-  
-  c[3] += a3 * b3;
-  c[2] += c[3] >>> 16;
-  c[3] &= 65535;
-  c[2] += a2 * b3;
-  c[1] += c[2] >>> 16;
-  c[2] &= 65535;
-  c[2] += a3 * b2;
-  c[1] += c[2] >>> 16;
-  c[2] &= 65535;
-  c[1] += a1 * b3;
-  c[0] += c[1] >>> 16;
-  c[1] &= 65535;
-  c[1] += a2 * b2;
-  c[0] += c[1] >>> 16;
-  c[1] &= 65535;
-  c[1] += a3 * b1;
-  c[0] += c[1] >>> 16;
-  c[1] &= 65535;
-  c[0] += a0 * b3 + a1 * b2 + a2 * b1 + a3 * b0;
-  c[0] &= 65535;
-  
-  return [c[0] << 16 | c[1], c[2] << 16 | c[3]];
-}
-
-/**
- * 64-bit rotate left
- */
-function rotl64(a, n) {
-  n = n % 64;
-  if (n === 32) return [a[1], a[0]];
-  if (n < 32) {
-    return [
-      a[0] << n | a[1] >>> (32 - n),
-      a[1] << n | a[0] >>> (32 - n)
-    ];
-  }
-  n -= 32;
-  return [
-    a[1] << n | a[0] >>> (32 - n),
-    a[0] << n | a[1] >>> (32 - n)
-  ];
-}
-
-/**
- * 64-bit left shift
- */
-function shl64(a, n) {
-  n = n % 64;
-  if (n === 0) return a;
-  if (n < 32) {
-    return [a[0] << n | a[1] >>> (32 - n), a[1] << n];
-  }
-  return [a[1] << (n - 32), 0];
-}
-
-/**
- * 64-bit XOR
- */
-function xor64(a, b) {
-  return [a[0] ^ b[0], a[1] ^ b[1]];
-}
-
-/**
- * Finalization mix function (fmix64)
- */
-function fmix64(h) {
-  h = xor64(h, [0, h[0] >>> 1]);
-  h = mul64(h, [4283543511, 3981806797]); // 0xff51afd7ed558ccd
-  h = xor64(h, [0, h[0] >>> 1]);
-  h = mul64(h, [3301882366, 444984403]);  // 0xc4ceb9fe1a85ec53
-  h = xor64(h, [0, h[0] >>> 1]);
-  return h;
-}
-
-/**
- * MurmurHash3 128-bit (x64) implementation.
- * @param {string} str - String to hash
- * @param {number} seed - Seed value
- * @returns {string} 32-character hex hash
- */
-function murmurHash3_x64_128(str, seed) {
-  str = str || '';
-  seed = seed || 0;
-  
-  const len = str.length;
-  const remainder = len % 16;
-  const blocks = len - remainder;
-  
-  let h1 = [0, seed];
-  let h2 = [0, seed];
-  let k1 = [0, 0];
-  let k2 = [0, 0];
-  
-  const c1 = [2277735313, 289559509];   // 0x87c37b91114253d5
-  const c2 = [1291169091, 658871167];   // 0x4cf5ad432745937f
-  
-  // Process 16-byte blocks
-  for (let i = 0; i < blocks; i += 16) {
-    k1 = [
-      str.charCodeAt(i + 4) & 255 | (str.charCodeAt(i + 5) & 255) << 8 | (str.charCodeAt(i + 6) & 255) << 16 | (str.charCodeAt(i + 7) & 255) << 24,
-      str.charCodeAt(i) & 255 | (str.charCodeAt(i + 1) & 255) << 8 | (str.charCodeAt(i + 2) & 255) << 16 | (str.charCodeAt(i + 3) & 255) << 24
-    ];
-    k2 = [
-      str.charCodeAt(i + 12) & 255 | (str.charCodeAt(i + 13) & 255) << 8 | (str.charCodeAt(i + 14) & 255) << 16 | (str.charCodeAt(i + 15) & 255) << 24,
-      str.charCodeAt(i + 8) & 255 | (str.charCodeAt(i + 9) & 255) << 8 | (str.charCodeAt(i + 10) & 255) << 16 | (str.charCodeAt(i + 11) & 255) << 24
-    ];
-    
-    k1 = mul64(k1, c1);
-    k1 = rotl64(k1, 31);
-    k1 = mul64(k1, c2);
-    h1 = xor64(h1, k1);
-    h1 = rotl64(h1, 27);
-    h1 = add64(h1, h2);
-    h1 = add64(mul64(h1, [0, 5]), [0, 1390208809]);
-    
-    k2 = mul64(k2, c2);
-    k2 = rotl64(k2, 33);
-    k2 = mul64(k2, c1);
-    h2 = xor64(h2, k2);
-    h2 = rotl64(h2, 31);
-    h2 = add64(h2, h1);
-    h2 = add64(mul64(h2, [0, 5]), [0, 944331445]);
-  }
-  
-  // Process remainder
-  k1 = [0, 0];
-  k2 = [0, 0];
-  const k = blocks;
-  
-  switch (remainder) {
-    case 15: k2 = xor64(k2, shl64([0, str.charCodeAt(k + 14)], 48)); // fall through
-    case 14: k2 = xor64(k2, shl64([0, str.charCodeAt(k + 13)], 40)); // fall through
-    case 13: k2 = xor64(k2, shl64([0, str.charCodeAt(k + 12)], 32)); // fall through
-    case 12: k2 = xor64(k2, shl64([0, str.charCodeAt(k + 11)], 24)); // fall through
-    case 11: k2 = xor64(k2, shl64([0, str.charCodeAt(k + 10)], 16)); // fall through
-    case 10: k2 = xor64(k2, shl64([0, str.charCodeAt(k + 9)], 8)); // fall through
-    case 9:
-      k2 = xor64(k2, [0, str.charCodeAt(k + 8)]);
-      k2 = mul64(k2, c2);
-      k2 = rotl64(k2, 33);
-      k2 = mul64(k2, c1);
-      h2 = xor64(h2, k2);
-      // fall through
-    case 8: k1 = xor64(k1, shl64([0, str.charCodeAt(k + 7)], 56)); // fall through
-    case 7: k1 = xor64(k1, shl64([0, str.charCodeAt(k + 6)], 48)); // fall through
-    case 6: k1 = xor64(k1, shl64([0, str.charCodeAt(k + 5)], 40)); // fall through
-    case 5: k1 = xor64(k1, shl64([0, str.charCodeAt(k + 4)], 32)); // fall through
-    case 4: k1 = xor64(k1, shl64([0, str.charCodeAt(k + 3)], 24)); // fall through
-    case 3: k1 = xor64(k1, shl64([0, str.charCodeAt(k + 2)], 16)); // fall through
-    case 2: k1 = xor64(k1, shl64([0, str.charCodeAt(k + 1)], 8)); // fall through
-    case 1:
-      k1 = xor64(k1, [0, str.charCodeAt(k)]);
-      k1 = mul64(k1, c1);
-      k1 = rotl64(k1, 31);
-      k1 = mul64(k1, c2);
-      h1 = xor64(h1, k1);
-      break;
-  }
-  
-  // Finalization
-  h1 = xor64(h1, [0, len]);
-  h2 = xor64(h2, [0, len]);
-  h1 = add64(h1, h2);
-  h2 = add64(h2, h1);
-  h1 = fmix64(h1);
-  h2 = fmix64(h2);
-  h1 = add64(h1, h2);
-  h2 = add64(h2, h1);
-  
-  // Format as 32-char hex string
-  return (
-    ('00000000' + (h1[0] >>> 0).toString(16)).slice(-8) +
-    ('00000000' + (h1[1] >>> 0).toString(16)).slice(-8) +
-    ('00000000' + (h2[0] >>> 0).toString(16)).slice(-8) +
-    ('00000000' + (h2[1] >>> 0).toString(16)).slice(-8)
-  );
+function stringToBytes(str) {
+  return Buffer.from(str, 'utf8');
 }
 
 /**
@@ -273,11 +69,11 @@ function murmurHash3_x64_128(str, seed) {
  * @param {string} params.key - Key from mdata (hex string)
  * @param {number} params.seed - Seed from mdata (integer)
  * @param {string} params.mask - Mask from mdata (hex prefix to match)
- * @param {number} [maxIterations=1000000] - Maximum iterations before giving up
+ * @param {number} [maxIterations=2000000] - Maximum iterations before giving up
  * @returns {Object} { stringToHash, iterations, executionTime }
  * @throws {Error} If max iterations reached without finding solution
  */
-function solvePow(params, maxIterations = 1000000) {
+function solvePow(params, maxIterations = 2000000) {
   const { key, seed, mask } = params;
   let found = false;
   let stringToHash = '';
@@ -287,7 +83,9 @@ function solvePow(params, maxIterations = 1000000) {
   do {
     iterations++;
     stringToHash = key + generateRandomSuffix(key.length, 16);
-    const hash = murmurHash3_x64_128(stringToHash, seed);
+    // Convert string to bytes for murmurhash3js-revisited (expects byte array)
+    const bytes = stringToBytes(stringToHash);
+    const hash = MurmurHash3.x64.hash128(bytes, seed);
     found = checkMask(hash, mask);
     
     if (iterations >= maxIterations) {
@@ -513,7 +311,6 @@ module.exports = {
   validateChallengeToken,
   hashString,
   // Export POW functions for testing
-  murmurHash3_x64_128,
   solvePow,
   computeCresFromMdata,
   generateRandomCres,
