@@ -25,6 +25,12 @@ The `cres` (challenge response) is computed from `/util/gc` mdata (`{mask, key, 
 
 Implementation: `automation/http/fingerprinting/challengeGenerator.js`
 
+### POW Optimizations (for Batch Processing)
+- **Worker Thread Pool** (`powWorkerPool.js`): Offloads POW to worker threads (CPU cores - 1)
+- **POW Cache** (`powCache.js`): 5-minute TTL cache on `mask+key+seed` combinations
+- **Async API**: Use `computeCresFromMdataAsync()` for non-blocking batch processing
+- **Expected speedup**: 4-8x on multi-core systems with high cache hit rate
+
 ## Environment Variables
 | Var | Required | Default | Notes |
 |-----|----------|---------|-------|

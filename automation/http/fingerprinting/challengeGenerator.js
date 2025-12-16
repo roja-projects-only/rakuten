@@ -19,6 +19,8 @@
 const crypto = require('crypto');
 const MurmurHash3 = require('murmurhash3js-revisited');
 const { createLogger } = require('../../../logger');
+const powCache = require('./powCache');
+const workerPool = require('./powWorkerPool');
 
 const log = createLogger('challenge-gen');
 
@@ -111,6 +113,8 @@ function solvePow(params, maxIterations = 8000000) {
 
 /**
  * Computes cres from mdata returned by /util/gc endpoint.
+ * Uses cache-first lookup, then synchronous POW as fallback.
+ * For batch processing, use computeCresFromMdataAsync instead.
  * 
  * The mdata structure is:
  * {
@@ -138,10 +142,20 @@ function computeCresFromMdata(mdata) {
     
     const { mask, key, seed } = body;
     
+    // Check cache first (optimization)
+    const cached = powCache.get({ mask, key, seed });
+    if (cached) {
+      log.debug(`[cres] Cache hit: ${cached}`);
+      return cached;
+    }
+    
     log.debug(`[cres] Computing POW with mask="${mask}" key="${key}" seed=${seed}`);
     
     // Solve the proof-of-work
     const result = solvePow({ key, seed, mask });
+    
+    // Cache the result for future requests
+    powCache.set({ mask, key, seed }, result.stringToHash);
     
     log.info(`[cres] POW solved: ${result.stringToHash} (${result.iterations} iterations, ${result.executionTime}ms)`);
     
@@ -154,6 +168,49 @@ function computeCresFromMdata(mdata) {
       throw err;
     }
     log.warn(`[cres] Computation failed: ${err.message}, falling back to random`);
+    return generateRandomCres();
+  }
+}
+
+/**
+ * Async version using worker pool - RECOMMENDED FOR BATCH PROCESSING
+ * Offloads POW to worker threads to keep event loop responsive.
+ * 
+ * @param {string|Object} mdata - The mdata string or parsed object from /util/gc
+ * @returns {Promise<string>} The computed cres (16 chars)
+ */
+async function computeCresFromMdataAsync(mdata) {
+  try {
+    const mdataObj = typeof mdata === 'string' ? JSON.parse(mdata) : mdata;
+    const body = mdataObj?.body;
+    
+    if (!body || !body.mask || !body.key || body.seed === undefined) {
+      log.warn('[cres-async] Invalid mdata structure, falling back to random');
+      log.debug(`[cres-async] mdata received: ${JSON.stringify(mdata)}`);
+      return generateRandomCres();
+    }
+    
+    const { mask, key, seed } = body;
+    
+    log.debug(`[cres-async] Solving POW with mask="${mask}" key="${key}" seed=${seed}`);
+    
+    // Use worker pool (handles caching internally)
+    const result = await workerPool.solve({ key, seed, mask });
+    
+    if (result.cached) {
+      log.debug(`[cres-async] Cache hit: ${result.stringToHash}`);
+    } else {
+      log.info(`[cres-async] POW solved: ${result.stringToHash} (${result.iterations} iterations, ${result.executionTime}ms)`);
+    }
+    
+    return result.stringToHash;
+    
+  } catch (err) {
+    if (err.code === 'POW_FAILED') {
+      log.warn(`[cres-async] POW failed: ${err.message}`);
+      throw err;
+    }
+    log.warn(`[cres-async] Computation failed: ${err.message}, falling back to random`);
     return generateRandomCres();
   }
 }
@@ -310,8 +367,12 @@ module.exports = {
   generateGcParams,
   validateChallengeToken,
   hashString,
-  // Export POW functions for testing
+  // POW functions
   solvePow,
   computeCresFromMdata,
+  computeCresFromMdataAsync, // Async worker pool version for batches
   generateRandomCres,
+  // Utilities for external access
+  powCache,
+  workerPool,
 };

@@ -21,7 +21,7 @@
 const { extractFormFields, isRedirect, getRedirectUrl } = require('./htmlAnalyzer');
 const { generateRatData, generateCorrelationId, generateFingerprint } = require('./fingerprinting/ratGenerator');
 const { generateBioData, humanDelay } = require('./fingerprinting/bioGenerator');
-const { generateChallengeToken, generateSessionToken } = require('./fingerprinting/challengeGenerator');
+const { generateChallengeToken, generateSessionToken, computeCresFromMdataAsync } = require('./fingerprinting/challengeGenerator');
 const { touchSession } = require('./sessionManager');
 const { createLogger } = require('../../logger');
 
@@ -352,10 +352,15 @@ async function submitEmailStep(session, email, context, timeoutMs) {
       challengeToken = gcResponse.data.token;
       log.debug(`[email-step] Got challenge token from /util/gc: ${challengeToken.substring(0, 50)}...`);
       
-      // Compute cres from mdata
+      // Compute cres from mdata using async worker pool (non-blocking)
       if (gcResponse.data?.mdata) {
-        cres = generateChallengeToken({ type: 'cres', mdata: gcResponse.data.mdata });
-        log.debug(`[email-step] Computed cres from mdata: ${cres}`);
+        try {
+          cres = await computeCresFromMdataAsync(gcResponse.data.mdata);
+          log.debug(`[email-step] Computed cres from mdata: ${cres}`);
+        } catch (powErr) {
+          log.warn(`[email-step] Async POW failed: ${powErr.message}, using fallback`);
+          cres = generateChallengeToken({ type: 'cres' });
+        }
       }
     } else {
       log.warn('[email-step] /util/gc did not return a token, using generated token');
@@ -509,10 +514,15 @@ async function submitPasswordStep(session, password, emailStepResult, username, 
       challengeToken = gcResponse.data.token;
       log.debug(`[password-step] Got challenge token from /util/gc: ${challengeToken.substring(0, 50)}...`);
       
-      // Compute cres from mdata
+      // Compute cres from mdata using async worker pool (non-blocking)
       if (gcResponse.data?.mdata) {
-        cres = generateChallengeToken({ type: 'cres', mdata: gcResponse.data.mdata });
-        log.debug(`[password-step] Computed cres from mdata: ${cres}`);
+        try {
+          cres = await computeCresFromMdataAsync(gcResponse.data.mdata);
+          log.debug(`[password-step] Computed cres from mdata: ${cres}`);
+        } catch (powErr) {
+          log.warn(`[password-step] Async POW failed: ${powErr.message}, using fallback`);
+          cres = generateChallengeToken({ type: 'cres' });
+        }
       }
     } else {
       log.warn('[password-step] /util/gc did not return a token, using generated token');
