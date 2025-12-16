@@ -38,7 +38,7 @@ automation/http/
 └── fingerprinting/
     ├── ratGenerator.js     # RAT (Rakuten Analytics Tracking) generator
     ├── bioGenerator.js     # Behavioral biometrics (keystroke/mouse)
-    └── challengeGenerator.js  # Challenge tokens and session tokens
+    └── challengeGenerator.js  # Challenge tokens and POW cres computation
 ```
 
 ## Usage
@@ -59,92 +59,70 @@ USE_HTTP_CHECKER=false
 # or remove the line entirely
 ```
 
-## Current Implementation Status
+## Implementation Status
 
 ### ✅ Complete:
 - HTTP client with cookie management
 - Session lifecycle and recycling
 - HTML parsing and analysis
 - Data extraction from HTML
-- Fingerprinting generators (RAT, bio, challenge)
+- Fingerprinting generators (RAT, bio)
 - Drop-in replacement interface
+- **cres (Proof-of-Work) computation** - reverse-engineered from r10-challenger.js
 
-### ⚠️ Placeholders (Needs Chrome DevTools Data):
-- **Exact request payloads** for `/v2/login/start` and `/v2/login/complete`
-- **Form field structures** (hidden fields, CSRF tokens)
-- **RAT data format** (currently using placeholder structure)
-- **Challenge token generation** (currently random, needs actual algorithm)
-- **Header requirements** (may need specific headers beyond standard browser headers)
+### ⚠️ Needs Testing:
+- Full login flow end-to-end with real credentials
+- RAT data format may need adjustment
+- Edge cases and error handling
 
-## Next Steps: Capturing Real Request Data
+## cres (Challenge Response) Algorithm
 
-To make this fully functional, you need to capture actual login request data:
+The `cres` is computed using a Proof-of-Work algorithm. The `/util/gc` endpoint returns `mdata`:
 
-### 1. Open Chrome DevTools
-```
-1. Open Chrome browser
-2. Press F12 to open DevTools
-3. Go to Network tab
-4. Filter by "Fetch/XHR"
-```
-
-### 2. Perform Login
-```
-1. Navigate to the Rakuten login page
-2. Enter email and click Next
-3. Enter password and click Login
-4. Watch Network tab for requests
+```json
+{
+  "status": 200,
+  "body": {
+    "mask": "abce",     // Hex prefix the hash must start with
+    "key": "e2",        // Prefix for the cres string
+    "seed": 3973842396  // Seed for MurmurHash3
+  }
+}
 ```
 
-### 3. Capture Critical Requests
-Look for these requests and save their details:
+The algorithm:
+1. Generate `stringToHash = key + randomSuffix` (16 chars total)
+2. Compute `hash = MurmurHash3_x64_128(stringToHash, seed)`
+3. Check if `hash.startsWith(mask)`
+4. Repeat until condition is met
+5. Return `stringToHash` as the `cres`
 
-#### Request 1: Email Submit
-- **URL**: `/v2/login/start` or similar
-- **Method**: POST
-- **Payload**: Copy entire request body
-- **Headers**: Copy all request headers
+This POW ensures each cres requires computational work, preventing automated brute-force attacks.
 
-#### Request 2: Password Submit
-- **URL**: `/v2/login/complete`
-- **Method**: POST
-- **Payload**: Copy entire request body (especially `challenge`, `token`, `rat`, `bio` fields)
-- **Headers**: Copy all request headers
-- **Response**: Note status codes and any redirect URLs
-
-### 4. Update Code
-
-Replace placeholder payloads in `httpFlow.js`:
-
-```javascript
-// In submitEmailStep(), replace:
-const payload = {
-  user_id: email,
-  // ... ADD ACTUAL FIELDS FROM CHROME DEVTOOLS
-};
-
-// In submitPasswordStep(), replace:
-const payload = {
-  user_key: password,
-  // ... ADD ACTUAL FIELDS FROM CHROME DEVTOOLS
-};
-```
+### Key Files
+- `challengeGenerator.js` - Contains `computeCresFromMdata()`, `murmurHash3_x64_128()`, `solvePow()`
+- Reverse-engineered from `r10-challenger-0.2.1-a6173d7.js`
 
 ## Testing
 
-Once you have real request data:
-
-```bash
+```powershell
 # Test with a single credential
-USE_HTTP_CHECKER=true npm start
+$env:USE_HTTP_CHECKER="true"; npm start
 # Then send: .chk test@example.com:password123
 
 # Compare with Puppeteer
-USE_HTTP_CHECKER=false npm start
+$env:USE_HTTP_CHECKER="false"; npm start
 # Then send same credential
+
+# Enable debug logging
+$env:LOG_LEVEL="debug"; $env:USE_HTTP_CHECKER="true"; npm start
 ```
 
 ## Troubleshooting
+
+### "WRONG_VERIFICATION_CODE" Error
+- ❌ Previously: cres algorithm was not implemented
+- ✅ Now: POW algorithm is implemented, should generate valid cres
 
 ### "Unable to determine login status"
 - Check if response structure matches expectations in `htmlAnalyzer.js`
@@ -154,7 +132,6 @@ USE_HTTP_CHECKER=false npm start
 ### "Authentication failed" / 401 errors
 - Request payload structure is incorrect
 - Missing required headers
-- Challenge/token generation doesn't match expected format
 - Fingerprinting data is incomplete or wrong format
 
 ### "BLOCKED" status

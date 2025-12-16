@@ -9,22 +9,28 @@ telegramHandler.js           # Command routing (.chk), input guards, response fo
 ├── telegram/messages.js     # MarkdownV2 builders (escapeV2, codeV2, spoilerV2, boldV2)
 ├── telegram/batchHandlers.js # HOTMAIL file uploads + ULP URL batch processing
 puppeteerChecker.js          # Browser automation (DEFAULT, working)
-httpChecker.js               # HTTP-only flow (⚠️ NON-FUNCTIONAL - see below)
+httpChecker.js               # HTTP-only flow (cres POW implemented - needs testing)
 ```
 
 ### Checker Selection (`USE_HTTP_CHECKER` env)
 - **Puppeteer (default)**: `browserManager.js` → `rakutenFlow.js` → `resultAnalyzer.js` → `dataCapture.js`
-- **HTTP (broken)**: `httpFlow.js` → `htmlAnalyzer.js` → `httpDataCapture.js` — fails on `cres` challenge computation
+- **HTTP (experimental)**: `httpFlow.js` → `htmlAnalyzer.js` → `httpDataCapture.js` — cres POW implemented
 
-## Critical: HTTP Checker is Non-Functional
-The HTTP path fails with `WRONG_VERIFICATION_CODE` on `challengeCres`. The `cres` must be computed from `/util/gc` mdata (`{mask, key, seed}`) using Rakuten's proprietary Elm JS algorithm—not yet reverse-engineered. **Always use Puppeteer** (`USE_HTTP_CHECKER=false` or unset).
+## HTTP Checker: cres Algorithm Implemented
+The `cres` (challenge response) is computed from `/util/gc` mdata (`{mask, key, seed}`) using a Proof-of-Work algorithm:
+1. `stringToHash = key + random(16 - key.length)` 
+2. `hash = MurmurHash3_x64_128(stringToHash, seed)`
+3. Loop until `hash.startsWith(mask)`
+4. Return `stringToHash` as cres
+
+Implementation: `automation/http/fingerprinting/challengeGenerator.js` (reverse-engineered from `r10-challenger-0.2.1-a6173d7.js`)
 
 ## Environment Variables
 | Var | Required | Default | Notes |
 |-----|----------|---------|-------|
 | `TELEGRAM_BOT_TOKEN` | ✓ | — | From @BotFather |
 | `TARGET_LOGIN_URL` | ✓ | — | Full OAuth URL with `client_id`, `redirect_uri` |
-| `USE_HTTP_CHECKER` | | `false` | Keep false until cres fixed |
+| `USE_HTTP_CHECKER` | | `false` | `true` to use HTTP flow (cres POW implemented) |
 | `TIMEOUT_MS` | | `60000` | Puppeteer/HTTP timeout |
 | `BATCH_CONCURRENCY` | | `8` | Parallel checks in batch |
 | `LOG_LEVEL` | | `info` | error\|warn\|info\|debug\|trace |
@@ -99,4 +105,4 @@ HOTMAIL mode only accepts: `live.jp`, `hotmail.co.jp`, `hotmail.jp`, `outlook.jp
 - Progress edit throttle: 5 seconds
 
 ---
-*Ask to expand: capture selectors, rakutenFlow step details, batch parsing edge cases, HTTP cres investigation*
+*Ask to expand: capture selectors, rakutenFlow step details, batch parsing edge cases, HTTP flow testing*

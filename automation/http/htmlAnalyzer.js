@@ -30,16 +30,33 @@ function detectOutcome(response, finalUrl = null) {
     const data = response?.data;
     
     log.debug(`[detect] status=${status} url=${url}`);
+    log.debug(`[detect] contentType=${contentType}`);
+    log.debug(`[detect] data keys=${data ? Object.keys(data).join(', ') : 'null'}`);
+    log.debug(`[detect] data=${JSON.stringify(data)?.substring(0, 500)}`);
 
     // Check for successful authentication - 200 with redirect to rakuten.co.jp + code
     if (status === 200) {
       // Check if response data indicates success (redirect URL in JSON)
       if (data && typeof data === 'object' && data.redirect_uri) {
+        // Direct success: redirect to www.rakuten.co.jp with code
         if (data.redirect_uri.includes('www.rakuten.co.jp') && data.redirect_uri.includes('code=')) {
           return {
             status: 'VALID',
             message: 'Login successful - Valid credentials',
             url: data.redirect_uri,
+          };
+        }
+        
+        // Intermediate success: redirect to member.id.rakuten.co.jp for session alignment
+        // This indicates valid credentials - needs to follow redirect chain
+        if (data.redirect_uri.includes('member.id.rakuten.co.jp') && data.payload?.align_token) {
+          log.debug('[detect] Session alignment redirect - credentials are VALID');
+          return {
+            status: 'VALID',
+            message: 'Login successful - Valid credentials (session alignment pending)',
+            url: data.redirect_uri,
+            needsSessionAlign: true,
+            alignToken: data.payload.align_token,
           };
         }
       }
