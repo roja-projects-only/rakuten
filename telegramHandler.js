@@ -1,19 +1,9 @@
 const { Telegraf, Markup } = require('telegraf');
 
-// Conditionally load checker based on USE_HTTP_CHECKER env var
-const USE_HTTP_CHECKER = process.env.USE_HTTP_CHECKER === 'true';
-const checkerModule = USE_HTTP_CHECKER 
-  ? require('./httpChecker')
-  : require('./puppeteerChecker');
-const { checkCredentials } = checkerModule;
-
-// Load appropriate modules based on checker type
-const { closeBrowserSession } = USE_HTTP_CHECKER
-  ? { closeBrowserSession: async (session) => { require('./automation/http/sessionManager').closeSession(session); } }
-  : require('./automation/browserManager');
-const { captureAccountData } = USE_HTTP_CHECKER
-  ? require('./automation/http/httpDataCapture')
-  : require('./automation/dataCapture');
+// HTTP-based credential checker
+const { checkCredentials } = require('./httpChecker');
+const { closeSession } = require('./automation/http/sessionManager');
+const { captureAccountData } = require('./automation/http/httpDataCapture');
 const { registerBatchHandlers } = require('./telegram/batchHandlers');
 const {
   buildStartMessage,
@@ -242,7 +232,7 @@ function initializeTelegramHandler(botToken, options = {}) {
           await updateStatus(buildCheckResult(result, creds.username, durationMs, creds.password));
         } finally {
           // Clean up session
-          await closeBrowserSession(result.session).catch(() => {});
+          closeSession(result.session);
         }
       } else if (result.status === 'VALID' && !result.session) {
         log.warn(`[chk] no session for capture (deferCloseOnValid=false?)`);

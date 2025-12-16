@@ -45,8 +45,9 @@ const log = createLogger('batch');
 
 const BATCH_CONCURRENCY = Math.max(
   1,
-  parseInt(process.env.BATCH_CONCURRENCY, 10) || 8 // default increased from 3 to 8
+  parseInt(process.env.BATCH_CONCURRENCY, 10) || 30 // default for HTTP-based checker
 );
+const MAX_RETRIES = parseInt(process.env.BATCH_MAX_RETRIES, 10) || 2; // retry ERROR results
 const TELEGRAM_FILE_LIMIT_BYTES = 20 * 1024 * 1024; // Telegram bot API download limit (~20MB)
 const pendingBatches = new Map();
 const pendingFiles = new Map();
@@ -87,16 +88,27 @@ function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, 
     if (batch.aborted) return;
     let result;
     const credKey = cred._dedupeKey || makeKey(cred.username, cred.password);
-    try {
-      result = await checkCredentials(cred.username, cred.password, {
-        timeoutMs: options.timeoutMs || 60000,
-        proxy: options.proxy,
-        screenshotOn: false,
-        targetUrl: options.targetUrl || process.env.TARGET_LOGIN_URL,
-        headless: options.headless,
-      });
-    } catch (err) {
-      result = { status: 'ERROR', message: err.message };
+    
+    // Retry loop for ERROR results (e.g., POW failures, network issues)
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        result = await checkCredentials(cred.username, cred.password, {
+          timeoutMs: options.timeoutMs || 60000,
+          proxy: options.proxy,
+          targetUrl: options.targetUrl || process.env.TARGET_LOGIN_URL,
+        });
+      } catch (err) {
+        result = { status: 'ERROR', message: err.message };
+      }
+      
+      // Only retry on ERROR, not INVALID/BLOCKED/VALID
+      if (result.status !== 'ERROR' || attempt >= MAX_RETRIES) {
+        break;
+      }
+      
+      log.debug(`[batch] Retrying ${cred.username} (attempt ${attempt + 2}/${MAX_RETRIES + 1}) after ERROR: ${result.message}`);
+      // Small delay before retry
+      await new Promise(r => setTimeout(r, 500 + Math.random() * 500));
     }
 
     counts[result.status] = (counts[result.status] || 0) + 1;

@@ -275,6 +275,7 @@ function murmurHash3_x64_128(str, seed) {
  * @param {string} params.mask - Mask from mdata (hex prefix to match)
  * @param {number} [maxIterations=1000000] - Maximum iterations before giving up
  * @returns {Object} { stringToHash, iterations, executionTime }
+ * @throws {Error} If max iterations reached without finding solution
  */
 function solvePow(params, maxIterations = 1000000) {
   const { key, seed, mask } = params;
@@ -290,8 +291,12 @@ function solvePow(params, maxIterations = 1000000) {
     found = checkMask(hash, mask);
     
     if (iterations >= maxIterations) {
-      log.warn(`[pow] Max iterations (${maxIterations}) reached without finding solution`);
-      break;
+      const executionTime = Date.now() - startTime;
+      const error = new Error(`POW max iterations (${maxIterations}) reached without solution`);
+      error.code = 'POW_MAX_ITERATIONS';
+      error.iterations = iterations;
+      error.executionTime = executionTime;
+      throw error;
     }
   } while (!found);
   
@@ -345,6 +350,11 @@ function computeCresFromMdata(mdata) {
     return result.stringToHash;
     
   } catch (err) {
+    // Re-throw POW failures so caller can retry
+    if (err.code === 'POW_MAX_ITERATIONS') {
+      log.warn(`[cres] POW failed after ${err.iterations} iterations (${err.executionTime}ms)`);
+      throw err;
+    }
     log.warn(`[cres] Computation failed: ${err.message}, falling back to random`);
     return generateRandomCres();
   }

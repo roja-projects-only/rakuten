@@ -68,7 +68,6 @@ async function completeSessionAlignment(session, outcome, timeoutMs) {
 
 /**
  * Checks Rakuten credentials using HTTP requests.
- * Drop-in replacement for puppeteerChecker.checkCredentials()
  * 
  * @param {string} email - Email/username
  * @param {string} password - Password
@@ -76,8 +75,6 @@ async function completeSessionAlignment(session, outcome, timeoutMs) {
  * @param {string} [options.targetUrl] - Target login URL
  * @param {number} [options.timeoutMs=60000] - Timeout in milliseconds
  * @param {string} [options.proxy] - Proxy URL
- * @param {boolean} [options.screenshotOn=false] - Screenshot (not applicable for HTTP)
- * @param {boolean} [options.headless] - Headless mode (not applicable for HTTP)
  * @param {Function} [options.onProgress] - Progress callback
  * @param {boolean} [options.deferCloseOnValid=false] - Keep session open if valid
  * @returns {Promise<Object>} Result object with status, message, session
@@ -87,8 +84,6 @@ async function checkCredentials(email, password, options = {}) {
     targetUrl = process.env.TARGET_LOGIN_URL,
     timeoutMs = 60000,
     proxy = null,
-    screenshotOn = false,
-    headless = true,
     onProgress = null,
     deferCloseOnValid = false,
   } = options;
@@ -138,11 +133,6 @@ async function checkCredentials(email, password, options = {}) {
       await completeSessionAlignment(session, outcome, timeoutMs);
     }
 
-    // Note: Screenshots not applicable for HTTP checker
-    if (screenshotOn) {
-      log.debug('Screenshot option ignored (not applicable for HTTP checker)');
-    }
-
     preserveSession = deferCloseOnValid && outcome.status === 'VALID';
     
     return {
@@ -150,12 +140,11 @@ async function checkCredentials(email, password, options = {}) {
       session: preserveSession ? session : undefined,
     };
   } catch (error) {
-    log.error('Error during credential check:', error.message);
+    log.error('Credential check error:', error.message);
 
     return {
       status: 'ERROR',
-      message: `HTTP automation error: ${error.message}`,
-      screenshot: null,
+      message: error.message,
     };
   } finally {
     if (!preserveSession && session) {
