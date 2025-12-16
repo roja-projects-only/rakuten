@@ -101,13 +101,13 @@ function generateCorrelationId() {
 
 /**
  * Generates a browser fingerprint hash.
- * This is a placeholder - real implementation would use actual fingerprinting.
- * @returns {string} Fingerprint hash
+ * Produces a 32-character hex string like MD5 hash.
+ * @returns {string} Fingerprint hash (32-char hex)
  */
 function generateFingerprint() {
-  const random = Math.random().toString(36).substring(2, 15);
-  const timestamp = Date.now().toString(36);
-  return `${random}${timestamp}`.substring(0, 32);
+  const crypto = require('crypto');
+  const randomData = crypto.randomBytes(16).toString('hex');
+  return randomData; // 32-char hex string like "e7e08a8942ed6789bc069ad1815a3515"
 }
 
 /**

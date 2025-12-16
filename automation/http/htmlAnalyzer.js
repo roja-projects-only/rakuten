@@ -24,25 +24,40 @@ const log = createLogger('html-analyzer');
  */
 function detectOutcome(response, finalUrl = null) {
   try {
-    const url = finalUrl || response.config.url;
-    const status = response.status;
-    const contentType = response.headers['content-type'] || '';
+    const url = finalUrl || response?.url || response?.config?.url || '';
+    const status = response?.status || 0;
+    const contentType = response?.headers?.['content-type'] || '';
+    const data = response?.data;
     
     log.debug(`[detect] status=${status} url=${url}`);
 
     // Check for successful authentication - 200 with redirect to rakuten.co.jp + code
-    if (status === 200 && url.includes('www.rakuten.co.jp') && url.includes('code=')) {
-      return {
-        status: 'VALID',
-        message: 'Login successful - Valid credentials',
-        url,
-      };
+    if (status === 200) {
+      // Check if response data indicates success (redirect URL in JSON)
+      if (data && typeof data === 'object' && data.redirect_uri) {
+        if (data.redirect_uri.includes('www.rakuten.co.jp') && data.redirect_uri.includes('code=')) {
+          return {
+            status: 'VALID',
+            message: 'Login successful - Valid credentials',
+            url: data.redirect_uri,
+          };
+        }
+      }
+      
+      // Check final URL pattern
+      if (url && url.includes('www.rakuten.co.jp') && url.includes('code=')) {
+        return {
+          status: 'VALID',
+          message: 'Login successful - Valid credentials',
+          url,
+        };
+      }
     }
 
     // Check for 401 Unauthorized with JSON error
-    if (status === 401 && contentType.includes('application/json')) {
-      const errorMessage = response.data?.message || 'Invalid Authorization';
-      const errorCode = response.data?.errorCode || 'UNKNOWN';
+    if (status === 401) {
+      const errorMessage = data?.message || 'Invalid Authorization';
+      const errorCode = data?.errorCode || 'UNKNOWN';
       log.debug(`[detect] 401 errorCode=${errorCode}`);
       
       return {
@@ -50,12 +65,23 @@ function detectOutcome(response, finalUrl = null) {
         message: `Invalid credentials - ${errorCode}: ${errorMessage}`,
       };
     }
+    
+    // Check for 400 Bad Request (usually means malformed payload)
+    if (status === 400) {
+      const errorMessage = data?.message || data?.error || 'Bad Request';
+      log.debug(`[detect] 400 error=${errorMessage}`);
+      
+      return {
+        status: 'ERROR',
+        message: `Request error - ${errorMessage}`,
+      };
+    }
 
     // Analyze HTML content if available
-    if (contentType.includes('text/html') && response.data) {
-      const htmlContent = typeof response.data === 'string' 
-        ? response.data 
-        : String(response.data);
+    if (contentType.includes('text/html') && data) {
+      const htmlContent = typeof data === 'string' 
+        ? data 
+        : String(data);
       
       const outcome = analyzeHtmlContent(htmlContent, url);
       if (outcome) {
@@ -64,7 +90,7 @@ function detectOutcome(response, finalUrl = null) {
     }
 
     // Check final URL pattern for success (fallback)
-    if (url.includes('www.rakuten.co.jp') && url.includes('code=')) {
+    if (url && url.includes('www.rakuten.co.jp') && url.includes('code=')) {
       log.debug('[detect] URL-based valid');
       return {
         status: 'VALID',

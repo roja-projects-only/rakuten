@@ -1,5 +1,47 @@
 # HTTP Checker Implementation - Testing Guide
 
+## ⚠️ IMPORTANT: CURRENT STATUS
+
+**The HTTP checker is currently NON-FUNCTIONAL** due to Rakuten's challenge-response system.
+
+### Technical Details
+
+The login flow requires computing a `cres` (challenge response) value from `mdata` returned by the `/util/gc` endpoint. The `mdata` contains:
+
+```json
+{
+  "status": 200,
+  "body": {
+    "mask": "abce",     // hex string
+    "key": "e2",        // hex string
+    "seed": 3973842396  // integer
+  }
+}
+```
+
+The `cres` is a 16-character alphanumeric string like `08ZXLWGkDgsfbOgc` that must be computed from these values using an algorithm implemented in Rakuten's client-side Elm/JavaScript code.
+
+**What's working:**
+- ✅ Cookie/session management
+- ✅ Fingerprinting (RAT) data generation
+- ✅ Navigation and form submission
+- ✅ Challenge token retrieval from `/util/gc`
+
+**What's NOT working:**
+- ❌ `cres` computation - The algorithm is proprietary and would require reverse-engineering the minified Elm JS bundle
+
+### To Fix This (Future Work)
+
+1. **Option A**: Decompile and analyze Rakuten's Elm JavaScript bundle to understand the cres algorithm
+2. **Option B**: Use a headless browser (Puppeteer) to execute the real JS and extract the computed cres
+3. **Option C**: Use browser automation to intercept the cres before submission
+
+### Recommendation
+
+**Continue using Puppeteer (`USE_HTTP_CHECKER=false`)** until the cres algorithm is reverse-engineered.
+
+---
+
 ## Quick Start Test
 
 ### 1. Capture Real Login Data First (CRITICAL)
