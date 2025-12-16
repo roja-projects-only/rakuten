@@ -181,7 +181,8 @@ function buildCheckAndCaptureResult(result, capture, username, durationMs, passw
     parts.push(boldV2('📊 Account Data'));
     parts.push(`├ Points: ${codeV2(capture.points || '0')}`);
     parts.push(`├ Cash: ${codeV2(capture.cash || '0')}`);
-    parts.push(`└ Rank: ${codeV2(capture.rank || 'n/a')}`);
+    parts.push(`├ Rank: ${codeV2(capture.rank || 'n/a')}`);
+    parts.push(`└ Last Order: ${codeV2(capture.latestOrder || 'n/a')}`);
     parts.push('');
   }
   

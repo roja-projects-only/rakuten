@@ -21,6 +21,9 @@ const HEADER_INFO_API = 'https://ichiba-common-web-gateway.rakuten.co.jp/ichiba-
 // Target URL for data extraction
 const TARGET_HOME_URL = 'https://www.rakuten.co.jp/';
 
+// Order history URL
+const ORDER_HISTORY_URL = 'https://order.my.rakuten.co.jp/purchase-history/order-list?l-id=pc_header_func_ph';
+
 // Membership rank number to string mapping (1=lowest, 5=highest)
 const RANK_MAP = {
   1: 'Regular',
@@ -47,15 +50,22 @@ async function captureAccountData(session, options = {}) {
   
   try {
     // Try API-based capture directly (we already have session cookies from login)
-    const apiResult = await captureViaApi(client, jar, timeoutMs);
-    if (apiResult) {
-      log.info(`API capture - points: ${apiResult.points}, rank: ${apiResult.rank}, cash: ${apiResult.cash}`);
-      return apiResult;
+    let result = await captureViaApi(client, jar, timeoutMs);
+    if (!result) {
+      // Fallback to HTML scraping if API fails
+      log.warn('API capture failed, falling back to HTML scraping...');
+      result = await captureViaHtml(client, jar, timeoutMs);
+    } else {
+      log.info(`API capture - points: ${result.points}, rank: ${result.rank}, cash: ${result.cash}`);
     }
     
-    // Fallback to HTML scraping if API fails
-    log.warn('API capture failed, falling back to HTML scraping...');
-    return await captureViaHtml(client, jar, timeoutMs);
+    // Fetch latest order date
+    const latestOrder = await fetchLatestOrder(client, jar, timeoutMs);
+    result.latestOrder = latestOrder || 'n/a';
+    
+    log.info(`Latest order: ${result.latestOrder}`);
+    
+    return result;
   } catch (error) {
     log.error('Data capture failed:', error.message);
     throw new Error(`Failed to capture account data: ${error.message}`);
@@ -189,6 +199,89 @@ async function captureViaHtml(client, jar, timeoutMs) {
 }
 
 /**
+ * Fetches the latest order date from purchase history.
+ * @param {Object} client - HTTP client
+ * @param {Object} jar - Cookie jar
+ * @param {number} timeoutMs - Request timeout
+ * @returns {Promise<string|null>} Latest order date (e.g., "2025/12/04") or null if no orders
+ */
+async function fetchLatestOrder(client, jar, timeoutMs) {
+  try {
+    const cookieString = await getCookieString(jar, 'https://order.my.rakuten.co.jp/');
+    
+    log.debug('Fetching order history...');
+    
+    const response = await client.get(ORDER_HISTORY_URL, {
+      timeout: timeoutMs,
+      headers: {
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+        'Accept-Encoding': 'gzip, deflate, br, zstd',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'same-origin',
+        'Sec-Fetch-User': '?1',
+        'Upgrade-Insecure-Requests': '1',
+        'Cookie': cookieString,
+      },
+    });
+    
+    if (response.status !== 200) {
+      log.warn(`Order history returned status ${response.status}`);
+      return null;
+    }
+    
+    const html = response.data;
+    const $ = cheerio.load(html);
+    
+    // Find the first order date - look for "注文日" followed by the date
+    // Pattern: <span>注文日<!-- -->：</span><span>2025/12/04(木)</span>
+    let latestOrderDate = null;
+    
+    // Strategy 1: Find spans containing "注文日" and get the next sibling's text
+    $('span:contains("注文日")').each((i, elem) => {
+      if (latestOrderDate) return false; // Stop after first match
+      
+      const parent = $(elem).parent();
+      const spans = parent.find('span');
+      
+      // Look for date pattern in sibling spans
+      spans.each((j, span) => {
+        const text = $(span).text().trim();
+        // Match date format: YYYY/MM/DD with optional day of week
+        const dateMatch = text.match(/^(\d{4}\/\d{2}\/\d{2})(?:\([日月火水木金土]\))?$/);
+        if (dateMatch) {
+          latestOrderDate = dateMatch[1];
+          return false; // Stop iteration
+        }
+      });
+    });
+    
+    // Strategy 2: Regex fallback on raw HTML
+    if (!latestOrderDate) {
+      const datePattern = /注文日[\s\S]*?<\/span>[\s\S]*?<span[^>]*>(\d{4}\/\d{2}\/\d{2})/;
+      const match = html.match(datePattern);
+      if (match) {
+        latestOrderDate = match[1];
+      }
+    }
+    
+    if (latestOrderDate) {
+      log.info(`Latest order date: ${latestOrderDate}`);
+    } else {
+      log.info('No orders found in purchase history');
+    }
+    
+    return latestOrderDate;
+  } catch (error) {
+    log.warn('Failed to fetch order history:', error.message);
+    return null;
+  }
+}
+
+/**
  * Extracts points value from page content.
  * @param {CheerioAPI} $ - Cheerio instance
  * @param {string} html - Raw HTML
@@ -255,6 +348,7 @@ module.exports = {
   captureAccountData,
   captureViaApi,
   captureViaHtml,
+  fetchLatestOrder,
   extractPoints,
   RANK_MAP,
 };
