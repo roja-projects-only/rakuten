@@ -225,7 +225,7 @@ function initializeTelegramHandler(botToken, options = {}) {
           const finalMessage = buildCheckAndCaptureResult(result, capture, creds.username, durationMs, creds.password);
           await updateStatus(finalMessage);
 
-          log.info(`[chk] captured: points=${capture.points} rank=${capture.rank} cash=${capture.cash} lastOrder=${capture.latestOrder}`);
+          log.info(`[chk] captured: points=${capture.points} rank=${capture.rank} cash=${capture.cash} lastOrder=${capture.latestOrder} orderId=${capture.latestOrderId}`);
         } catch (captureErr) {
           log.warn(`[chk] capture failed: ${captureErr.message}`);
           // Still show the check result even if capture failed

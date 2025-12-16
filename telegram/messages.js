@@ -182,7 +182,14 @@ function buildCheckAndCaptureResult(result, capture, username, durationMs, passw
     parts.push(`├ Points: ${codeV2(capture.points || '0')}`);
     parts.push(`├ Cash: ${codeV2(capture.cash || '0')}`);
     parts.push(`├ Rank: ${codeV2(capture.rank || 'n/a')}`);
-    parts.push(`└ Last Order: ${codeV2(capture.latestOrder || 'n/a')}`);
+    // Show order info - combine date and ID if both available
+    const orderDate = capture.latestOrder || 'n/a';
+    const orderId = capture.latestOrderId || '';
+    if (orderId && orderId !== 'n/a') {
+      parts.push(`└ Last Order: ${codeV2(orderDate)} ${codeV2(`#${orderId}`)}`);
+    } else {
+      parts.push(`└ Last Order: ${codeV2(orderDate)}`);
+    }
     parts.push('');
   }
   

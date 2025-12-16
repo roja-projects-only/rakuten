@@ -59,11 +59,17 @@ async function captureAccountData(session, options = {}) {
       log.info(`API capture - points: ${result.points}, rank: ${result.rank}, cash: ${result.cash}`);
     }
     
-    // Fetch latest order date
-    const latestOrder = await fetchLatestOrder(client, jar, timeoutMs);
-    result.latestOrder = latestOrder || 'n/a';
+    // Fetch latest order info
+    const orderInfo = await fetchLatestOrder(client, jar, timeoutMs);
+    if (orderInfo) {
+      result.latestOrder = orderInfo.date || 'n/a';
+      result.latestOrderId = orderInfo.orderId || 'n/a';
+    } else {
+      result.latestOrder = 'n/a';
+      result.latestOrderId = 'n/a';
+    }
     
-    log.info(`Latest order: ${result.latestOrder}`);
+    log.info(`Latest order: ${result.latestOrder} (ID: ${result.latestOrderId})`);
     
     return result;
   } catch (error) {
@@ -199,82 +205,168 @@ async function captureViaHtml(client, jar, timeoutMs) {
 }
 
 /**
- * Fetches the latest order date from purchase history.
+ * Fetches the latest order info from purchase history.
+ * Handles SSO flow: order.my.rakuten.co.jp → login.account.rakuten.com → sessionAlign → redirect back
  * @param {Object} client - HTTP client
  * @param {Object} jar - Cookie jar
  * @param {number} timeoutMs - Request timeout
- * @returns {Promise<string|null>} Latest order date (e.g., "2025/12/04") or null if no orders
+ * @returns {Promise<Object|null>} { date, orderId } or null if no orders
  */
 async function fetchLatestOrder(client, jar, timeoutMs) {
   try {
-    const cookieString = await getCookieString(jar, 'https://order.my.rakuten.co.jp/');
+    log.debug('Fetching order history with SSO flow...');
     
-    log.debug('Fetching order history...');
-    
-    const response = await client.get(ORDER_HISTORY_URL, {
+    // Step 1: Initial request to order history - will redirect to SSO authorize
+    let response = await client.get(ORDER_HISTORY_URL, {
       timeout: timeoutMs,
+      maxRedirects: 10,
       headers: {
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-        'Accept-Encoding': 'gzip, deflate, br, zstd',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Sec-Fetch-Dest': 'document',
         'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'same-origin',
+        'Sec-Fetch-Site': 'none',
         'Sec-Fetch-User': '?1',
-        'Upgrade-Insecure-Requests': '1',
-        'Cookie': cookieString,
       },
     });
+    
+    let html = response.data;
+    let currentUrl = response.request?.res?.responseUrl || response.config?.url || '';
+    log.debug(`Step 1 - URL: ${currentUrl.substring(0, 80)}...`);
+    
+    // Step 2: If we got SSO authorize page with auto-submit form, handle it manually
+    // The page contains: <form id="post_form" action="..." method="POST">...<input name="..." value="...">
+    if (html.includes('post_form') || html.includes('login.account.rakuten.com')) {
+      log.debug('Got SSO authorize page, parsing auto-submit form...');
+      
+      // Parse form action and inputs
+      const formActionMatch = html.match(/<form[^>]*id=["']?post_form["']?[^>]*action=["']([^"']+)["']/i) ||
+                              html.match(/<form[^>]*action=["']([^"']+)["'][^>]*id=["']?post_form["']?/i);
+      
+      if (formActionMatch) {
+        const formAction = formActionMatch[1].replace(/&amp;/g, '&');
+        log.debug(`Form action: ${formAction.substring(0, 80)}...`);
+        
+        // Extract all hidden inputs
+        const formData = {};
+        const inputRegex = /<input[^>]*name=["']([^"']+)["'][^>]*value=["']([^"']*)["'][^>]*>/gi;
+        const inputRegex2 = /<input[^>]*value=["']([^"']*)["'][^>]*name=["']([^"']+)["'][^>]*>/gi;
+        
+        let match;
+        while ((match = inputRegex.exec(html)) !== null) {
+          formData[match[1]] = match[2];
+        }
+        while ((match = inputRegex2.exec(html)) !== null) {
+          formData[match[2]] = match[1];
+        }
+        
+        log.debug(`Form fields: ${Object.keys(formData).join(', ')}`);
+        
+        // Submit the form (this goes to sessionAlign)
+        if (Object.keys(formData).length > 0) {
+          response = await client.post(formAction, new URLSearchParams(formData).toString(), {
+            timeout: timeoutMs,
+            maxRedirects: 10,
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+              'Origin': 'https://login.account.rakuten.com',
+              'Referer': currentUrl,
+            },
+          });
+          
+          html = response.data;
+          currentUrl = response.request?.res?.responseUrl || response.config?.url || '';
+          log.debug(`Step 2 (form submit) - URL: ${currentUrl.substring(0, 80)}...`);
+          
+          // Step 3: Check if we need to handle another form (redirect back to order history)
+          if (html.includes('post_form') || html.includes('purchasehistoryapi/redirect')) {
+            const formActionMatch2 = html.match(/<form[^>]*action=["']([^"']+)["']/i);
+            if (formActionMatch2) {
+              const formAction2 = formActionMatch2[1].replace(/&amp;/g, '&');
+              log.debug(`Second form action: ${formAction2.substring(0, 80)}...`);
+              
+              const formData2 = {};
+              const inputRegex3 = /<input[^>]*name=["']([^"']+)["'][^>]*value=["']([^"']*)["'][^>]*>/gi;
+              while ((match = inputRegex3.exec(html)) !== null) {
+                formData2[match[1]] = match[2];
+              }
+              
+              if (Object.keys(formData2).length > 0) {
+                response = await client.post(formAction2, new URLSearchParams(formData2).toString(), {
+                  timeout: timeoutMs,
+                  maxRedirects: 10,
+                  headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                  },
+                });
+                
+                html = response.data;
+                currentUrl = response.request?.res?.responseUrl || response.config?.url || '';
+                log.debug(`Step 3 (second form) - URL: ${currentUrl.substring(0, 80)}...`);
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    // Final check
+    log.debug(`Final response length: ${html.length}`);
     
     if (response.status !== 200) {
       log.warn(`Order history returned status ${response.status}`);
       return null;
     }
     
-    const html = response.data;
-    const $ = cheerio.load(html);
+    // Check if we got the order page
+    const hasOrderDate = html.includes('注文日');
+    const hasOrderNum = html.includes('注文番号');
+    log.debug(`Order page check - 注文日: ${hasOrderDate}, 注文番号: ${hasOrderNum}`);
     
-    // Find the first order date - look for "注文日" followed by the date
-    // Pattern: <span>注文日<!-- -->：</span><span>2025/12/04(木)</span>
+    if (!hasOrderDate && !hasOrderNum) {
+      const preview = html.substring(0, 500).replace(/\s+/g, ' ');
+      log.debug(`Response preview: ${preview}`);
+    }
+    
     let latestOrderDate = null;
+    let latestOrderId = null;
     
-    // Strategy 1: Find spans containing "注文日" and get the next sibling's text
-    $('span:contains("注文日")').each((i, elem) => {
-      if (latestOrderDate) return false; // Stop after first match
-      
-      const parent = $(elem).parent();
-      const spans = parent.find('span');
-      
-      // Look for date pattern in sibling spans
-      spans.each((j, span) => {
-        const text = $(span).text().trim();
-        // Match date format: YYYY/MM/DD with optional day of week
-        const dateMatch = text.match(/^(\d{4}\/\d{2}\/\d{2})(?:\([日月火水木金土]\))?$/);
-        if (dateMatch) {
-          latestOrderDate = dateMatch[1];
-          return false; // Stop iteration
-        }
-      });
-    });
-    
-    // Strategy 2: Regex fallback on raw HTML
-    if (!latestOrderDate) {
-      const datePattern = /注文日[\s\S]*?<\/span>[\s\S]*?<span[^>]*>(\d{4}\/\d{2}\/\d{2})/;
-      const match = html.match(datePattern);
-      if (match) {
-        latestOrderDate = match[1];
+    // Extract order date using regex on raw HTML
+    // HTML structure: <span>注文日\n<!-- -->\n：</span>\n<span...>2025/12/04(木)</span>
+    // The colon ： is full-width Japanese colon (U+FF1A)
+    const datePattern = /注文日[\s\S]*?[：:]<\/span>[\s\S]*?<span[^>]*>(\d{4}\/\d{2}\/\d{2})/;
+    const dateMatch = html.match(datePattern);
+    if (dateMatch) {
+      latestOrderDate = dateMatch[1];
+      log.debug(`Date pattern matched: ${latestOrderDate}`);
+    } else {
+      log.debug('Date pattern did NOT match');
+      // Debug: Find and log the area around 注文日
+      const idx = html.indexOf('注文日');
+      if (idx !== -1) {
+        log.debug(`Found 注文日 at index ${idx}, snippet: ${html.substring(idx, idx + 200).replace(/\n/g, '\\n')}`);
       }
     }
     
-    if (latestOrderDate) {
-      log.info(`Latest order date: ${latestOrderDate}`);
+    // Extract order number using regex
+    // HTML structure: <span>注文番号\n<!-- -->\n：</span>\n<span...>263885-20251204-0284242812</span>
+    const orderPattern = /注文番号[\s\S]*?[：:]<\/span>[\s\S]*?<span[^>]*>(\d+-\d+-(\d+))<\/span>/;
+    const orderMatch = html.match(orderPattern);
+    if (orderMatch) {
+      latestOrderId = orderMatch[2]; // Get just the order ID part (e.g., 0284242812)
+      log.debug(`Order pattern matched: ${orderMatch[1]} -> ID: ${latestOrderId}`);
     } else {
-      log.info('No orders found in purchase history');
+      log.debug('Order pattern did NOT match');
     }
     
-    return latestOrderDate;
+    if (latestOrderDate || latestOrderId) {
+      log.info(`Latest order - date: ${latestOrderDate}, orderId: ${latestOrderId}`);
+      return { date: latestOrderDate, orderId: latestOrderId };
+    }
+    
+    log.info('No orders found in purchase history');
+    return null;
   } catch (error) {
     log.warn('Failed to fetch order history:', error.message);
     return null;
