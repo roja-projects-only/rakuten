@@ -1,7 +1,19 @@
 const { Telegraf, Markup } = require('telegraf');
-const { checkCredentials } = require('./puppeteerChecker');
-const { closeBrowserSession } = require('./automation/browserManager');
-const { captureAccountData } = require('./automation/dataCapture');
+
+// Conditionally load checker based on USE_HTTP_CHECKER env var
+const USE_HTTP_CHECKER = process.env.USE_HTTP_CHECKER === 'true';
+const checkerModule = USE_HTTP_CHECKER 
+  ? require('./httpChecker')
+  : require('./puppeteerChecker');
+const { checkCredentials } = checkerModule;
+
+// Load appropriate modules based on checker type
+const { closeBrowserSession } = USE_HTTP_CHECKER
+  ? { closeBrowserSession: (session) => require('./automation/http/sessionManager').closeSession(session) }
+  : require('./automation/browserManager');
+const { captureAccountData } = USE_HTTP_CHECKER
+  ? require('./automation/http/httpDataCapture')
+  : require('./automation/dataCapture');
 const { registerBatchHandlers } = require('./telegram/batchHandlers');
 const {
   buildStartMessage,
