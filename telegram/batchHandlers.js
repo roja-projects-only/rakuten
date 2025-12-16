@@ -1,6 +1,8 @@
 const { Markup } = require('telegraf');
 const {
   prepareBatchFromFile,
+  prepareAllBatch,
+  prepareJpBatch,
   prepareUlpBatch,
   ALLOWED_DOMAINS,
   MAX_BYTES_HOTMAIL,
@@ -264,6 +266,10 @@ function registerBatchHandlers(bot, options, helpers) {
         [
           Markup.button.callback('📧 HOTMAIL (.jp)', `batch_type_hotmail_${sourceMessageId}`),
           Markup.button.callback('📄 ULP (Rakuten)', `batch_type_ulp_${sourceMessageId}`),
+        ],
+        [
+          Markup.button.callback('🇯🇵 JP Domains', `batch_type_jp_${sourceMessageId}`),
+          Markup.button.callback('📋 ALL', `batch_type_all_${sourceMessageId}`),
         ],
         [Markup.button.callback('⛔ Cancel', `batch_cancel_${sourceMessageId}`)],
       ]),
@@ -567,6 +573,176 @@ function registerBatchHandlers(bot, options, helpers) {
         ]),
       }
     );
+  });
+
+  // ALL mode - no domain filtering
+  bot.action(/batch_type_all_(.+)/, async (ctx) => {
+    await ctx.answerCbQuery();
+    const msgId = ctx.match[1];
+    const key = `${ctx.chat.id}:${msgId}`;
+    const file = pendingFiles.get(key);
+    if (!file) {
+      await ctx.reply(buildBatchFailed('File info expired. Send the file again.'), {
+        parse_mode: 'MarkdownV2',
+        reply_to_message_id: Number(msgId),
+      });
+      return;
+    }
+
+    try {
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        ctx.update.callback_query.message.message_id,
+        undefined,
+        escapeV2('⏳ Parsing all credentials (no filter)...'),
+        { parse_mode: 'MarkdownV2' }
+      );
+    } catch (_) {}
+
+    let batch;
+    try {
+      batch = await prepareAllBatch(file.fileUrl, MAX_BYTES_HOTMAIL);
+      log.info(`[batch][all] parsed count=${batch.count} file=${file.filename}`);
+    } catch (err) {
+      await ctx.reply(buildBatchParseFailed(err.message), {
+        parse_mode: 'MarkdownV2',
+        reply_to_message_id: Number(msgId),
+      });
+      log.warn(`[batch][all] parse failed file=${file.filename} msg=${err.message}`);
+      return;
+    }
+
+    if (!batch.count) {
+      await ctx.reply(escapeV2('⚠️ No valid credentials found in file.'), {
+        parse_mode: 'MarkdownV2',
+        reply_to_message_id: Number(msgId),
+      });
+      return;
+    }
+
+    const { filtered, skipped } = await filterAlreadyProcessed(batch.creds);
+    if (!filtered.length) {
+      await ctx.reply(buildAllProcessed('in this file'), {
+        parse_mode: 'MarkdownV2',
+        reply_to_message_id: Number(msgId),
+      });
+      return;
+    }
+
+    batch.creds = filtered;
+    batch.count = filtered.length;
+    batch.skipped = skipped;
+
+    pendingFiles.delete(key);
+    pendingBatches.set(key, {
+      creds: batch.creds,
+      filename: file.filename,
+      count: batch.count,
+      skipped: batch.skipped,
+      sourceMessageId: Number(msgId),
+    });
+
+    const msg = escapeV2(`📋 ALL Mode (no filter)\n`) +
+      escapeV2(`📄 File: `) + codeSpan(file.filename) + escapeV2(`\n`) +
+      escapeV2(`📊 Found: ${batch.count} credentials\n`) +
+      (batch.skipped ? escapeV2(`⏭️ Skipped: ${batch.skipped} (already processed)\n`) : '') +
+      escapeV2(`\nReady to process?`);
+
+    await ctx.reply(msg, {
+      parse_mode: 'MarkdownV2',
+      reply_to_message_id: Number(msgId),
+      ...Markup.inlineKeyboard([
+        [
+          Markup.button.callback('✅ Proceed', `batch_confirm_${msgId}`),
+          Markup.button.callback('⛔ Cancel', `batch_cancel_${msgId}`),
+        ],
+      ]),
+    });
+  });
+
+  // JP Domains mode - any .jp domain
+  bot.action(/batch_type_jp_(.+)/, async (ctx) => {
+    await ctx.answerCbQuery();
+    const msgId = ctx.match[1];
+    const key = `${ctx.chat.id}:${msgId}`;
+    const file = pendingFiles.get(key);
+    if (!file) {
+      await ctx.reply(buildBatchFailed('File info expired. Send the file again.'), {
+        parse_mode: 'MarkdownV2',
+        reply_to_message_id: Number(msgId),
+      });
+      return;
+    }
+
+    try {
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        ctx.update.callback_query.message.message_id,
+        undefined,
+        escapeV2('⏳ Parsing .jp domain credentials...'),
+        { parse_mode: 'MarkdownV2' }
+      );
+    } catch (_) {}
+
+    let batch;
+    try {
+      batch = await prepareJpBatch(file.fileUrl, MAX_BYTES_HOTMAIL);
+      log.info(`[batch][jp] parsed count=${batch.count} file=${file.filename}`);
+    } catch (err) {
+      await ctx.reply(buildBatchParseFailed(err.message), {
+        parse_mode: 'MarkdownV2',
+        reply_to_message_id: Number(msgId),
+      });
+      log.warn(`[batch][jp] parse failed file=${file.filename} msg=${err.message}`);
+      return;
+    }
+
+    if (!batch.count) {
+      await ctx.reply(escapeV2('⚠️ No .jp domain credentials found in file.'), {
+        parse_mode: 'MarkdownV2',
+        reply_to_message_id: Number(msgId),
+      });
+      return;
+    }
+
+    const { filtered, skipped } = await filterAlreadyProcessed(batch.creds);
+    if (!filtered.length) {
+      await ctx.reply(buildAllProcessed('in this file'), {
+        parse_mode: 'MarkdownV2',
+        reply_to_message_id: Number(msgId),
+      });
+      return;
+    }
+
+    batch.creds = filtered;
+    batch.count = filtered.length;
+    batch.skipped = skipped;
+
+    pendingFiles.delete(key);
+    pendingBatches.set(key, {
+      creds: batch.creds,
+      filename: file.filename,
+      count: batch.count,
+      skipped: batch.skipped,
+      sourceMessageId: Number(msgId),
+    });
+
+    const msg = escapeV2(`🇯🇵 JP Domains Mode\n`) +
+      escapeV2(`📄 File: `) + codeSpan(file.filename) + escapeV2(`\n`) +
+      escapeV2(`📊 Found: ${batch.count} credentials (*.jp)\n`) +
+      (batch.skipped ? escapeV2(`⏭️ Skipped: ${batch.skipped} (already processed)\n`) : '') +
+      escapeV2(`\nReady to process?`);
+
+    await ctx.reply(msg, {
+      parse_mode: 'MarkdownV2',
+      reply_to_message_id: Number(msgId),
+      ...Markup.inlineKeyboard([
+        [
+          Markup.button.callback('✅ Proceed', `batch_confirm_${msgId}`),
+          Markup.button.callback('⛔ Cancel', `batch_cancel_${msgId}`),
+        ],
+      ]),
+    });
   });
 
   bot.action(/batch_abort_(.+)/, async (ctx) => {
