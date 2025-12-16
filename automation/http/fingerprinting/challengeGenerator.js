@@ -69,11 +69,11 @@ function stringToBytes(str) {
  * @param {string} params.key - Key from mdata (hex string)
  * @param {number} params.seed - Seed from mdata (integer)
  * @param {string} params.mask - Mask from mdata (hex prefix to match)
- * @param {number} [maxIterations=2000000] - Maximum iterations before giving up
+ * @param {number} [maxIterations=8000000] - Maximum iterations before giving up
  * @returns {Object} { stringToHash, iterations, executionTime }
  * @throws {Error} If max iterations reached without finding solution
  */
-function solvePow(params, maxIterations = 2000000) {
+function solvePow(params, maxIterations = 8000000) {
   const { key, seed, mask } = params;
   let found = false;
   let stringToHash = '';
