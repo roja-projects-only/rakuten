@@ -226,6 +226,10 @@ function initializeTelegramHandler(botToken, options = {}) {
           await updateStatus(finalMessage);
 
           log.info(`[chk] captured: points=${capture.points} rank=${capture.rank} cash=${capture.cash} lastOrder=${capture.latestOrder} orderId=${capture.latestOrderId}`);
+          if (capture.profile) {
+            const phones = [capture.profile.mobilePhone, capture.profile.homePhone, capture.profile.fax].filter(Boolean).join('/') || 'n/a';
+            log.info(`[chk] profile: name=${capture.profile.name} (${capture.profile.nameKana || ''}) email=${capture.profile.email} dob=${capture.profile.dob} phone=${phones}`);
+          }
         } catch (captureErr) {
           log.warn(`[chk] capture failed: ${captureErr.message}`);
           // Still show the check result even if capture failed

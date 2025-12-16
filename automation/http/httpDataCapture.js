@@ -24,6 +24,11 @@ const TARGET_HOME_URL = 'https://www.rakuten.co.jp/';
 // Order history URL
 const ORDER_HISTORY_URL = 'https://order.my.rakuten.co.jp/purchase-history/order-list?l-id=pc_header_func_ph';
 
+// Profile API URLs
+const PROFILE_GATEWAY_START = 'https://profile.id.rakuten.co.jp/gateway/start?clientId=jpn&state=/';
+const PROFILE_SUMMARY_API = 'https://profile.id.rakuten.co.jp/v2/member/summary/';
+const PROFILE_ADDRESS_API = 'https://profile.id.rakuten.co.jp/v2/member/address';
+
 // Membership rank number to string mapping (1=lowest, 5=highest)
 const RANK_MAP = {
   1: 'Regular',
@@ -70,6 +75,15 @@ async function captureAccountData(session, options = {}) {
     }
     
     log.info(`Latest order: ${result.latestOrder} (ID: ${result.latestOrderId})`);
+    
+    // Fetch profile data (name, email, phone, DOB, address)
+    const profileData = await fetchProfileData(client, jar, timeoutMs);
+    if (profileData) {
+      result.profile = profileData;
+      log.info(`Profile: ${profileData.name}, ${profileData.email}, DOB: ${profileData.dob}`);
+    } else {
+      result.profile = null;
+    }
     
     return result;
   } catch (error) {
@@ -374,6 +388,378 @@ async function fetchLatestOrder(client, jar, timeoutMs) {
 }
 
 /**
+ * Fetches profile data (name, email, phone, DOB, address) from profile.id.rakuten.co.jp
+ * Handles SSO gateway flow to obtain Bearer token for API access.
+ * Flow: gateway/start → SSO authorize → callback with code → exchangeToken → token → API calls
+ * @param {Object} client - HTTP client
+ * @param {Object} jar - Cookie jar
+ * @param {number} timeoutMs - Request timeout
+ * @returns {Promise<Object|null>} { name, email, phone, dob, address } or null on failure
+ */
+async function fetchProfileData(client, jar, timeoutMs) {
+  try {
+    log.debug('Fetching profile data via gateway flow...');
+    
+    // Step 1: Go directly to SSO authorize for profile (this is what gateway/start redirects to via JS)
+    const ssoAuthorizeUrl = 'https://login.account.rakuten.com/sso/authorize?client_id=rakuten_myr_jp_web&scope=openid&response_type=code&max_age=3600&redirect_uri=https%3A%2F%2Fprofile.id.rakuten.co.jp%2Fgateway%2Fcallback&state=%2F';
+    
+    let response = await client.get(ssoAuthorizeUrl, {
+      timeout: timeoutMs,
+      maxRedirects: 10,
+      headers: {
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+      },
+    });
+    
+    let html = response.data;
+    let currentUrl = response.request?.res?.responseUrl || response.config?.url || '';
+    log.debug(`Profile SSO Step 1 - URL: ${currentUrl.substring(0, 80)}...`);
+    
+    // Step 2: Handle SSO form redirects (same pattern as order history)
+    let maxIterations = 5;
+    while (maxIterations-- > 0 && (html.includes('post_form') || html.includes('sessionAlign'))) {
+      const formActionMatch = html.match(/<form[^>]*action=["']([^"']+)["'][^>]*/i);
+      if (!formActionMatch) break;
+      
+      const formAction = formActionMatch[1].replace(/&amp;/g, '&');
+      log.debug(`Profile SSO form action: ${formAction.substring(0, 60)}...`);
+      
+      // Extract hidden inputs
+      const formData = {};
+      const inputRegex = /<input[^>]*name=["']([^"']+)["'][^>]*value=["']([^"']*)["'][^>]*>/gi;
+      let match;
+      while ((match = inputRegex.exec(html)) !== null) {
+        formData[match[1]] = match[2];
+      }
+      // Also match value before name
+      const inputRegex2 = /<input[^>]*value=["']([^"']*)["'][^>]*name=["']([^"']+)["'][^>]*>/gi;
+      while ((match = inputRegex2.exec(html)) !== null) {
+        formData[match[2]] = match[1];
+      }
+      
+      if (Object.keys(formData).length === 0) break;
+      
+      log.debug(`Profile SSO form fields: ${Object.keys(formData).join(', ')}`);
+      
+      response = await client.post(formAction, new URLSearchParams(formData).toString(), {
+        timeout: timeoutMs,
+        maxRedirects: 10,
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Referer': currentUrl,
+        },
+      });
+      
+      html = response.data;
+      currentUrl = response.request?.res?.responseUrl || response.config?.url || '';
+      log.debug(`Profile SSO form submit - URL: ${currentUrl.substring(0, 80)}...`);
+    }
+    
+    // Step 3: We should now be at /gateway/callback with a code, or on an exchange page
+    // Try to extract the code or exchange_token from URL
+    let bearerToken = null;
+    
+    // Check if we got callback with code
+    const codeMatch = currentUrl.match(/[?&]code=([^&]+)/);
+    if (codeMatch) {
+      log.debug('Got callback with authorization code, following exchange flow...');
+      // The callback page should have JS that calls exchangeToken, but we can call it directly
+      const code = codeMatch[1];
+      const stateMatch = currentUrl.match(/[?&]state=([^&]*)/);
+      const state = stateMatch ? decodeURIComponent(stateMatch[1]) : '/';
+      
+      // Call the callback endpoint which handles the token exchange
+      const callbackUrl = `https://profile.id.rakuten.co.jp/gateway/callback?state=${encodeURIComponent(state)}&code=${code}&clientId=jpn`;
+      
+      const callbackResponse = await client.get(callbackUrl, {
+        timeout: timeoutMs,
+        maxRedirects: 5,
+        headers: {
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        },
+      });
+      
+      html = callbackResponse.data;
+      currentUrl = callbackResponse.request?.res?.responseUrl || callbackResponse.config?.url || '';
+      log.debug(`Profile callback - URL: ${currentUrl.substring(0, 80)}...`);
+    }
+    
+    // Look for exchange_token in URL or page content
+    const exchangeMatch = currentUrl.match(/exchange_token=([^&]+)/) || 
+                         html.match(/exchange_token[=:][\s"']*([^&"'\s]+)/);
+    
+    if (exchangeMatch) {
+      const exchangeToken = decodeURIComponent(exchangeMatch[1]);
+      log.debug(`Found exchange token: ${exchangeToken.substring(0, 50)}...`);
+      
+      // The exchange token contains the access token embedded in base64-encoded MessagePack data
+      // Try to find @St. pattern directly in the exchange token (unlikely since it's base64 encoded)
+      // Token format: @St..<base64part>.<base64part> - can be 200+ chars
+      const tokenPatternInExchange = /@St\.[A-Za-z0-9._-]{50,}/;
+      const tokenInExchangeMatch = exchangeToken.match(tokenPatternInExchange);
+      if (tokenInExchangeMatch) {
+        bearerToken = tokenInExchangeMatch[0];
+        log.debug(`Found Bearer token embedded in exchange token: ${bearerToken.substring(0, 50)}...`);
+        log.debug(`Token length: ${bearerToken.length}`);
+      }
+      
+      // Also try to decode base64 segments that might contain the token
+      // NOTE: The exchange_token contains an embedded session token (@St..xxx ~266 chars)
+      // but this is NOT the Bearer token needed for API calls. The proper Bearer token
+      // (~5000+ chars) is obtained from /gateway/initiate after the session is established.
+      // We skip extracting the embedded token here.
+      
+      // Call exchangeToken endpoint
+      const exchangeUrl = `https://profile.id.rakuten.co.jp/gateway/callback/exchangeToken?exchange_token=${encodeURIComponent(exchangeToken)}&clientId=jpn&last_visited_path=/`;
+      
+      const exchangeResponse = await client.get(exchangeUrl, {
+        timeout: timeoutMs,
+        maxRedirects: 5,
+        headers: { 'Accept': 'text/html,*/*' },
+      });
+      
+      html = exchangeResponse.data;
+      currentUrl = exchangeResponse.request?.res?.responseUrl || exchangeResponse.config?.url || '';
+      log.debug(`Profile exchange - URL: ${currentUrl.substring(0, 80)}...`);
+      
+      // The exchange endpoint should set the Im cookie which contains the session token
+      // Check cookies after exchange
+      const cookiesAfterExchange = await getCookieString(jar, 'https://profile.id.rakuten.co.jp/');
+      log.debug(`Cookies after exchange: ${cookiesAfterExchange.substring(0, 200)}...`);
+      
+      // Look for Im cookie which may contain the session
+      const imCookieMatch = cookiesAfterExchange.match(/Im=([^;]+)/);
+      if (imCookieMatch) {
+        log.debug(`Found Im cookie: ${imCookieMatch[1].substring(0, 60)}...`);
+      }
+      
+      // Now call the token endpoint - this returns JSON with access_token
+      const tokenUrl = `https://profile.id.rakuten.co.jp/gateway/callback/token?exchange_token=${encodeURIComponent(exchangeToken)}&last_visited_path=/&clientId=jpn`;
+      
+      const tokenResponse = await client.get(tokenUrl, {
+        timeout: timeoutMs,
+        maxRedirects: 5,
+        headers: { 'Accept': 'application/json, text/html, */*' },
+      });
+      
+      currentUrl = tokenResponse.request?.res?.responseUrl || tokenResponse.config?.url || '';
+      log.debug(`Profile token endpoint - URL: ${currentUrl.substring(0, 80)}...`);
+      log.debug(`Profile token response type: ${typeof tokenResponse.data}`);
+      
+      // Check if response is JSON with access_token
+      const tokenData = tokenResponse.data;
+      if (typeof tokenData === 'object') {
+        log.debug(`Token response keys: ${Object.keys(tokenData).join(', ')}`);
+      } else if (typeof tokenData === 'string') {
+        log.debug(`Token response preview: ${tokenData.substring(0, 300).replace(/\s+/g, ' ')}`);
+      }
+      if (typeof tokenData === 'object' && tokenData.access_token) {
+        bearerToken = tokenData.access_token;
+        log.debug(`Found Bearer token from JSON response: ${bearerToken.substring(0, 50)}...`);
+      } else if (typeof tokenData === 'string') {
+        // Try to parse as JSON
+        try {
+          const parsed = JSON.parse(tokenData);
+          if (parsed.access_token) {
+            bearerToken = parsed.access_token;
+            log.debug(`Found Bearer token from parsed JSON: ${bearerToken.substring(0, 50)}...`);
+          }
+        } catch (e) {
+          // Not JSON, search in HTML
+          html = tokenData;
+          log.debug(`Token response is HTML, length: ${html.length}`);
+        }
+      }
+    }
+    
+    // Try to extract Bearer token from HTML/JS or cookies if not found yet
+    if (!bearerToken && html) {
+      const tokenPatterns = [
+        /Bearer\s+(@St\.[A-Za-z0-9_.-]+)/,
+        /"access_token"\s*:\s*"(@St\.[^"]+)"/,
+        /"token"\s*:\s*"(@St\.[^"]+)"/,
+        /authorization["']?\s*:\s*["']?Bearer\s+(@St\.[^"'\s]+)/,
+        /"accessToken"\s*:\s*"(@St\.[^"]+)"/,
+        // Also look for @St. patterns directly in HTML (may be in data attributes or hidden inputs)
+        /data-token=["'](@St\.[^"']+)["']/,
+        /value=["'](@St\.[^"']+)["']/,
+        // Look for window.__TOKEN__ or similar patterns
+        /(?:window\.__TOKEN__|TOKEN|accessToken)\s*=\s*["'](@St\.[^"']+)["']/,
+      ];
+      
+      for (const pattern of tokenPatterns) {
+        const tokenMatch = html.match(pattern);
+        if (tokenMatch) {
+          bearerToken = tokenMatch[1];
+          log.debug(`Found Bearer token in HTML: ${bearerToken.substring(0, 50)}...`);
+          break;
+        }
+      }
+      
+      // Also check for @St. patterns anywhere in the HTML (might be in inline scripts)
+      // Token format: @St..<base64part>.<base64part> - can be 200+ chars
+      if (!bearerToken) {
+        const directMatch = html.match(/@St\.[A-Za-z0-9._-]{50,}/);
+        if (directMatch) {
+          bearerToken = directMatch[0];
+          log.debug(`Found @St. pattern directly in HTML: ${bearerToken.substring(0, 50)}...`);
+          log.debug(`Token length: ${bearerToken.length}`);
+        }
+      }
+    }
+    
+    // Also check cookies for token
+    if (!bearerToken) {
+      const profileCookies = await getCookieString(jar, 'https://profile.id.rakuten.co.jp/');
+      log.debug(`Profile cookies: ${profileCookies.substring(0, 100)}...`);
+      const cookieTokenMatch = profileCookies.match(/(?:^|;\s*)(?:access_token|token)=(@St\.[^;]+)/);
+      if (cookieTokenMatch) {
+        bearerToken = cookieTokenMatch[1];
+        log.debug(`Found Bearer token in cookie: ${bearerToken.substring(0, 50)}...`);
+      }
+    }
+    
+    // Check if we already found a proper Bearer token (long token with @St.default. prefix)
+    // The session token from exchange_token is ~266 chars, the real Bearer token is ~5000+ chars
+    if (bearerToken && bearerToken.length > 1000 && bearerToken.startsWith('@St.default.')) {
+      log.debug(`Already have valid Bearer token from token endpoint (${bearerToken.length} chars), skipping initiate`);
+    } else {
+      // Clear any short session token - we need the proper one from initiate
+      if (bearerToken) {
+        log.debug(`Clearing short/invalid token (${bearerToken.length} chars), calling initiate...`);
+      }
+      bearerToken = null;
+      log.debug('Calling gateway/initiate to get proper Bearer token (session is established via Im cookie)...');
+    const initiateUrl = 'https://profile.id.rakuten.co.jp/gateway/initiate?clientId=jpn&last_visited_path=/';
+    const initiateResponse = await client.get(initiateUrl, {
+      timeout: timeoutMs,
+      maxRedirects: 5,
+      headers: { 
+        'Accept': 'application/json, text/html, */*',
+        'Referer': 'https://profile.id.rakuten.co.jp/',
+      },
+    });
+    
+    log.debug(`Initiate response status: ${initiateResponse.status}, type: ${typeof initiateResponse.data}`);
+    
+    // Check if initiate returns JSON with access_token
+    const initiateData = initiateResponse.data;
+    if (typeof initiateData === 'object' && initiateData.access_token) {
+      bearerToken = initiateData.access_token;
+      log.debug(`Found Bearer token from initiate JSON: ${bearerToken.substring(0, 60)}... (${bearerToken.length} chars)`);
+    } else if (typeof initiateData === 'string') {
+      log.debug(`Initiate response preview: ${initiateData.substring(0, 300).replace(/\s+/g, ' ')}`);
+      // Try to find access_token in HTML/JS
+      const tokenPatterns = [
+        /"access_token"\s*:\s*"(@St\.[^"]+)"/,
+        /"accessToken"\s*:\s*"(@St\.[^"]+)"/,
+        /accessToken=(@St\.[^&"'\s]+)/,
+      ];
+      for (const pattern of tokenPatterns) {
+        const tokenMatch = initiateData.match(pattern);
+        if (tokenMatch) {
+          bearerToken = tokenMatch[1];
+          log.debug(`Found Bearer token from initiate HTML: ${bearerToken.substring(0, 60)}... (${bearerToken.length} chars)`);
+          break;
+        }
+      }
+    }
+    
+      if (!bearerToken) {
+        log.warn('Could not obtain Bearer token from gateway/initiate');
+        return null;
+      }
+    }
+    
+    // Now call the APIs with Bearer token
+    // Add required headers from sample request
+    const headers = {
+      'Accept': '*/*',
+      'Accept-Language': 'ja',
+      'Authorization': `Bearer ${bearerToken}`,
+      'Sec-Fetch-Dest': 'empty',
+      'Sec-Fetch-Mode': 'cors',
+      'Sec-Fetch-Site': 'same-origin',
+      'Referer': 'https://profile.id.rakuten.co.jp/',
+      // These UUIDs appear to be static values from the sample request
+      'serviceuuid': 'c2ccb1a9-daea-4505-89ae-6bad6c9af5f2',
+      'x-client-id': 'f2ce0768-717c-4f33-be14-9149f5b9ad30',
+    };
+    
+    log.debug(`Using Bearer token: ${bearerToken.substring(0, 60)}... (${bearerToken.length} chars)`);
+    
+    // Fetch summary
+    let summary = null;
+    try {
+      const summaryResponse = await client.get(PROFILE_SUMMARY_API, {
+        timeout: timeoutMs,
+        headers,
+      });
+      
+      log.debug(`Summary API status: ${summaryResponse.status}`);
+      if (summaryResponse.status === 200 && summaryResponse.data) {
+        summary = summaryResponse.data;
+        log.debug(`Summary API response: ${JSON.stringify(summary).substring(0, 200)}...`);
+      } else if (summaryResponse.status === 401) {
+        log.debug(`Summary API 401 - token rejected. Response: ${JSON.stringify(summaryResponse.data).substring(0, 200)}`);
+      }
+    } catch (err) {
+      log.debug(`Summary API error: ${err.message}`);
+    }
+    
+    // Fetch address
+    let address = null;
+    try {
+      const addressResponse = await client.get(PROFILE_ADDRESS_API, {
+        timeout: timeoutMs,
+        headers,
+      });
+      
+      if (addressResponse.status === 200 && addressResponse.data) {
+        address = Array.isArray(addressResponse.data) ? addressResponse.data[0] : addressResponse.data;
+        log.debug(`Address API response: ${JSON.stringify(address).substring(0, 200)}...`);
+      }
+    } catch (err) {
+      log.debug(`Address API error: ${err.message}`);
+    }
+    
+    if (!summary && !address) {
+      log.warn('Profile APIs returned no data despite having token');
+      return null;
+    }
+    
+    // Build result with all available phone numbers
+    const result = {
+      name: summary ? `${summary.lastName || ''} ${summary.firstName || ''}`.trim() : null,
+      nameKana: summary ? `${summary.lastNameKana || ''} ${summary.firstNameKana || ''}`.trim() : null,
+      nickname: summary?.nickname || null,
+      email: summary?.email || summary?.username || null,
+      mobilePhone: summary?.mobilePhone || null,
+      homePhone: summary?.homePhone || null,
+      fax: summary?.fax || null,
+      dob: summary?.dob || null,
+      gender: summary?.gender || null,
+      postalCode: address?.postalCode || null,
+      state: address?.state || null,
+      city: address?.city || null,
+      addressLine1: address?.addressLine1 || null,
+    };
+    
+    // Get primary phone for logging (prefer mobile)
+    const primaryPhone = result.mobilePhone || result.homePhone || 'n/a';
+    log.info(`Profile captured - name: ${result.name} (${result.nameKana}), email: ${result.email}, dob: ${result.dob}, phone: ${primaryPhone}`);
+    
+    return result;
+  } catch (error) {
+    log.warn('Failed to fetch profile data:', error.message);
+    return null;
+  }
+}
+
+/**
  * Extracts points value from page content.
  * @param {CheerioAPI} $ - Cheerio instance
  * @param {string} html - Raw HTML
@@ -441,6 +827,7 @@ module.exports = {
   captureViaApi,
   captureViaHtml,
   fetchLatestOrder,
+  fetchProfileData,
   extractPoints,
   RANK_MAP,
 };

@@ -191,6 +191,41 @@ function buildCheckAndCaptureResult(result, capture, username, durationMs, passw
       parts.push(`└ Last Order: ${codeV2(orderDate)}`);
     }
     parts.push('');
+    
+    // Profile section (if available)
+    if (capture.profile) {
+      const p = capture.profile;
+      parts.push(boldV2('👤 Profile'));
+      
+      // Name with katakana if available
+      if (p.name) {
+        const nameDisplay = p.nameKana ? `${p.name} (${p.nameKana})` : p.name;
+        parts.push(`├ Name: ${codeV2(nameDisplay)}`);
+      }
+      if (p.dob) parts.push(`├ DOB: ${codeV2(p.dob)}`);
+      
+      // Show all available phone numbers
+      const phones = [];
+      if (p.mobilePhone) phones.push(`📱${p.mobilePhone}`);
+      if (p.homePhone) phones.push(`☎${p.homePhone}`);
+      if (p.fax) phones.push(`📠${p.fax}`);
+      if (phones.length > 0) {
+        parts.push(`├ Phone: ${spoilerCodeV2(phones.join(' '))}`);
+      }
+      
+      // Address
+      if (p.postalCode || p.state || p.city) {
+        const addr = [p.postalCode, p.state, p.city, p.addressLine1].filter(Boolean).join(' ');
+        parts.push(`└ Address: ${spoilerCodeV2(addr)}`);
+      } else {
+        // Remove trailing ├ and replace with └
+        const lastIdx = parts.length - 1;
+        if (parts[lastIdx].startsWith('├')) {
+          parts[lastIdx] = parts[lastIdx].replace('├', '└');
+        }
+      }
+      parts.push('');
+    }
   }
   
   // Credentials section
