@@ -40,7 +40,10 @@ const {
   buildBatchFailed,
   buildProcessingHotmail,
   codeSpan,
+  codeV2,
+  boldV2,
 } = require('./messages');
+const { hasSession: hasCombineSession, addFileToSession, getOrCreateSession } = require('./combineHandler');
 const { createLogger } = require('../logger');
 
 const log = createLogger('batch');
@@ -331,6 +334,43 @@ function registerBatchHandlers(bot, options, helpers) {
         parse_mode: 'MarkdownV2',
         reply_to_message_id: doc.message_id,
       });
+      return;
+    }
+
+    // Check if in combine mode - add file to session instead of normal flow
+    if (hasCombineSession(chatId)) {
+      const result = addFileToSession(chatId, {
+        fileUrl,
+        filename: doc.file_name || 'file.txt',
+        size: doc.file_size,
+      });
+      
+      if (!result.success) {
+        await ctx.reply(escapeV2(`⚠️ ${result.error}`), {
+          parse_mode: 'MarkdownV2',
+          reply_to_message_id: sourceMessageId,
+        });
+        return;
+      }
+      
+      const session = getOrCreateSession(chatId);
+      const totalSize = session.files.reduce((sum, f) => sum + (f.size || 0), 0);
+      
+      log.info(`[combine] file added name=${doc.file_name} total_files=${session.files.length}`);
+      
+      await ctx.reply(
+        '✅ ' + boldV2('File Added') +
+        `\n• Name: ${codeV2(doc.file_name || 'file')}` +
+        `\n• Size: ${escapeV2(formatBytes(doc.file_size))}` +
+        '\n\n' + boldV2('Session') +
+        `\n• Files: ${codeV2(String(session.files.length))}` +
+        `\n• Total size: ${escapeV2(formatBytes(totalSize))}` +
+        '\n\n' + escapeV2('Send more files or /done to process'),
+        {
+          parse_mode: 'MarkdownV2',
+          reply_to_message_id: sourceMessageId,
+        }
+      );
       return;
     }
 

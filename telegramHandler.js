@@ -5,6 +5,8 @@ const { checkCredentials } = require('./httpChecker');
 const { closeSession } = require('./automation/http/sessionManager');
 const { captureAccountData } = require('./automation/http/httpDataCapture');
 const { registerBatchHandlers, abortActiveBatch, hasActiveBatch } = require('./telegram/batchHandlers');
+const { registerCombineHandlers, hasSession: hasCombineSession, addFileToSession, TELEGRAM_FILE_LIMIT_BYTES } = require('./telegram/combineHandler');
+const { abortCombineBatch, hasCombineBatch } = require('./telegram/combineBatchRunner');
 const {
   buildStartMessage,
   buildHelpMessage,
@@ -138,6 +140,14 @@ function initializeTelegramHandler(botToken, options = {}) {
   // Handle /stop command - abort active batch
   bot.command('stop', async (ctx) => {
     const chatId = ctx.chat.id;
+    
+    // Check for active combine batch first
+    if (hasCombineBatch(chatId)) {
+      abortCombineBatch(chatId);
+      await ctx.reply(escapeV2('⏹ Aborting combine batch, please wait...'), { parse_mode: 'MarkdownV2' });
+      return;
+    }
+    
     if (hasActiveBatch(chatId)) {
       abortActiveBatch(chatId);
       await ctx.reply(escapeV2('⏹ Aborting batch, please wait...'), { parse_mode: 'MarkdownV2' });
@@ -145,6 +155,13 @@ function initializeTelegramHandler(botToken, options = {}) {
       await ctx.reply(escapeV2('⚠️ No active batch to stop.'), { parse_mode: 'MarkdownV2' });
     }
   });
+
+  // Register combine handlers (must be before batch handlers to intercept files in combine mode)
+  const combineHelpers = registerCombineHandlers(
+    bot,
+    { ...options, checkCredentials },
+    { escapeV2, formatBytes, formatDurationMs }
+  );
 
   // Register batch handlers (HOTMAIL uploads and ULP URLs)
   registerBatchHandlers(
