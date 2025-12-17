@@ -17,10 +17,21 @@
  */
 
 const crypto = require('crypto');
-const MurmurHash3 = require('murmurhash3js-revisited');
 const { createLogger } = require('../../../logger');
 const powCache = require('./powCache');
 const workerPool = require('./powWorkerPool');
+
+// Try native murmurhash first (faster), fallback to pure JS
+let murmurHash128;
+let useNative = false;
+try {
+  const native = require('murmurhash-native');
+  murmurHash128 = (bytes, seed) => native.murmurHash128x64(bytes, seed, 'hex');
+  useNative = true;
+} catch {
+  const MurmurHash3 = require('murmurhash3js-revisited');
+  murmurHash128 = (bytes, seed) => MurmurHash3.x64.hash128(bytes, seed);
+}
 
 const log = createLogger('challenge-gen');
 
@@ -85,9 +96,8 @@ function solvePow(params, maxIterations = 8000000) {
   do {
     iterations++;
     stringToHash = key + generateRandomSuffix(key.length, 16);
-    // Convert string to bytes for murmurhash3js-revisited (expects byte array)
     const bytes = stringToBytes(stringToHash);
-    const hash = MurmurHash3.x64.hash128(bytes, seed);
+    const hash = murmurHash128(bytes, seed);
     found = checkMask(hash, mask);
     
     if (iterations >= maxIterations) {
@@ -102,7 +112,7 @@ function solvePow(params, maxIterations = 8000000) {
   
   const executionTime = Date.now() - startTime;
   
-  log.debug(`[pow] Solved in ${iterations} iterations (${executionTime}ms): ${stringToHash}`);
+  log.debug(`[pow] Solved in ${iterations} iterations (${executionTime}ms, native=${useNative}): ${stringToHash}`);
   
   return {
     stringToHash,

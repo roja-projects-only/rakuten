@@ -13,7 +13,16 @@
  */
 
 const { parentPort } = require('worker_threads');
-const MurmurHash3 = require('murmurhash3js-revisited');
+
+// Try native murmurhash first (faster), fallback to pure JS
+let murmurHash128;
+try {
+  const native = require('murmurhash-native');
+  murmurHash128 = (bytes, seed) => native.murmurHash128x64(bytes, seed, 'hex');
+} catch {
+  const MurmurHash3 = require('murmurhash3js-revisited');
+  murmurHash128 = (bytes, seed) => MurmurHash3.x64.hash128(bytes, seed);
+}
 
 const CHARSET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 
@@ -57,7 +66,7 @@ function solvePow({ key, seed, mask, maxIterations = 8000000 }) {
     iterations++;
     stringToHash = key + generateRandomSuffix(key.length, 16);
     const bytes = stringToBytes(stringToHash);
-    const hash = MurmurHash3.x64.hash128(bytes, seed);
+    const hash = murmurHash128(bytes, seed);
     found = checkMask(hash, mask);
     
     if (iterations >= maxIterations) {

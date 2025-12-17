@@ -487,14 +487,19 @@ function registerCombineHandlers(bot, options, helpers) {
     
     const batch = session.pendingBatch;
     
-    // Import and use runBatchExecution from batchHandlers
-    // Instead of duplicating, we'll emit a custom event or call the batch processor directly
-    const { runCombineBatch } = require('./combineBatchRunner');
-    
-    await runCombineBatch(ctx, batch, options, helpers, checkCredentials);
-    
-    // Clear session after starting
+    // Clear session BEFORE starting batch (batch data is already copied)
     clearSession(chatId);
+    log.info(`[combine] session cleared, starting batch chatId=${chatId}`);
+    
+    try {
+      const { runCombineBatch } = require('./combineBatchRunner');
+      await runCombineBatch(ctx, batch, options, helpers, checkCredentials);
+    } catch (err) {
+      log.error(`[combine] batch execution error: ${err.message}`);
+      await ctx.reply(escapeV2(`⚠️ Batch failed: ${err.message}`), {
+        parse_mode: 'MarkdownV2',
+      });
+    }
   });
 
   // Handle abort for combine batch
