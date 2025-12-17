@@ -83,6 +83,27 @@ function detectOutcome(response, finalUrl = null) {
       };
     }
     
+    // Check for 403 Forbidden - usually account issues (frozen, blocked, etc.)
+    if (status === 403) {
+      const errorMessage = data?.message || 'Forbidden';
+      const errorCode = data?.errorCode || 'UNKNOWN';
+      log.debug(`[detect] 403 errorCode=${errorCode}`);
+      
+      // ACCOUNT_FROZEN means the account is suspended/frozen
+      if (errorCode === 'ACCOUNT_FROZEN') {
+        return {
+          status: 'BLOCKED',
+          message: `Account frozen/suspended - ${errorCode}`,
+        };
+      }
+      
+      // Other 403 errors (rate limit, IP block, etc.)
+      return {
+        status: 'BLOCKED',
+        message: `Access denied - ${errorCode}: ${errorMessage}`,
+      };
+    }
+    
     // Check for 400 Bad Request (usually means malformed payload)
     if (status === 400) {
       const errorMessage = data?.message || data?.error || 'Bad Request';
