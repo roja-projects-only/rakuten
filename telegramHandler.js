@@ -21,6 +21,7 @@ const {
   buildCaptureFailed,
   buildCaptureSkipped,
   escapeV2,
+  codeV2,
   formatBytes,
   formatDurationMs,
 } = require('./telegram/messages');
@@ -123,7 +124,8 @@ function initializeTelegramHandler(botToken, options = {}) {
     await ctx.reply(buildStartMessage(), {
       parse_mode: 'MarkdownV2',
       ...Markup.inlineKeyboard([
-        [Markup.button.callback('📚 Guide', 'guide'), Markup.button.callback('❓ Help', 'help')],
+        [Markup.button.callback('▶️ Check Now', 'chk_prompt')],
+        [Markup.button.callback('📖 Guide', 'guide'), Markup.button.callback('ℹ️ Help', 'help')],
       ]),
     });
   });
@@ -273,14 +275,58 @@ function initializeTelegramHandler(botToken, options = {}) {
   });
 
   // Handle inline button callbacks
+  bot.action('chk_prompt', async (ctx) => {
+    try {
+      await ctx.answerCbQuery();
+      await ctx.deleteMessage();
+      await ctx.reply(
+        'Send your credentials in the format:\n\n' +
+        codeV2('.chk email:password') +
+        '\n\nExample:\n' +
+        codeV2('.chk user@rakuten.co.jp:mypass123'),
+        {
+          parse_mode: 'MarkdownV2',
+          ...Markup.inlineKeyboard([
+            [Markup.button.callback('▶️ Check Now', 'chk_prompt')],
+            [Markup.button.callback('📖 Guide', 'guide'), Markup.button.callback('ℹ️ Help', 'help')],
+          ]),
+        }
+      );
+    } catch (err) {
+      log.warn(`Callback error (chk_prompt): ${err.message}`);
+    }
+  });
+
   bot.action('guide', async (ctx) => {
-    await ctx.answerCbQuery();
-    await ctx.reply(buildGuideMessage(), { parse_mode: 'MarkdownV2' });
+    try {
+      await ctx.answerCbQuery();
+      await ctx.deleteMessage();
+      await ctx.reply(buildGuideMessage(), {
+        parse_mode: 'MarkdownV2',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback('▶️ Check Now', 'chk_prompt')],
+          [Markup.button.callback('📖 Guide', 'guide'), Markup.button.callback('ℹ️ Help', 'help')],
+        ]),
+      });
+    } catch (err) {
+      log.warn(`Callback error (guide): ${err.message}`);
+    }
   });
 
   bot.action('help', async (ctx) => {
-    await ctx.answerCbQuery();
-    await ctx.reply(buildHelpMessage(), { parse_mode: 'MarkdownV2' });
+    try {
+      await ctx.answerCbQuery();
+      await ctx.deleteMessage();
+      await ctx.reply(buildHelpMessage(), {
+        parse_mode: 'MarkdownV2',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback('▶️ Check Now', 'chk_prompt')],
+          [Markup.button.callback('📖 Guide', 'guide'), Markup.button.callback('ℹ️ Help', 'help')],
+        ]),
+      });
+    } catch (err) {
+      log.warn(`Callback error (help): ${err.message}`);
+    }
   });
 
   // Launch bot

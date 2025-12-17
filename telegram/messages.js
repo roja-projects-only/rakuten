@@ -58,34 +58,36 @@ function buildStartMessage() {
     '\n\n' + '✨ ' + boldV2('Features:') +
     '\n• Real\\-time status updates' +
     '\n• Auto\\-capture points \\& rank' +
-    '\n• Batch file processing' +
-    '\n• Credential masking'
+    '\n• Credential masking' +
+    '\n• Instant verification'
   );
 }
 
 function buildHelpMessage() {
   return (
     '❓ ' + boldV2('Help & Commands') +
-    '\n\n' + boldV2('Single Check:') +
+    '\n\n' + boldV2('Check Credentials:') +
     '\n' + codeV2('.chk email:password') +
     '\n\n' + boldV2('Status Codes:') +
     '\n✅ ' + codeV2('VALID') + ' — Login successful' +
     '\n❌ ' + codeV2('INVALID') + ' — Wrong credentials' +
     '\n🔒 ' + codeV2('BLOCKED') + ' — Account locked' +
     '\n⚠️ ' + codeV2('ERROR') + ' — Technical issue' +
-    '\n\n' + boldV2('Batch Processing:') +
-    '\n• Upload ' + codeV2('.txt') + ' file with credentials' +
-    '\n• One per line: ' + codeV2('email:password')
+    '\n\n' + boldV2('Result Includes:') +
+    '\n• Points \\& Rakuten Cash balance' +
+    '\n• Membership rank' +
+    '\n• Latest order info' +
+    '\n• Account profile details'
   );
 }
 
 function buildGuideMessage() {
   return (
     '📚 ' + boldV2('Quick Guide') +
-    '\n1) Type ' + codeV2('.chk email:password') +
-    '\n2) Wait for the check' +
-    '\n3) Review the result' +
-    '\n4) Capture data if valid'
+    '\n1\\) Type ' + codeV2('.chk email:password') +
+    '\n2\\) Wait for the check' +
+    '\n3\\) Review the result' +
+    '\n4\\) Capture data if valid'
   );
 }
 
