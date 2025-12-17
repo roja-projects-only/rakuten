@@ -14,6 +14,7 @@ const {
   getProcessedStatus,
   getProcessedStatusBatch,
   markProcessedStatus,
+  flushWriteBuffer,
   isSkippableStatus,
   makeKey,
 } = require('../automation/batch/processedStore');
@@ -316,6 +317,9 @@ function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, 
       log.warn('Batch execution error:', err.message);
       log.warn(`[batch] execution failed file=${batch.filename} msg=${err.message}`);
     } finally {
+      // Flush any buffered Redis writes before completing
+      await flushWriteBuffer().catch(() => {});
+      
       pendingBatches.delete(key);
       activeBatches.delete(chatId);
       batchCompleteResolve(); // Signal batch completion

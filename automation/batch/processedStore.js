@@ -14,6 +14,13 @@ let redisClient = null;
 let initialized = false;
 const cache = new Map(); // Used for JSONL backend
 
+// ============ Write Buffer for Redis Pipeline ============
+const writeBuffer = [];
+const WRITE_BUFFER_SIZE = 100; // Flush every 100 writes
+const WRITE_BUFFER_INTERVAL_MS = 1000; // Or every 1 second
+let writeBufferTimer = null;
+let flushPromise = null;
+
 function isSkippableStatus(status) {
   if (!status) return false;
   const upper = String(status).toUpperCase();
@@ -89,6 +96,50 @@ async function initRedis() {
   
   await redisClient.connect();
   log.info('Redis connected');
+}
+
+/**
+ * Flushes the write buffer to Redis using pipeline (single round-trip).
+ * @returns {Promise<void>}
+ */
+async function flushWriteBuffer() {
+  if (writeBuffer.length === 0 || backend !== 'redis' || !redisClient) {
+    return;
+  }
+  
+  // Clear timer if running
+  if (writeBufferTimer) {
+    clearTimeout(writeBufferTimer);
+    writeBufferTimer = null;
+  }
+  
+  // Take all items from buffer
+  const items = writeBuffer.splice(0, writeBuffer.length);
+  if (items.length === 0) return;
+  
+  try {
+    // Use pipeline for batch writes - single round-trip for all
+    const pipeline = redisClient.pipeline();
+    for (const { key, status, ts, ttlSeconds } of items) {
+      pipeline.setex(`${REDIS_PREFIX}${key}`, ttlSeconds, JSON.stringify({ status, ts }));
+    }
+    await pipeline.exec();
+    log.debug(`Flushed ${items.length} writes to Redis`);
+  } catch (err) {
+    log.warn(`Redis pipeline flush error: ${err.message}`);
+  }
+}
+
+/**
+ * Schedules a buffer flush after the interval.
+ */
+function scheduleFlush() {
+  if (writeBufferTimer) return; // Already scheduled
+  
+  writeBufferTimer = setTimeout(async () => {
+    writeBufferTimer = null;
+    await flushWriteBuffer();
+  }, WRITE_BUFFER_INTERVAL_MS);
 }
 
 // ============ Unified Interface ============
@@ -215,15 +266,16 @@ async function markProcessedStatus(key, status, ttlMs = DEFAULT_TTL_MS) {
   const ts = Date.now();
   
   if (backend === 'redis') {
-    try {
-      const ttlSeconds = Math.ceil(ttlMs / 1000);
-      await redisClient.setex(
-        `${REDIS_PREFIX}${key}`,
-        ttlSeconds,
-        JSON.stringify({ status, ts })
-      );
-    } catch (err) {
-      log.warn(`Redis set error: ${err.message}`);
+    const ttlSeconds = Math.ceil(ttlMs / 1000);
+    
+    // Add to write buffer instead of immediate write
+    writeBuffer.push({ key, status, ts, ttlSeconds });
+    
+    // Flush if buffer is full, otherwise schedule a flush
+    if (writeBuffer.length >= WRITE_BUFFER_SIZE) {
+      await flushWriteBuffer();
+    } else {
+      scheduleFlush();
     }
     return;
   }
@@ -260,6 +312,14 @@ async function pruneExpired(ttlMs = DEFAULT_TTL_MS) {
 }
 
 async function closeStore() {
+  // Flush any pending writes before closing
+  await flushWriteBuffer();
+  
+  if (writeBufferTimer) {
+    clearTimeout(writeBufferTimer);
+    writeBufferTimer = null;
+  }
+  
   if (redisClient) {
     await redisClient.quit();
     redisClient = null;
@@ -273,6 +333,7 @@ module.exports = {
   getProcessedStatus,
   getProcessedStatusBatch,
   markProcessedStatus,
+  flushWriteBuffer,
   pruneExpired,
   isSkippableStatus,
   makeKey,
