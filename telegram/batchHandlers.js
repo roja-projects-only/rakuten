@@ -358,19 +358,16 @@ function registerBatchHandlers(bot, options, helpers) {
       
       log.info(`[combine] file added name=${doc.file_name} total_files=${session.files.length}`);
       
-      await ctx.reply(
-        '✅ ' + boldV2('File Added') +
-        `\n• Name: ${codeV2(doc.file_name || 'file')}` +
-        `\n• Size: ${escapeV2(formatBytes(doc.file_size))}` +
-        '\n\n' + boldV2('Session') +
-        `\n• Files: ${codeV2(String(session.files.length))}` +
-        `\n• Total size: ${escapeV2(formatBytes(totalSize))}` +
-        '\n\n' + escapeV2('Send more files or /done to process'),
-        {
+      // Just react with emoji to avoid spam - no verbose message per file
+      try {
+        await ctx.react('👍');
+      } catch (_) {
+        // Fallback: brief inline message if reactions not supported
+        await ctx.reply(`📎 ${codeV2(String(session.files.length))} files \\(${escapeV2(formatBytes(totalSize))}\\)`, {
           parse_mode: 'MarkdownV2',
           reply_to_message_id: sourceMessageId,
-        }
-      );
+        });
+      }
       return;
     }
 
