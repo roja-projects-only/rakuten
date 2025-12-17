@@ -22,9 +22,111 @@ const { createLogger } = require('../../logger');
 const log = createLogger('http-client');
 
 /**
+ * Parses various proxy formats into a standard config object.
+ * Supported formats:
+ *   - host:port
+ *   - host:port:user:pass
+ *   - user:pass@host:port
+ *   - http://host:port
+ *   - http://user:pass@host:port
+ *   - socks5://user:pass@host:port
+ * @param {string} proxy - Proxy string in any format
+ * @returns {Object|null} { host, port, auth? } or null if invalid
+ */
+function parseProxy(proxy) {
+  if (!proxy || typeof proxy !== 'string') return null;
+  
+  const trimmed = proxy.trim();
+  if (!trimmed) return null;
+  
+  // Try parsing as URL first (handles http://, socks5://, etc.)
+  if (trimmed.includes('://')) {
+    try {
+      const url = new URL(trimmed);
+      const result = {
+        host: url.hostname,
+        port: parseInt(url.port, 10) || 80,
+        protocol: url.protocol.replace(':', ''),
+      };
+      if (url.username && url.password) {
+        result.auth = {
+          username: decodeURIComponent(url.username),
+          password: decodeURIComponent(url.password),
+        };
+      }
+      return result;
+    } catch (_) {
+      // Fall through to other formats
+    }
+  }
+  
+  // Format: user:pass@host:port
+  const atMatch = trimmed.match(/^([^:]+):([^@]+)@([^:]+):(\d+)$/);
+  if (atMatch) {
+    return {
+      host: atMatch[3],
+      port: parseInt(atMatch[4], 10),
+      auth: {
+        username: atMatch[1],
+        password: atMatch[2],
+      },
+    };
+  }
+  
+  // Format: host:port:user:pass
+  const fourParts = trimmed.split(':');
+  if (fourParts.length === 4) {
+    const port = parseInt(fourParts[1], 10);
+    if (!isNaN(port)) {
+      return {
+        host: fourParts[0],
+        port,
+        auth: {
+          username: fourParts[2],
+          password: fourParts[3],
+        },
+      };
+    }
+  }
+  
+  // Format: host:port
+  const twoParts = trimmed.split(':');
+  if (twoParts.length === 2) {
+    const port = parseInt(twoParts[1], 10);
+    if (!isNaN(port)) {
+      return {
+        host: twoParts[0],
+        port,
+      };
+    }
+  }
+  
+  // Try adding http:// and parse as URL
+  try {
+    const url = new URL(`http://${trimmed}`);
+    if (url.hostname && url.port) {
+      const result = {
+        host: url.hostname,
+        port: parseInt(url.port, 10),
+      };
+      if (url.username && url.password) {
+        result.auth = {
+          username: decodeURIComponent(url.username),
+          password: decodeURIComponent(url.password),
+        };
+      }
+      return result;
+    }
+  } catch (_) {}
+  
+  log.warn(`Unable to parse proxy format: ${trimmed}`);
+  return null;
+}
+
+/**
  * Creates a new HTTP client instance with cookie jar and browser-like configuration.
  * @param {Object} options - Client configuration options
- * @param {string} [options.proxy] - Proxy URL (http://user:pass@host:port)
+ * @param {string} [options.proxy] - Proxy in any format (host:port, user:pass@host:port, http://..., etc.)
  * @param {number} [options.timeout=60000] - Request timeout in milliseconds
  * @param {string} [options.userAgent] - Custom User-Agent (random if not provided)
  * @returns {Object} Axios instance with cookie jar
@@ -50,16 +152,17 @@ function createHttpClient(options = {}) {
 
   // Configure proxy if provided
   if (proxy) {
-    const proxyUrl = new URL(proxy);
-    client.defaults.proxy = {
-      host: proxyUrl.hostname,
-      port: parseInt(proxyUrl.port, 10) || 80,
-      auth: proxyUrl.username && proxyUrl.password ? {
-        username: proxyUrl.username,
-        password: proxyUrl.password,
-      } : undefined,
-    };
-    log.debug(`Proxy configured: ${proxyUrl.hostname}:${proxyUrl.port}`);
+    const proxyConfig = parseProxy(proxy);
+    if (proxyConfig) {
+      client.defaults.proxy = {
+        host: proxyConfig.host,
+        port: proxyConfig.port,
+        auth: proxyConfig.auth,
+      };
+      log.debug(`Proxy configured: ${proxyConfig.host}:${proxyConfig.port}${proxyConfig.auth ? ' (with auth)' : ''}`);
+    } else {
+      log.warn(`Invalid proxy format, proceeding without proxy: ${proxy}`);
+    }
   }
 
   // Set default headers (browser-like)
@@ -156,6 +259,7 @@ async function setCookies(jar, setCookieHeaders, url) {
 
 module.exports = {
   createHttpClient,
+  parseProxy,
   getCookies,
   getCookieString,
   setCookies,

@@ -149,8 +149,17 @@ function initializeTelegramHandler(botToken, options = {}) {
     }
     
     if (hasActiveBatch(chatId)) {
-      abortActiveBatch(chatId);
-      await ctx.reply(escapeV2('⏹ Aborting batch, please wait...'), { parse_mode: 'MarkdownV2' });
+      const result = abortActiveBatch(chatId);
+      const ackMsg = await ctx.reply(escapeV2('⏹ Stopping batch...'), { parse_mode: 'MarkdownV2' });
+      
+      // Wait for batch to actually finish so the summary message gets updated
+      if (result.batch && result.batch._completionPromise) {
+        await result.batch._completionPromise;
+        // Delete the ack message since batch summary is shown
+        try {
+          await ctx.telegram.deleteMessage(chatId, ackMsg.message_id);
+        } catch (_) {}
+      }
     } else {
       await ctx.reply(escapeV2('⚠️ No active batch to stop.'), { parse_mode: 'MarkdownV2' });
     }

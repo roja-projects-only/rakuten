@@ -927,16 +927,16 @@ function registerBatchHandlers(bot, options, helpers) {
 /**
  * Aborts the active batch for a given chat.
  * @param {number} chatId - Telegram chat ID
- * @returns {boolean} True if batch was found and aborted
+ * @returns {{ aborted: boolean, batch?: Object }} Result with batch info for waiting
  */
 function abortActiveBatch(chatId) {
   const active = activeBatches.get(chatId);
   if (active && active.batch) {
     active.batch.aborted = true;
     log.info(`[batch] abort via /stop command chatId=${chatId} file=${active.batch.filename}`);
-    return true;
+    return { aborted: true, batch: active.batch };
   }
-  return false;
+  return { aborted: false };
 }
 
 /**
