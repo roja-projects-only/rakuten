@@ -124,3 +124,27 @@ HOTMAIL mode only accepts: `live.jp`, `hotmail.co.jp`, `hotmail.jp`, `outlook.jp
 - Config: `railway.json` (Nixpacks builder, auto-restart on failure)
 - Native deps: `murmurhash-native` builds on Linux, falls back to pure JS locally
 - Required env vars: `TELEGRAM_BOT_TOKEN`, `TARGET_LOGIN_URL`
+- **Graceful shutdown**: Waits up to 5 minutes for active batches to complete before restarting
+
+### How Batch Resilience Works
+When you push an update during an active batch:
+1. Railway sends SIGTERM to old instance
+2. Bot detects active batches and waits for completion (max 5 min)
+3. Credentials are saved to `processedStore` immediately after each check
+4. Progress messages update in real-time
+5. Summary sent to user when batch completes
+6. New instance starts only after old one finishes gracefully
+
+**What's preserved:**
+- ✅ All checked credentials (saved immediately to JSONL/Redis)
+- ✅ Valid credentials list (shown in summary)
+- ✅ Final summary message
+
+**What's NOT preserved (edge case):**
+- ❌ Credentials currently being checked (in-flight) when shutdown times out after 5 min
+- ❌ Progress message if Telegram API fails (user gets final summary anyway)
+
+**Best practices:**
+- Avoid deploying during large batches (>1000 credentials)
+- Use Redis (`REDIS_URL`) for better state persistence across restarts
+- Monitor Railway logs to see graceful shutdown in action

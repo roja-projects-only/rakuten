@@ -102,6 +102,9 @@ function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, 
   batch._completionPromise = new Promise(resolve => {
     batchCompleteResolve = resolve;
   });
+  
+  // Expose processed count for shutdown tracking
+  batch.processed = 0;
 
   // Track active batch for /stop command
   activeBatches.set(chatId, { batch, key });
@@ -206,6 +209,7 @@ function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, 
 
     counts[result.status] = (counts[result.status] || 0) + 1;
     processed += 1;
+    batch.processed = processed; // Update for shutdown tracking
 
     if (result.status === 'VALID') {
       validCreds.push({ username: cred.username, password: cred.password });
@@ -930,8 +934,47 @@ function hasActiveBatch(chatId) {
   return activeBatches.has(chatId);
 }
 
+/**
+ * Gets all active batches with their progress.
+ * @returns {Array<{chatId: number, filename: string, processed: number, total: number}>}
+ */
+function getAllActiveBatches() {
+  const batches = [];
+  for (const [chatId, { batch }] of activeBatches.entries()) {
+    if (batch && !batch.aborted) {
+      batches.push({
+        chatId,
+        filename: batch.filename,
+        processed: batch.processed || 0,
+        total: batch.count,
+      });
+    }
+  }
+  return batches;
+}
+
+/**
+ * Wait for all active batches to complete.
+ * Returns a promise that resolves when all batches finish.
+ * @returns {Promise<void>}
+ */
+async function waitForAllBatchCompletion() {
+  const promises = [];
+  for (const [, { batch }] of activeBatches.entries()) {
+    if (batch && batch._completionPromise && !batch.aborted) {
+      promises.push(batch._completionPromise);
+    }
+  }
+  
+  if (promises.length === 0) return;
+  
+  await Promise.all(promises);
+}
+
 module.exports = {
   registerBatchHandlers,
   abortActiveBatch,
   hasActiveBatch,
+  getAllActiveBatches,
+  waitForAllBatchCompletion,
 };

@@ -19,6 +19,7 @@
 
 require('dotenv').config();
 const { initializeTelegramHandler } = require('./telegramHandler');
+const { getAllActiveBatches, waitForAllBatchCompletion } = require('./telegram/batchHandlers');
 const fs = require('fs');
 const path = require('path');
 const { createLogger } = require('./logger');
@@ -110,8 +111,33 @@ async function main() {
     // Handle graceful shutdown
     const shutdown = async (signal) => {
       log.warn(`Received ${signal} - Shutting down gracefully...`);
-      log.info('Stopping bot...');
       
+      // Check for active batches
+      const activeBatches = getAllActiveBatches();
+      if (activeBatches.length > 0) {
+        log.info(`Waiting for ${activeBatches.length} active batch(es) to complete...`);
+        log.info('Active batches:', activeBatches.map(b => `${b.filename} (${b.processed}/${b.total})`).join(', '));
+        
+        const timeout = 300000; // 5 minutes max wait
+        const startWait = Date.now();
+        
+        try {
+          await Promise.race([
+            waitForAllBatchCompletion(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Shutdown timeout')), timeout))
+          ]);
+          
+          const waitedMs = Date.now() - startWait;
+          log.success(`All batches completed. Waited ${Math.round(waitedMs / 1000)}s`);
+        } catch (err) {
+          log.warn(`Shutdown timeout reached after ${timeout / 1000}s - forcing shutdown`);
+          log.warn('Some batch progress may be lost.');
+        }
+      } else {
+        log.info('No active batches.');
+      }
+      
+      log.info('Stopping bot...');
       try {
         bot.stop(signal);
         log.success('Bot stopped successfully.');
