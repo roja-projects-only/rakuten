@@ -2,8 +2,9 @@ const { Markup } = require('telegraf');
 const {
   DEFAULT_TTL_MS,
   initProcessedStore,
-  getProcessedStatus,
+  getProcessedStatusBatch,
   markProcessedStatus,
+  flushWriteBuffer,
   isSkippableStatus,
   makeKey,
 } = require('../automation/batch/processedStore');
@@ -33,23 +34,36 @@ const CIRCUIT_BREAKER_PAUSE_MS = 3000;
 const PROCESSED_TTL_MS = parseInt(process.env.PROCESSED_TTL_MS, 10) || DEFAULT_TTL_MS;
 
 /**
- * Filter already processed credentials
+ * Filter already processed credentials using batch Redis lookup
  */
 async function filterAlreadyProcessed(creds) {
   await initProcessedStore(PROCESSED_TTL_MS);
+  
+  log.info(`[filter] Filtering ${creds.length} credentials against processed store...`);
+  
+  // Build all keys first
+  const credsWithKeys = creds.map(cred => ({
+    ...cred,
+    _dedupeKey: makeKey(cred.username, cred.password),
+  }));
+  
+  // Batch lookup - single MGET call per 1000 keys
+  const allKeys = credsWithKeys.map(c => c._dedupeKey);
+  const statusMap = await getProcessedStatusBatch(allKeys, PROCESSED_TTL_MS);
+  
   const filtered = [];
   let skipped = 0;
 
-  for (const cred of creds) {
-    const key = makeKey(cred.username, cred.password);
-    const status = getProcessedStatus(key, PROCESSED_TTL_MS);
+  for (const cred of credsWithKeys) {
+    const status = statusMap.get(cred._dedupeKey);
     if (status && isSkippableStatus(status)) {
       skipped += 1;
       continue;
     }
-    filtered.push({ ...cred, _dedupeKey: key });
+    filtered.push(cred);
   }
 
+  log.info(`[filter] Done: ${filtered.length} to process, ${skipped} skipped (already processed)`);
   return { filtered, skipped };
 }
 
@@ -336,6 +350,9 @@ async function runCombineBatch(ctx, batch, options, helpers, checkCredentials) {
     } catch (_) {}
     log.warn(`[combine-batch] execution failed: ${err.message}`);
   } finally {
+    // Flush any buffered Redis writes before completing
+    await flushWriteBuffer().catch(() => {});
+    
     activeCombineBatches.delete(chatId);
     batchCompleteResolve(); // Signal batch completion
   }
@@ -368,9 +385,46 @@ function getActiveCombineBatch(chatId) {
   return activeCombineBatches.get(chatId);
 }
 
+/**
+ * Get all active combine batches with progress info.
+ * @returns {Array<{chatId: number, filename: string, processed: number, total: number}>}
+ */
+function getAllActiveCombineBatches() {
+  const batches = [];
+  for (const [chatId, batch] of activeCombineBatches.entries()) {
+    if (batch && !batch.aborted) {
+      batches.push({
+        chatId,
+        filename: batch.filename || 'combine',
+        processed: batch.processed || 0,
+        total: batch.count || 0,
+      });
+    }
+  }
+  return batches;
+}
+
+/**
+ * Wait for all active combine batches to complete.
+ * @returns {Promise<void>}
+ */
+async function waitForAllCombineBatchCompletion() {
+  const promises = [];
+  for (const [, batch] of activeCombineBatches.entries()) {
+    if (batch && batch._completionPromise && !batch.aborted) {
+      promises.push(batch._completionPromise);
+    }
+  }
+  
+  if (promises.length === 0) return;
+  await Promise.all(promises);
+}
+
 module.exports = {
   runCombineBatch,
   abortCombineBatch,
   hasCombineBatch,
   getActiveCombineBatch,
+  getAllActiveCombineBatches,
+  waitForAllCombineBatchCompletion,
 };

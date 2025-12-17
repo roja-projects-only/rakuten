@@ -20,6 +20,8 @@
 require('dotenv').config();
 const { initializeTelegramHandler } = require('./telegramHandler');
 const { getAllActiveBatches, waitForAllBatchCompletion } = require('./telegram/batchHandlers');
+const { getAllActiveCombineBatches, waitForAllCombineBatchCompletion } = require('./telegram/combineBatchRunner');
+const { flushWriteBuffer, closeStore } = require('./automation/batch/processedStore');
 const fs = require('fs');
 const path = require('path');
 const { createLogger } = require('./logger');
@@ -109,43 +111,96 @@ async function main() {
     log.info('Press Ctrl+C to stop the bot');
 
     // Handle graceful shutdown
+    let isShuttingDown = false;
+    
     const shutdown = async (signal) => {
-      log.warn(`Received ${signal} - Shutting down gracefully...`);
+      // Prevent multiple shutdown attempts
+      if (isShuttingDown) {
+        log.warn('Shutdown already in progress...');
+        return;
+      }
+      isShuttingDown = true;
       
-      // Check for active batches
+      log.warn(`\n🛑 Received ${signal} - Graceful shutdown initiated...`);
+      
+      // Collect all active batches (regular + combine)
       const activeBatches = getAllActiveBatches();
-      if (activeBatches.length > 0) {
-        log.info(`Waiting for ${activeBatches.length} active batch(es) to complete...`);
-        log.info('Active batches:', activeBatches.map(b => `${b.filename} (${b.processed}/${b.total})`).join(', '));
+      const activeCombineBatches = getAllActiveCombineBatches();
+      const totalActive = activeBatches.length + activeCombineBatches.length;
+      
+      if (totalActive > 0) {
+        log.info(`⏳ Waiting for ${totalActive} active batch(es) to complete...`);
         
-        const timeout = 300000; // 5 minutes max wait
+        if (activeBatches.length > 0) {
+          log.info('  Regular batches: ' + activeBatches.map(b => `${b.filename} (${b.processed}/${b.total})`).join(', '));
+        }
+        if (activeCombineBatches.length > 0) {
+          log.info('  Combine batches: ' + activeCombineBatches.map(b => `${b.filename} (${b.processed}/${b.total})`).join(', '));
+        }
+        
+        const SHUTDOWN_TIMEOUT_MS = 300000; // 5 minutes max wait
         const startWait = Date.now();
+        
+        // Progress logging interval
+        const progressInterval = setInterval(() => {
+          const current = getAllActiveBatches().concat(getAllActiveCombineBatches());
+          if (current.length > 0) {
+            const elapsed = Math.round((Date.now() - startWait) / 1000);
+            log.info(`  ⏳ Still waiting (${elapsed}s): ` + current.map(b => `${b.processed}/${b.total}`).join(', '));
+          }
+        }, 10000); // Log every 10 seconds
         
         try {
           await Promise.race([
-            waitForAllBatchCompletion(),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Shutdown timeout')), timeout))
+            Promise.all([
+              waitForAllBatchCompletion(),
+              waitForAllCombineBatchCompletion(),
+            ]),
+            new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('Shutdown timeout')), SHUTDOWN_TIMEOUT_MS)
+            )
           ]);
           
+          clearInterval(progressInterval);
           const waitedMs = Date.now() - startWait;
-          log.success(`All batches completed. Waited ${Math.round(waitedMs / 1000)}s`);
+          log.success(`✅ All batches completed. Waited ${Math.round(waitedMs / 1000)}s`);
         } catch (err) {
-          log.warn(`Shutdown timeout reached after ${timeout / 1000}s - forcing shutdown`);
-          log.warn('Some batch progress may be lost.');
+          clearInterval(progressInterval);
+          log.warn(`⚠️ Shutdown timeout reached after ${SHUTDOWN_TIMEOUT_MS / 1000}s - forcing shutdown`);
+          log.warn('Some in-flight credentials may not be saved.');
         }
       } else {
         log.info('No active batches.');
       }
       
-      log.info('Stopping bot...');
+      // Flush any buffered Redis writes
+      log.info('💾 Flushing buffered writes...');
+      try {
+        await flushWriteBuffer();
+        log.success('Write buffer flushed.');
+      } catch (err) {
+        log.warn(`Write buffer flush failed: ${err.message}`);
+      }
+      
+      // Close Redis connection
+      log.info('🔌 Closing Redis connection...');
+      try {
+        await closeStore();
+        log.success('Redis connection closed.');
+      } catch (err) {
+        log.warn(`Redis close failed: ${err.message}`);
+      }
+      
+      // Stop the bot
+      log.info('🤖 Stopping Telegram bot...');
       try {
         bot.stop(signal);
         log.success('Bot stopped successfully.');
       } catch (err) {
-        log.error('Error stopping bot:', err.message);
+        log.warn(`Bot stop error: ${err.message}`);
       }
       
-      log.info('Goodbye!');
+      log.info('👋 Goodbye!');
       process.exit(0);
     };
 
