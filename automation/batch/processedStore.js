@@ -6,9 +6,25 @@ const log = createLogger('processed-store');
 
 const DEFAULT_TTL_MS = parseInt(process.env.PROCESSED_TTL_MS, 10) || 7 * 24 * 60 * 60 * 1000;
 const STORE_PATH = path.join(process.cwd(), 'data', 'processed', 'processed-creds.jsonl');
+const REDIS_PREFIX = 'proc:';
 
+// Storage backend: 'redis' or 'jsonl'
+let backend = null;
+let redisClient = null;
 let initialized = false;
-const cache = new Map();
+const cache = new Map(); // Used for JSONL backend
+
+function isSkippableStatus(status) {
+  if (!status) return false;
+  const upper = String(status).toUpperCase();
+  return upper === 'VALID' || upper === 'INVALID' || upper === 'BLOCKED';
+}
+
+function makeKey(username, password) {
+  return `${username}:${password}`;
+}
+
+// ============ JSONL Backend ============
 
 async function ensureFile() {
   const dir = path.dirname(STORE_PATH);
@@ -20,12 +36,6 @@ async function ensureFile() {
   }
 }
 
-function isSkippableStatus(status) {
-  if (!status) return false;
-  const upper = String(status).toUpperCase();
-  return upper === 'VALID' || upper === 'INVALID' || upper === 'BLOCKED';
-}
-
 async function rewriteFile() {
   const lines = [];
   for (const [key, entry] of cache.entries()) {
@@ -34,7 +44,7 @@ async function rewriteFile() {
   await fs.writeFile(STORE_PATH, lines.join('\n') + (lines.length ? '\n' : ''), 'utf8');
 }
 
-async function hydrate(ttlMs) {
+async function hydrateJsonl(ttlMs) {
   await ensureFile();
   const text = await fs.readFile(STORE_PATH, 'utf8').catch(() => '');
   const lines = text.split(/\r?\n/).filter(Boolean);
@@ -60,13 +70,67 @@ async function hydrate(ttlMs) {
   }
 }
 
+
+// ============ Redis Backend ============
+
+async function initRedis() {
+  const Redis = require('ioredis');
+  const url = process.env.REDIS_URL;
+  
+  redisClient = new Redis(url, {
+    maxRetriesPerRequest: 3,
+    retryDelayOnFailover: 100,
+    lazyConnect: true,
+  });
+  
+  redisClient.on('error', (err) => {
+    log.warn(`Redis error: ${err.message}`);
+  });
+  
+  await redisClient.connect();
+  log.info('Redis connected');
+}
+
+// ============ Unified Interface ============
+
 async function initProcessedStore(ttlMs = DEFAULT_TTL_MS) {
   if (initialized) return;
-  await hydrate(ttlMs);
+  
+  if (process.env.REDIS_URL) {
+    try {
+      await initRedis();
+      backend = 'redis';
+      log.info('Using Redis backend for processed store');
+    } catch (err) {
+      log.warn(`Redis init failed: ${err.message}, falling back to JSONL`);
+      backend = 'jsonl';
+      await hydrateJsonl(ttlMs);
+    }
+  } else {
+    backend = 'jsonl';
+    await hydrateJsonl(ttlMs);
+    log.info('Using JSONL backend for processed store');
+  }
+  
   initialized = true;
 }
 
-function getProcessedStatus(key, ttlMs = DEFAULT_TTL_MS) {
+async function getProcessedStatus(key, ttlMs = DEFAULT_TTL_MS) {
+  await initProcessedStore(ttlMs);
+  
+  if (backend === 'redis') {
+    try {
+      const data = await redisClient.get(`${REDIS_PREFIX}${key}`);
+      if (!data) return null;
+      const parsed = JSON.parse(data);
+      return parsed.status;
+    } catch (err) {
+      log.warn(`Redis get error: ${err.message}`);
+      return null;
+    }
+  }
+  
+  // JSONL backend
   const entry = cache.get(key);
   if (!entry) return null;
   if (Date.now() - entry.ts > ttlMs) return null;
@@ -76,6 +140,22 @@ function getProcessedStatus(key, ttlMs = DEFAULT_TTL_MS) {
 async function markProcessedStatus(key, status, ttlMs = DEFAULT_TTL_MS) {
   await initProcessedStore(ttlMs);
   const ts = Date.now();
+  
+  if (backend === 'redis') {
+    try {
+      const ttlSeconds = Math.ceil(ttlMs / 1000);
+      await redisClient.setex(
+        `${REDIS_PREFIX}${key}`,
+        ttlSeconds,
+        JSON.stringify({ status, ts })
+      );
+    } catch (err) {
+      log.warn(`Redis set error: ${err.message}`);
+    }
+    return;
+  }
+  
+  // JSONL backend
   cache.set(key, { status, ts });
   try {
     await fs.appendFile(STORE_PATH, `${JSON.stringify({ key, status, ts })}\n`, 'utf8');
@@ -86,6 +166,11 @@ async function markProcessedStatus(key, status, ttlMs = DEFAULT_TTL_MS) {
 
 async function pruneExpired(ttlMs = DEFAULT_TTL_MS) {
   await initProcessedStore(ttlMs);
+  
+  // Redis handles TTL automatically via SETEX
+  if (backend === 'redis') return;
+  
+  // JSONL backend
   const now = Date.now();
   let pruned = false;
 
@@ -101,8 +186,12 @@ async function pruneExpired(ttlMs = DEFAULT_TTL_MS) {
   }
 }
 
-function makeKey(username, password) {
-  return `${username}:${password}`;
+async function closeStore() {
+  if (redisClient) {
+    await redisClient.quit();
+    redisClient = null;
+    log.info('Redis disconnected');
+  }
 }
 
 module.exports = {
@@ -113,4 +202,5 @@ module.exports = {
   pruneExpired,
   isSkippableStatus,
   makeKey,
+  closeStore,
 };

@@ -22,6 +22,7 @@
     "cheerio": "^1.1.2",
     "dotenv": "^16.4.5",
     "form-data": "^4.0.5",
+    "ioredis": "^5.4.2",
     "murmurhash3js-revisited": "^3.0.0",
     "telegraf": "^4.16.3",
     "tough-cookie": "^5.1.2",

@@ -72,7 +72,7 @@ async function filterAlreadyProcessed(creds) {
 
   for (const cred of creds) {
     const key = makeKey(cred.username, cred.password);
-    const status = getProcessedStatus(key, PROCESSED_TTL_MS);
+    const status = await getProcessedStatus(key, PROCESSED_TTL_MS);
     if (status && isSkippableStatus(status)) {
       skipped += 1;
       continue;

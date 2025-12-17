@@ -43,6 +43,7 @@ Implementation: `automation/http/fingerprinting/challengeGenerator.js`
 | `BATCH_DELAY_MS` | | `500` | Delay between requests |
 | `LOG_LEVEL` | | `info` | error\|warn\|info\|debug |
 | `PROXY_SERVER` | | — | Proxy URL |
+| `REDIS_URL` | | — | Redis connection URL (uses JSONL if not set) |
 
 ## Commands & Workflows
 ```powershell

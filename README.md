@@ -36,6 +36,7 @@ npm start
 | `BATCH_DELAY_MS` | ❌ | `500` | Delay between requests |
 | `PROXY_SERVER` | ❌ | - | Proxy URL (http://host:port) |
 | `LOG_LEVEL` | ❌ | `info` | Logging: error\|warn\|info\|debug |
+| `REDIS_URL` | ❌ | - | Redis URL for cloud (JSONL locally) |
 
 ## 📖 Commands
 
@@ -160,10 +161,12 @@ npm start
 
 1. Push to GitHub
 2. Connect repo to Railway
-3. Set environment variables in Railway dashboard:
+3. Add Redis service in Railway (click "New" → "Database" → "Redis")
+4. Set environment variables in Railway dashboard:
    - `TELEGRAM_BOT_TOKEN`
    - `TARGET_LOGIN_URL`
-4. Deploy — Railway auto-detects Node.js and builds native dependencies
+   - `REDIS_URL` (auto-set if you link the Redis service)
+5. Deploy — Railway auto-detects Node.js and builds native dependencies
 
 Config file: `railway.json`
 
