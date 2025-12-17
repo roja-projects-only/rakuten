@@ -153,6 +153,12 @@ async function runCombineBatch(ctx, batch, options, helpers, checkCredentials) {
     aborted: false,
   };
   
+  // Create promise to track batch completion
+  let batchCompleteResolve;
+  batchData._completionPromise = new Promise(resolve => {
+    batchCompleteResolve = resolve;
+  });
+  
   // Send starting message
   const statusMsg = await ctx.reply(
     escapeV2('⏳ Starting combined batch check') +
@@ -331,6 +337,7 @@ async function runCombineBatch(ctx, batch, options, helpers, checkCredentials) {
     log.warn(`[combine-batch] execution failed: ${err.message}`);
   } finally {
     activeCombineBatches.delete(chatId);
+    batchCompleteResolve(); // Signal batch completion
   }
 }
 
@@ -354,8 +361,16 @@ function hasCombineBatch(chatId) {
   return activeCombineBatches.has(chatId);
 }
 
+/**
+ * Get active combine batch for a chat
+ */
+function getActiveCombineBatch(chatId) {
+  return activeCombineBatches.get(chatId);
+}
+
 module.exports = {
   runCombineBatch,
   abortCombineBatch,
   hasCombineBatch,
+  getActiveCombineBatch,
 };

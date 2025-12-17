@@ -507,7 +507,9 @@ function registerCombineHandlers(bot, options, helpers) {
     await ctx.answerCbQuery('Aborting...');
     const chatId = parseInt(ctx.match[1], 10);
     
-    const { abortCombineBatch } = require('./combineBatchRunner');
+    const { abortCombineBatch, getActiveCombineBatch } = require('./combineBatchRunner');
+    const batchBeforeAbort = getActiveCombineBatch(chatId);
+    
     if (abortCombineBatch(chatId)) {
       log.info(`[combine] abort requested chatId=${chatId}`);
       try {
@@ -519,6 +521,11 @@ function registerCombineHandlers(bot, options, helpers) {
           { parse_mode: 'MarkdownV2' }
         );
       } catch (_) {}
+      
+      // Wait for batch to actually finish
+      if (batchBeforeAbort && batchBeforeAbort._completionPromise) {
+        await batchBeforeAbort._completionPromise;
+      }
     } else {
       await ctx.reply(escapeV2('⚠️ No active combine batch to abort.'), {
         parse_mode: 'MarkdownV2',

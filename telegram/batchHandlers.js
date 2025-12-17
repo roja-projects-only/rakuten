@@ -97,6 +97,12 @@ function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, 
   let circuitBreakerTripped = false;
   let consecutiveErrors = 0;
 
+  // Create promise to track batch completion
+  let batchCompleteResolve;
+  batch._completionPromise = new Promise(resolve => {
+    batchCompleteResolve = resolve;
+  });
+
   // Track active batch for /stop command
   activeBatches.set(chatId, { batch, key });
 
@@ -294,6 +300,7 @@ function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, 
     } finally {
       pendingBatches.delete(key);
       activeBatches.delete(chatId);
+      batchCompleteResolve(); // Signal batch completion
     }
   };
 
@@ -885,6 +892,11 @@ function registerBatchHandlers(bot, options, helpers) {
           }
         );
       } catch (_) {}
+      
+      // Wait for batch to actually finish
+      if (batch._completionPromise) {
+        await batch._completionPromise;
+      }
     } else {
       await ctx.reply(buildNoActiveBatch(), {
         parse_mode: 'MarkdownV2',
