@@ -26,6 +26,7 @@ The `cres` (challenge response) is computed from `/util/gc` mdata (`{mask, key, 
 Implementation: `automation/http/fingerprinting/challengeGenerator.js`
 
 ### POW Optimizations (for Batch Processing)
+- **Native MurmurHash** (`murmurhash-native`): C++ bindings ~10x faster than pure JS (auto-fallback to `murmurhash3js-revisited` if build fails)
 - **Worker Thread Pool** (`powWorkerPool.js`): Offloads POW to worker threads (CPU cores - 1)
 - **POW Cache** (`powCache.js`): 5-minute TTL cache on `mask+key+seed` combinations
 - **Async API**: Use `computeCresFromMdataAsync()` for non-blocking batch processing
@@ -49,6 +50,11 @@ npm install          # Install deps
 npm start            # Run bot
 $env:LOG_LEVEL="debug"; npm start  # Verbose logging
 ```
+
+### Telegram Commands
+- `.chk email:password` — Single credential check
+- `/stop` — Abort active batch process
+- `/help` — Show help message
 
 ## Code Patterns
 
@@ -112,3 +118,8 @@ HOTMAIL mode only accepts: `live.jp`, `hotmail.co.jp`, `hotmail.jp`, `outlook.jp
 - ULP stream limit: ~1.5GB
 - Processed cache TTL: 7 days (env `PROCESSED_TTL_MS`)
 - Progress edit throttle: 5 seconds
+
+## Deployment (Railway)
+- Config: `railway.json` (Nixpacks builder, auto-restart on failure)
+- Native deps: `murmurhash-native` builds on Linux, falls back to pure JS locally
+- Required env vars: `TELEGRAM_BOT_TOKEN`, `TARGET_LOGIN_URL`

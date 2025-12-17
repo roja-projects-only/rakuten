@@ -50,6 +50,14 @@ Checks one credential and auto-captures account data if valid.
 2. Choose processing type:
    - **HOTMAIL** - Microsoft .jp domains only
    - **ULP** - Rakuten domains only
+   - **JP** - Any .jp domain
+   - **ALL** - No domain filter
+
+### Abort Batch
+```
+/stop
+```
+Aborts the currently running batch process.
 
 ### URL Batch
 ```
@@ -102,6 +110,12 @@ The login uses a Proof-of-Work challenge. The `/util/gc` endpoint returns:
 
 The algorithm computes a 16-char string where `MurmurHash3_x64_128(string, seed)` starts with `mask`.
 
+**Optimizations:**
+- Uses `murmurhash-native` (C++ bindings) on Linux/Railway for ~10x speedup
+- Falls back to `murmurhash3js-revisited` (pure JS) on Windows/local dev
+- Worker thread pool for non-blocking batch processing
+- 5-minute cache for repeated mask+key+seed combinations
+
 Implementation: `automation/http/fingerprinting/challengeGenerator.js`
 
 ## 📡 Data Capture API
@@ -141,6 +155,17 @@ npm start
 - Processed credentials are cached for 7 days (configurable via `PROCESSED_TTL_MS`)
 - Batch progress updates throttled to every 5 seconds
 - Respect Rakuten's rate limits with appropriate delays
+
+## 🚀 Deployment (Railway)
+
+1. Push to GitHub
+2. Connect repo to Railway
+3. Set environment variables in Railway dashboard:
+   - `TELEGRAM_BOT_TOKEN`
+   - `TARGET_LOGIN_URL`
+4. Deploy — Railway auto-detects Node.js and builds native dependencies
+
+Config file: `railway.json`
 
 ## 📄 License
 
