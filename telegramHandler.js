@@ -4,7 +4,7 @@ const { Telegraf, Markup } = require('telegraf');
 const { checkCredentials } = require('./httpChecker');
 const { closeSession } = require('./automation/http/sessionManager');
 const { captureAccountData } = require('./automation/http/httpDataCapture');
-const { registerBatchHandlers } = require('./telegram/batchHandlers');
+const { registerBatchHandlers, abortActiveBatch, hasActiveBatch } = require('./telegram/batchHandlers');
 const {
   buildStartMessage,
   buildHelpMessage,
@@ -131,6 +131,17 @@ function initializeTelegramHandler(botToken, options = {}) {
   // Handle /help command
   bot.command('help', async (ctx) => {
     await ctx.reply(buildHelpMessage(), { parse_mode: 'MarkdownV2' });
+  });
+
+  // Handle /stop command - abort active batch
+  bot.command('stop', async (ctx) => {
+    const chatId = ctx.chat.id;
+    if (hasActiveBatch(chatId)) {
+      abortActiveBatch(chatId);
+      await ctx.reply(escapeV2('⏹ Aborting batch, please wait...'), { parse_mode: 'MarkdownV2' });
+    } else {
+      await ctx.reply(escapeV2('⚠️ No active batch to stop.'), { parse_mode: 'MarkdownV2' });
+    }
   });
 
   // Register batch handlers (HOTMAIL uploads and ULP URLs)

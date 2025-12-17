@@ -45,6 +45,9 @@ const { createLogger } = require('../logger');
 
 const log = createLogger('batch');
 
+// Track active batches by chatId for /stop command
+const activeBatches = new Map(); // chatId -> { batch, key }
+
 // Batch processing configuration
 const BATCH_CONCURRENCY = Math.max(1, parseInt(process.env.BATCH_CONCURRENCY, 10) || 1); // default 1 for stability
 const MAX_RETRIES = parseInt(process.env.BATCH_MAX_RETRIES, 10) || 1; // reduced retries
@@ -90,6 +93,9 @@ function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, 
   const recentResults = []; // sliding window of recent results
   let circuitBreakerTripped = false;
   let consecutiveErrors = 0;
+
+  // Track active batch for /stop command
+  activeBatches.set(chatId, { batch, key });
 
   log.info(`[batch] executing file=${batch.filename} total=${batch.count} concurrency=${BATCH_CONCURRENCY}`);
 
@@ -284,6 +290,7 @@ function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, 
       log.warn(`[batch] execution failed file=${batch.filename} msg=${err.message}`);
     } finally {
       pendingBatches.delete(key);
+      activeBatches.delete(chatId);
     }
   };
 
@@ -850,6 +857,32 @@ function registerBatchHandlers(bot, options, helpers) {
   });
 }
 
+/**
+ * Aborts the active batch for a given chat.
+ * @param {number} chatId - Telegram chat ID
+ * @returns {boolean} True if batch was found and aborted
+ */
+function abortActiveBatch(chatId) {
+  const active = activeBatches.get(chatId);
+  if (active && active.batch) {
+    active.batch.aborted = true;
+    log.info(`[batch] abort via /stop command chatId=${chatId} file=${active.batch.filename}`);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Checks if there's an active batch for a given chat.
+ * @param {number} chatId - Telegram chat ID
+ * @returns {boolean}
+ */
+function hasActiveBatch(chatId) {
+  return activeBatches.has(chatId);
+}
+
 module.exports = {
   registerBatchHandlers,
+  abortActiveBatch,
+  hasActiveBatch,
 };
