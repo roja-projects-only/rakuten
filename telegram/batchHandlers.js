@@ -12,6 +12,7 @@ const {
   DEFAULT_TTL_MS,
   initProcessedStore,
   getProcessedStatus,
+  getProcessedStatusBatch,
   markProcessedStatus,
   isSkippableStatus,
   makeKey,
@@ -67,19 +68,32 @@ const PROCESSED_TTL_MS = parseInt(process.env.PROCESSED_TTL_MS, 10) || DEFAULT_T
 
 async function filterAlreadyProcessed(creds) {
   await initProcessedStore(PROCESSED_TTL_MS);
+  
+  log.info(`[filter] Filtering ${creds.length} credentials against processed store...`);
+  
+  // Build all keys first
+  const credsWithKeys = creds.map(cred => ({
+    ...cred,
+    _dedupeKey: makeKey(cred.username, cred.password),
+  }));
+  
+  // Batch lookup - single MGET call per 1000 keys instead of 50K individual calls
+  const allKeys = credsWithKeys.map(c => c._dedupeKey);
+  const statusMap = await getProcessedStatusBatch(allKeys, PROCESSED_TTL_MS);
+  
   const filtered = [];
   let skipped = 0;
 
-  for (const cred of creds) {
-    const key = makeKey(cred.username, cred.password);
-    const status = await getProcessedStatus(key, PROCESSED_TTL_MS);
+  for (const cred of credsWithKeys) {
+    const status = statusMap.get(cred._dedupeKey);
     if (status && isSkippableStatus(status)) {
       skipped += 1;
       continue;
     }
-    filtered.push({ ...cred, _dedupeKey: key });
+    filtered.push(cred);
   }
 
+  log.info(`[filter] Done: ${filtered.length} to process, ${skipped} skipped (already processed)`);
   return { filtered, skipped };
 }
 

@@ -137,6 +137,79 @@ async function getProcessedStatus(key, ttlMs = DEFAULT_TTL_MS) {
   return entry.status;
 }
 
+/**
+ * Batch lookup for multiple keys - much faster than individual lookups.
+ * Uses Redis MGET for batch operations.
+ * @param {string[]} keys - Array of keys to lookup
+ * @param {number} ttlMs - TTL in milliseconds
+ * @returns {Promise<Map<string, string|null>>} Map of key -> status
+ */
+async function getProcessedStatusBatch(keys, ttlMs = DEFAULT_TTL_MS) {
+  await initProcessedStore(ttlMs);
+  
+  const results = new Map();
+  
+  if (!keys.length) return results;
+  
+  if (backend === 'redis') {
+    try {
+      // Use MGET for batch lookup - single round trip per batch instead of per key
+      const BATCH_SIZE = 1000; // Redis MGET works best with reasonable batch sizes
+      const totalBatches = Math.ceil(keys.length / BATCH_SIZE);
+      
+      log.info(`Checking ${keys.length} keys against Redis (${totalBatches} batches)...`);
+      
+      for (let i = 0; i < keys.length; i += BATCH_SIZE) {
+        const batch = keys.slice(i, i + BATCH_SIZE);
+        const redisKeys = batch.map(k => `${REDIS_PREFIX}${k}`);
+        const values = await redisClient.mget(...redisKeys);
+        
+        for (let j = 0; j < batch.length; j++) {
+          const key = batch[j];
+          const data = values[j];
+          if (data) {
+            try {
+              const parsed = JSON.parse(data);
+              results.set(key, parsed.status);
+            } catch (_) {
+              results.set(key, null);
+            }
+          } else {
+            results.set(key, null);
+          }
+        }
+        
+        // Log progress for large batches
+        if (totalBatches > 10 && (i / BATCH_SIZE) % 10 === 0) {
+          log.debug(`Redis MGET progress: ${Math.floor(i / BATCH_SIZE) + 1}/${totalBatches} batches`);
+        }
+      }
+      
+      log.info(`Redis lookup complete: ${keys.length} keys checked`);
+      return results;
+    } catch (err) {
+      log.warn(`Redis MGET error: ${err.message}`);
+      // Fall through to return empty results
+      return results;
+    }
+  }
+  
+  // JSONL backend - iterate cache
+  const now = Date.now();
+  for (const key of keys) {
+    const entry = cache.get(key);
+    if (!entry) {
+      results.set(key, null);
+    } else if (now - entry.ts > ttlMs) {
+      results.set(key, null);
+    } else {
+      results.set(key, entry.status);
+    }
+  }
+  
+  return results;
+}
+
 async function markProcessedStatus(key, status, ttlMs = DEFAULT_TTL_MS) {
   await initProcessedStore(ttlMs);
   const ts = Date.now();
@@ -198,6 +271,7 @@ module.exports = {
   DEFAULT_TTL_MS,
   initProcessedStore,
   getProcessedStatus,
+  getProcessedStatusBatch,
   markProcessedStatus,
   pruneExpired,
   isSkippableStatus,
