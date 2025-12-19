@@ -145,6 +145,8 @@ function buildCombineBatchAborted({ filename, total, processed }) {
 
 /**
  * Run batch execution for combined files
+ * NOTE: This function schedules the batch to run asynchronously to avoid
+ * blocking the Telegraf callback handler (which has a 90s timeout).
  */
 async function runCombineBatch(ctx, batch, options, helpers, checkCredentials) {
   const chatId = ctx.chat.id;
@@ -165,6 +167,7 @@ async function runCombineBatch(ctx, batch, options, helpers, checkCredentials) {
     count: filtered.length,
     skipped,
     aborted: false,
+    processed: 0,
   };
   
   // Create promise to track batch completion
@@ -187,17 +190,20 @@ async function runCombineBatch(ctx, batch, options, helpers, checkCredentials) {
   
   // Track active batch
   activeCombineBatches.set(chatId, batchData);
-  
-  const counts = { VALID: 0, INVALID: 0, BLOCKED: 0, ERROR: 0 };
-  let processed = 0;
-  const validCreds = [];
-  const startedAt = Date.now();
-  let lastProgressAt = startedAt;
-  
-  const recentResults = [];
-  let circuitBreakerTripped = false;
 
   log.info(`[combine-batch] starting total=${filtered.length} concurrency=${BATCH_CONCURRENCY}`);
+
+  // Schedule execution to avoid Telegraf 90s per-update timeout
+  // This allows the callback handler to return immediately
+  setTimeout(async () => {
+    const counts = { VALID: 0, INVALID: 0, BLOCKED: 0, ERROR: 0 };
+    let processed = 0;
+    const validCreds = [];
+    const startedAt = Date.now();
+    let lastProgressAt = startedAt;
+    
+    const recentResults = [];
+    let circuitBreakerTripped = false;
 
   const updateProgress = async (force = false) => {
     if (batchData.aborted) return;
@@ -351,13 +357,14 @@ async function runCombineBatch(ctx, batch, options, helpers, checkCredentials) {
       await ctx.reply(buildBatchFailed(err.message), { parse_mode: 'MarkdownV2' });
     } catch (_) {}
     log.warn(`[combine-batch] execution failed: ${err.message}`);
-  } finally {
-    // Flush any buffered Redis writes before completing
-    await flushWriteBuffer().catch(() => {});
-    
-    activeCombineBatches.delete(chatId);
-    batchCompleteResolve(); // Signal batch completion
-  }
+    } finally {
+      // Flush any buffered Redis writes before completing
+      await flushWriteBuffer().catch(() => {});
+      
+      activeCombineBatches.delete(chatId);
+      batchCompleteResolve(); // Signal batch completion
+    }
+  }, 0); // Schedule to run async, freeing up Telegraf callback handler
 }
 
 /**
