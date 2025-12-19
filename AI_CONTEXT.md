@@ -25,24 +25,49 @@
 ┌─────────────────────────────────────────────────────────────────────┐
 │                         TELEGRAM LAYER                               │
 ├─────────────────────────────────────────────────────────────────────┤
-│  main.js              → Bootstrap, env validation, graceful shutdown │
-│  telegramHandler.js   → Command routing, input validation            │
-│  telegram/messages.js → MarkdownV2 formatters                        │
+│  main.js                    → Bootstrap, env validation, shutdown    │
+│  telegramHandler.js         → Command routing, input validation      │
+│  telegram/messages/         → MarkdownV2 formatters (modular)        │
+│    ├─ helpers.js           → escapeV2, codeV2, boldV2, etc.          │
+│    ├─ static.js            → Start, help, guide messages             │
+│    ├─ checkMessages.js     → Single check result messages            │
+│    ├─ captureMessages.js   → Data capture messages                   │
+│    └─ batchMessages.js     → Batch progress/summary messages         │
 ├─────────────────────────────────────────────────────────────────────┤
 │                         BATCH LAYER                                  │
 ├─────────────────────────────────────────────────────────────────────┤
-│  telegram/batchHandlers.js     → Regular batch (file upload)         │
-│  telegram/combineHandler.js    → Combine mode session management     │
-│  telegram/combineBatchRunner.js→ Combine batch execution             │
+│  telegram/batch/            → Regular batch processing (modular)     │
+│    ├─ batchState.js        → Active batches Map, pending state       │
+│    ├─ batchExecutor.js     → Core execution loop, chunk processing   │
+│    ├─ circuitBreaker.js    → Error rate monitoring, auto-pause       │
+│    ├─ filterUtils.js       → Credential deduplication                │
+│    ├─ documentHandler.js   → File upload handling                    │
+│    └─ handlers/            → Type-specific handlers                  │
+│         ├─ hotmail.js      → HOTMAIL (.jp Microsoft)                 │
+│         ├─ ulp.js          → ULP (Rakuten)                           │
+│         ├─ jp.js           → JP Domains                              │
+│         ├─ all.js          → ALL mode                                │
+│         └─ common.js       → Confirm/cancel/abort                    │
+│  telegram/combineHandler.js     → Combine mode session               │
+│  telegram/combineBatchRunner.js → Combine batch execution            │
 ├─────────────────────────────────────────────────────────────────────┤
 │                         HTTP LAYER                                   │
 ├─────────────────────────────────────────────────────────────────────┤
-│  httpChecker.js                → Entry point for credential checks   │
-│  automation/http/httpFlow.js   → Login flow orchestration            │
-│  automation/http/httpClient.js → Axios client with cookie jar        │
+│  httpChecker.js                 → Entry point for credential checks  │
+│  automation/http/httpFlow.js    → Login flow orchestration           │
+│  automation/http/httpClient.js  → Axios client with cookie jar       │
 │  automation/http/htmlAnalyzer.js → Outcome detection                 │
-│  automation/http/httpDataCapture.js → Account data extraction        │
-│  automation/http/sessionManager.js  → Session lifecycle              │
+│  automation/http/sessionManager.js → Session lifecycle               │
+│  automation/http/payloads/      → Request payload builders           │
+│    ├─ authorizeRequest.js      → OAuth authorize_request             │
+│    ├─ ratPayload.js            → RAT fingerprint (~150 lines)        │
+│    └─ bioPayload.js            → Bio interaction data                │
+│  automation/http/capture/       → Account data extraction (modular)  │
+│    ├─ apiCapture.js            → ichiba-common API                   │
+│    ├─ htmlCapture.js           → HTML fallback scraping              │
+│    ├─ orderHistory.js          → Order data via SSO                  │
+│    ├─ profileData.js           → Profile & cards via SSO             │
+│    └─ ssoFormHandler.js        → Shared SSO form parser              │
 ├─────────────────────────────────────────────────────────────────────┤
 │                      FINGERPRINTING LAYER                            │
 ├─────────────────────────────────────────────────────────────────────┤
@@ -56,6 +81,12 @@
 ├─────────────────────────────────────────────────────────────────────┤
 │  automation/batch/processedStore.js → Redis/JSONL processed cache    │
 │  automation/batch/parse.js          → Credential parsing             │
+├─────────────────────────────────────────────────────────────────────┤
+│                         UTILITIES                                    │
+├─────────────────────────────────────────────────────────────────────┤
+│  utils/                          → Shared utility functions          │
+│    ├─ retryWithBackoff.js       → Exponential backoff retry          │
+│    └─ mapWithTtl.js             → Map with auto-expiry               │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -483,18 +514,27 @@ When SIGTERM is received (Railway deployment):
 ### Add New Batch Type
 
 1. Add filter function in `automation/batch/parse.js`
-2. Add handler in `batchHandlers.js` with `batch_type_*` pattern
-3. Add button in file received message
+2. Create handler in `telegram/batch/handlers/` (e.g., `newtype.js`)
+3. Register handler in `telegram/batch/index.js`
+4. Add button in `telegram/batch/documentHandler.js`
 
 ### Modify Login Flow
 
 1. Update `automation/http/httpFlow.js` for request changes
-2. Update `automation/http/htmlAnalyzer.js` for response parsing
-3. Test with `LOG_LEVEL=debug` to see full request/response
+2. Update payload builders in `automation/http/payloads/` if needed
+3. Update `automation/http/htmlAnalyzer.js` for response parsing
+4. Test with `LOG_LEVEL=debug` to see full request/response
 
 ### Add New Capture Data
 
-1. Update `automation/http/httpDataCapture.js`
-2. Update message builder in `telegram/messages.js`
-3. Update log format in `telegramHandler.js`
+1. Add new module in `automation/http/capture/` (e.g., `newData.js`)
+2. Export from `automation/http/capture/index.js`
+3. Call from `captureAccountData()` orchestrator
+4. Update message builder in `telegram/messages/checkMessages.js`
+
+### Add New Message Types
+
+1. Add builder in appropriate file under `telegram/messages/`
+2. Export from `telegram/messages/index.js`
+3. Import where needed (backwards-compatible via `telegram/messages.js`)
 

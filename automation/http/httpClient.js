@@ -17,6 +17,8 @@ const axios = require('axios');
 const { CookieJar } = require('tough-cookie');
 const { wrapper } = require('axios-cookiejar-support');
 const UserAgent = require('user-agents');
+const { HttpsProxyAgent } = require('https-proxy-agent');
+const { HttpProxyAgent } = require('http-proxy-agent');
 const { createLogger } = require('../../logger');
 
 const log = createLogger('http-client');
@@ -150,16 +152,28 @@ function createHttpClient(options = {}) {
     validateStatus: (status) => status < 600, // Don't throw on any status
   }));
 
-  // Configure proxy if provided
+  // Configure proxy if provided - use tunnel agents for proper HTTPS support
   if (proxy) {
     const proxyConfig = parseProxy(proxy);
     if (proxyConfig) {
-      client.defaults.proxy = {
-        host: proxyConfig.host,
-        port: proxyConfig.port,
-        auth: proxyConfig.auth,
-      };
-      log.debug(`Proxy configured: ${proxyConfig.host}:${proxyConfig.port}${proxyConfig.auth ? ' (with auth)' : ''}`);
+      // Build proxy URL for the agent
+      const proxyProtocol = proxyConfig.protocol || 'http';
+      let proxyUrl;
+      if (proxyConfig.auth) {
+        proxyUrl = `${proxyProtocol}://${encodeURIComponent(proxyConfig.auth.username)}:${encodeURIComponent(proxyConfig.auth.password)}@${proxyConfig.host}:${proxyConfig.port}`;
+      } else {
+        proxyUrl = `${proxyProtocol}://${proxyConfig.host}:${proxyConfig.port}`;
+      }
+      
+      // Create tunnel agents for proper HTTPS proxying (fixes certificate errors)
+      const httpsAgent = new HttpsProxyAgent(proxyUrl);
+      const httpAgent = new HttpProxyAgent(proxyUrl);
+      
+      client.defaults.httpsAgent = httpsAgent;
+      client.defaults.httpAgent = httpAgent;
+      client.defaults.proxy = false; // Disable axios built-in proxy (use agents instead)
+      
+      log.debug(`Proxy configured (tunnel): ${proxyConfig.host}:${proxyConfig.port}${proxyConfig.auth ? ' (with auth)' : ''}`);
     } else {
       log.warn(`Invalid proxy format, proceeding without proxy: ${proxy}`);
     }
