@@ -137,17 +137,18 @@ function initializeTelegramHandler(botToken, options = {}) {
     await ctx.reply(buildHelpMessage(), { parse_mode: 'MarkdownV2' });
   });
 
-  // Handle /stop command - abort active batch
+  // Handle /stop command - abort active batch or clear combine session
   bot.command('stop', async (ctx) => {
     const chatId = ctx.chat.id;
     
-    // Check for active combine batch first
+    // Check for active combine batch first (highest priority)
     if (hasCombineBatch(chatId)) {
       abortCombineBatch(chatId);
       await ctx.reply(escapeV2('⏹ Aborting combine batch, please wait...'), { parse_mode: 'MarkdownV2' });
       return;
     }
     
+    // Check for active regular batch
     if (hasActiveBatch(chatId)) {
       const result = abortActiveBatch(chatId);
       const ackMsg = await ctx.reply(escapeV2('⏹ Stopping batch...'), { parse_mode: 'MarkdownV2' });
@@ -160,9 +161,20 @@ function initializeTelegramHandler(botToken, options = {}) {
           await ctx.telegram.deleteMessage(chatId, ackMsg.message_id);
         } catch (_) {}
       }
-    } else {
-      await ctx.reply(escapeV2('⚠️ No active batch to stop.'), { parse_mode: 'MarkdownV2' });
+      return;
     }
+    
+    // Check for combine session in file collection mode
+    if (hasCombineSession(chatId)) {
+      const { clearSession } = require('./telegram/combineHandler');
+      clearSession(chatId);
+      log.info(`[stop] cleared combine session chatId=${chatId}`);
+      await ctx.reply(escapeV2('⏹ Combine session cleared.'), { parse_mode: 'MarkdownV2' });
+      return;
+    }
+    
+    // Nothing to stop
+    await ctx.reply(escapeV2('⚠️ No active batch or combine session to stop.'), { parse_mode: 'MarkdownV2' });
   });
 
   // Register combine handlers (must be before batch handlers to intercept files in combine mode)
