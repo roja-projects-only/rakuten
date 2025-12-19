@@ -86,6 +86,7 @@ async function checkCredentials(email, password, options = {}) {
     proxy = null,
     onProgress = null,
     deferCloseOnValid = false,
+    batchMode = false,
   } = options;
 
   if (!targetUrl) {
@@ -103,6 +104,7 @@ async function checkCredentials(email, password, options = {}) {
     session = createSession({
       proxy,
       timeout: timeoutMs,
+      batchMode,
     });
 
     onProgress && (await onProgress('navigate'));

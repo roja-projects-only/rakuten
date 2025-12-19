@@ -26,7 +26,7 @@ const activeCombineBatches = new Map();
 // Configuration
 const BATCH_CONCURRENCY = Math.max(1, parseInt(process.env.BATCH_CONCURRENCY, 10) || 1);
 const MAX_RETRIES = parseInt(process.env.BATCH_MAX_RETRIES, 10) || 1;
-const REQUEST_DELAY_MS = parseInt(process.env.BATCH_DELAY_MS, 10) || 500;
+const REQUEST_DELAY_MS = parseInt(process.env.BATCH_DELAY_MS, 10) || 50; // reduced for speed
 const PROGRESS_UPDATE_INTERVAL_MS = 2000;
 const ERROR_THRESHOLD_PERCENT = 60;
 const ERROR_WINDOW_SIZE = 5;
@@ -262,6 +262,7 @@ async function runCombineBatch(ctx, batch, options, helpers, checkCredentials) {
           timeoutMs: options.timeoutMs || 60000,
           proxy: options.proxy,
           targetUrl: options.targetUrl || process.env.TARGET_LOGIN_URL,
+          batchMode: true, // Skip human delays for faster batch processing
         });
       } catch (err) {
         result = { status: 'ERROR', message: err.message };

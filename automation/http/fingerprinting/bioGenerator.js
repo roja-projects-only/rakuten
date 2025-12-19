@@ -162,13 +162,32 @@ function generateMouseTrajectory(options = {}) {
   return trajectory;
 }
 
+// Batch mode delay multiplier (0 = skip delays, 1 = normal, 0.1 = 10% of normal)
+const BATCH_HUMAN_DELAY_MULTIPLIER = parseFloat(process.env.BATCH_HUMAN_DELAY_MS) || 0;
+
 /**
  * Simulates human delay between actions.
  * @param {number} minMs - Minimum delay
  * @param {number} maxMs - Maximum delay
+ * @param {Object} [options] - Options
+ * @param {boolean} [options.batchMode=false] - If true, use reduced/no delay for batch processing
  * @returns {Promise<void>}
  */
-async function humanDelay(minMs = 100, maxMs = 500) {
+async function humanDelay(minMs = 100, maxMs = 500, options = {}) {
+  const { batchMode = false } = options;
+  
+  // In batch mode, use multiplier (0 = skip, 0.1 = 10% of normal delay)
+  if (batchMode) {
+    if (BATCH_HUMAN_DELAY_MULTIPLIER <= 0) {
+      // Skip delay entirely for maximum speed
+      return;
+    }
+    // Apply multiplier to reduce delays
+    minMs = Math.floor(minMs * BATCH_HUMAN_DELAY_MULTIPLIER);
+    maxMs = Math.floor(maxMs * BATCH_HUMAN_DELAY_MULTIPLIER);
+    if (maxMs < 1) return; // Skip if too small
+  }
+  
   const delay = Math.floor(Math.random() * (maxMs - minMs)) + minMs;
   return new Promise(resolve => setTimeout(resolve, delay));
 }

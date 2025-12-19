@@ -30,6 +30,7 @@ const activeSessions = new Map();
  * @param {Object} options - Session options
  * @param {string} [options.proxy] - Proxy URL
  * @param {number} [options.timeout] - Request timeout
+ * @param {boolean} [options.batchMode=false] - Enable batch mode (reduced delays)
  * @returns {Object} Session object with client, jar, and metadata
  */
 function createSession(options = {}) {
@@ -43,11 +44,12 @@ function createSession(options = {}) {
     createdAt: Date.now(),
     lastUsedAt: Date.now(),
     requestCount: 0,
+    batchMode: options.batchMode || false,
     options,
   };
 
   activeSessions.set(sessionId, session);
-  log.debug(`Session: ${sessionId}`);
+  log.debug(`Session: ${sessionId}${session.batchMode ? ' [batch]' : ''}`);
   
   return session;
 }

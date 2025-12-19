@@ -56,7 +56,7 @@ const activeBatches = new Map(); // chatId -> { batch, key }
 // Batch processing configuration
 const BATCH_CONCURRENCY = Math.max(1, parseInt(process.env.BATCH_CONCURRENCY, 10) || 1); // default 1 for stability
 const MAX_RETRIES = parseInt(process.env.BATCH_MAX_RETRIES, 10) || 1; // reduced retries
-const REQUEST_DELAY_MS = parseInt(process.env.BATCH_DELAY_MS, 10) || 500; // delay between requests
+const REQUEST_DELAY_MS = parseInt(process.env.BATCH_DELAY_MS, 10) || 50; // delay between chunks (reduced for speed)
 const PROGRESS_UPDATE_INTERVAL_MS = 2000; // update every 2s
 const ERROR_THRESHOLD_PERCENT = 60; // pause if error rate exceeds this
 const ERROR_WINDOW_SIZE = 5; // check last N results for error rate
@@ -198,6 +198,7 @@ function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, 
           timeoutMs: options.timeoutMs || 60000,
           proxy: options.proxy,
           targetUrl: options.targetUrl || process.env.TARGET_LOGIN_URL,
+          batchMode: true, // Skip human delays for faster batch processing
         });
       } catch (err) {
         result = { status: 'ERROR', message: err.message };

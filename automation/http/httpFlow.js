@@ -251,7 +251,7 @@ async function navigateToLogin(session, targetUrl, timeoutMs) {
     log.debug(`Login page loaded: ${response.status}`);
     
     // Step 2: Initialize login session with POST /v2/login
-    await humanDelay(300, 600);
+    await humanDelay(300, 600, { batchMode: session.batchMode });
     
     const initPayload = {
       authorize_request: buildAuthorizeRequest(),
@@ -311,7 +311,7 @@ async function submitEmailStep(session, email, context, timeoutMs) {
   const bioData = generateRealBioData(startTime);
   
   // Add human delay before submission
-  await humanDelay(800, 1500);
+  await humanDelay(800, 1500, { batchMode: session.batchMode });
   
   // Step 1: Call /util/gc to get challenge token
   // NOTE: The /util/gc response includes:
@@ -476,7 +476,7 @@ async function submitPasswordStep(session, password, emailStepResult, username, 
   const { correlationId, token, startTime } = emailStepResult;
   
   // Add human delay before submission (simulating typing password)
-  await humanDelay(1000, 2000);
+  await humanDelay(1000, 2000, { batchMode: session.batchMode });
   
   // Generate fingerprint data for /util/gc call
   const fingerprint = generateFingerprint();

@@ -33,8 +33,9 @@ npm start
 | `TIMEOUT_MS` | ❌ | `60000` | Request timeout (ms) |
 | `BATCH_CONCURRENCY` | ❌ | `1` | Parallel batch checks (1 = sequential) |
 | `BATCH_MAX_RETRIES` | ❌ | `1` | Retry count for ERROR results |
-| `BATCH_DELAY_MS` | ❌ | `500` | Delay between requests |
-| `PROXY_SERVER` | ❌ | - | Proxy URL (http://host:port) |
+| `BATCH_DELAY_MS` | ❌ | `50` | Delay between request chunks (ms) |
+| `BATCH_HUMAN_DELAY_MS` | ❌ | `0` | Human delay multiplier for batch (0=skip, 0.1=10%) |
+| `PROXY_SERVER` | ❌ | - | Proxy URL (any format) |
 | `LOG_LEVEL` | ❌ | `info` | Logging: error\|warn\|info\|debug |
 | `REDIS_URL` | ❌ | - | Redis URL for cloud (JSONL locally) |
 

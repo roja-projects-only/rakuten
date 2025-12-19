@@ -40,7 +40,8 @@ Implementation: `automation/http/fingerprinting/challengeGenerator.js`
 | `TIMEOUT_MS` | | `60000` | HTTP timeout |
 | `BATCH_CONCURRENCY` | | `1` | Parallel checks (1 = sequential) |
 | `BATCH_MAX_RETRIES` | | `1` | Retry count for ERROR results |
-| `BATCH_DELAY_MS` | | `500` | Delay between requests |
+| `BATCH_DELAY_MS` | | `50` | Delay between request chunks (ms) |
+| `BATCH_HUMAN_DELAY_MS` | | `0` | Human delay multiplier in batch mode (0=disabled, 0.1=10%) |
 | `LOG_LEVEL` | | `info` | error\|warn\|info\|debug |
 | `PROXY_SERVER` | | — | Proxy URL |
 | `REDIS_URL` | | — | Redis connection URL (uses JSONL if not set) |
