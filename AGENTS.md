@@ -1,16 +1,21 @@
 Default shell is PowerShell; keep commands compatible. Avoid generating docs unless asked. Favor small, composable functions.
 
-The user's has an apostraphe and it should required to be closed in quote.
+The user's has an apostrophe and it should be closed in quotes.
+
+> 📖 **For comprehensive context**, see [`AI_CONTEXT.md`](AI_CONTEXT.md) — full module reference, data flows, and troubleshooting.
 
 # Rakuten Telegram Credential Checker — AI Agent Playbook
 
 ## Architecture Overview
 ```
-main.js                      # Bootstrap: env validation, Telegraf init, graceful shutdown
-telegramHandler.js           # Command routing (.chk), input guards, response formatting
-├── telegram/messages.js     # MarkdownV2 builders (escapeV2, codeV2, spoilerV2, boldV2)
-├── telegram/batchHandlers.js # HOTMAIL file uploads + ULP URL batch processing
-httpChecker.js               # HTTP-based credential checker (cres POW implemented)
+main.js                           # Bootstrap: env validation, Telegraf init, graceful shutdown
+telegramHandler.js                # Command routing (.chk), input guards, response formatting
+├── telegram/messages.js          # MarkdownV2 builders (escapeV2, codeV2, spoilerV2, boldV2)
+├── telegram/batchHandlers.js     # File uploads + batch processing (HOTMAIL/ULP/JP/ALL)
+├── telegram/combineHandler.js    # Combine mode session (/combine, /done, /cancel)
+├── telegram/combineBatchRunner.js# Combine batch execution
+httpChecker.js                    # HTTP-based credential checker (cres POW implemented)
+automation/batch/processedStore.js# Redis/JSONL cache with batch MGET + write buffering
 ```
 
 ### HTTP Flow
@@ -55,7 +60,10 @@ $env:LOG_LEVEL="debug"; npm start  # Verbose logging
 
 ### Telegram Commands
 - `.chk email:password` — Single credential check
-- `/stop` — Abort active batch process
+- `/stop` — Abort active batch process or clear combine session
+- `/combine` — Start combine mode (collect multiple files)
+- `/done` — Finish combine mode, show processing options
+- `/cancel` — Cancel combine session
 - `/help` — Show help message
 
 ## Code Patterns
@@ -83,9 +91,18 @@ const { escapeV2, codeV2, boldV2, spoilerV2, spoilerCodeV2 } = require('./telegr
 ### Batch Flow
 1. User uploads file → `batch_type_hotmail_*` or `batch_type_ulp_*` callback
 2. `prepareBatchFromFile()` or `prepareUlpBatch()` parses credentials
-3. `filterAlreadyProcessed()` dedupes via `processedStore.js` (JSONL cache with TTL)
-4. Worker pool processes with `BATCH_CONCURRENCY`; progress edits throttled to ~5s
-5. Summary with valid creds in spoiler format
+3. `filterAlreadyProcessed()` dedupes via Redis MGET batch lookup
+4. `setTimeout(execute, 0)` detaches from Telegraf callback (CRITICAL)
+5. Worker pool processes with `BATCH_CONCURRENCY`; progress edits throttled to ~2s
+6. Summary with valid creds in spoiler format
+
+### Combine Flow
+1. `/combine` → creates session in `combineSessions` Map
+2. Upload files (1-20) → files added to session
+3. `/done` → downloads all files, parses & dedupes credentials
+4. Select type (HOTMAIL/ULP/JP/ALL) → filters credentials
+5. Confirm → `runCombineBatch()` with `setTimeout()` wrapper
+6. Same processing as regular batch
 
 ### HTTP Session Pattern
 ```javascript
