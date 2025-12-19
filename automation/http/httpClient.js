@@ -10,6 +10,9 @@
  * - Proxy support
  * - Request/response interceptors
  * 
+ * NOTE: When using a proxy, we use manual cookie handling via interceptors
+ * because axios-cookiejar-support doesn't work with custom HTTP agents.
+ * 
  * =============================================================================
  */
 
@@ -22,6 +25,9 @@ const { HttpProxyAgent } = require('http-proxy-agent');
 const { createLogger } = require('../../logger');
 
 const log = createLogger('http-client');
+
+// Track if we've already warned about TLS bypass
+let tlsBypassWarned = false;
 
 /**
  * Parses various proxy formats into a standard config object.
@@ -143,40 +149,60 @@ function createHttpClient(options = {}) {
   // Create cookie jar for session management
   const jar = new CookieJar();
   
-  // Create axios instance with cookie support
-  const client = wrapper(axios.create({
-    timeout,
-    jar,
-    withCredentials: true,
-    maxRedirects: 5,
-    validateStatus: (status) => status < 600, // Don't throw on any status
-  }));
+  // Determine if we need manual cookie handling (when using proxy)
+  const proxyConfig = proxy ? parseProxy(proxy) : null;
+  const useManualCookies = !!proxyConfig;
+  
+  // Create axios instance - only wrap with cookie support if NO proxy
+  let client;
+  if (useManualCookies) {
+    // Manual cookie handling for proxy support
+    client = axios.create({
+      timeout,
+      withCredentials: true,
+      maxRedirects: 5,
+      validateStatus: (status) => status < 600,
+    });
+  } else {
+    // Use axios-cookiejar-support when no proxy
+    client = wrapper(axios.create({
+      timeout,
+      jar,
+      withCredentials: true,
+      maxRedirects: 5,
+      validateStatus: (status) => status < 600,
+    }));
+  }
 
-  // Configure proxy if provided - use tunnel agents for proper HTTPS support
-  if (proxy) {
-    const proxyConfig = parseProxy(proxy);
-    if (proxyConfig) {
-      // Build proxy URL for the agent
-      const proxyProtocol = proxyConfig.protocol || 'http';
-      let proxyUrl;
-      if (proxyConfig.auth) {
-        proxyUrl = `${proxyProtocol}://${encodeURIComponent(proxyConfig.auth.username)}:${encodeURIComponent(proxyConfig.auth.password)}@${proxyConfig.host}:${proxyConfig.port}`;
-      } else {
-        proxyUrl = `${proxyProtocol}://${proxyConfig.host}:${proxyConfig.port}`;
-      }
-      
-      // Create tunnel agents for proper HTTPS proxying (fixes certificate errors)
-      const httpsAgent = new HttpsProxyAgent(proxyUrl);
-      const httpAgent = new HttpProxyAgent(proxyUrl);
-      
-      client.defaults.httpsAgent = httpsAgent;
-      client.defaults.httpAgent = httpAgent;
-      client.defaults.proxy = false; // Disable axios built-in proxy (use agents instead)
-      
-      log.debug(`Proxy configured (tunnel): ${proxyConfig.host}:${proxyConfig.port}${proxyConfig.auth ? ' (with auth)' : ''}`);
+  // Configure proxy with tunnel agents
+  if (proxyConfig) {
+    const proxyProtocol = proxyConfig.protocol || 'http';
+    let proxyUrl;
+    if (proxyConfig.auth) {
+      proxyUrl = `${proxyProtocol}://${encodeURIComponent(proxyConfig.auth.username)}:${encodeURIComponent(proxyConfig.auth.password)}@${proxyConfig.host}:${proxyConfig.port}`;
     } else {
-      log.warn(`Invalid proxy format, proceeding without proxy: ${proxy}`);
+      proxyUrl = `${proxyProtocol}://${proxyConfig.host}:${proxyConfig.port}`;
     }
+    
+    // Create tunnel agents for proper HTTPS proxying
+    // Disable SSL verification to allow proxies with SSL interception (BrightData, etc.)
+    // This is necessary because residential proxies often use self-signed certs
+    const httpsAgent = new HttpsProxyAgent(proxyUrl);
+    const httpAgent = new HttpProxyAgent(proxyUrl);
+    
+    client.defaults.httpsAgent = httpsAgent;
+    client.defaults.httpAgent = httpAgent;
+    client.defaults.proxy = false; // Disable axios built-in proxy
+    
+    // Disable TLS verification globally for this proxy session
+    // This is required for BrightData and similar proxies that perform SSL interception
+    if (!tlsBypassWarned) {
+      log.warn('SSL certificate verification disabled for proxy connections');
+      tlsBypassWarned = true;
+    }
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+    
+    log.debug(`Proxy configured (tunnel): ${proxyConfig.host}:${proxyConfig.port}${proxyConfig.auth ? ' (with auth)' : ''}`);
   }
 
   // Set default headers (browser-like)
@@ -187,33 +213,108 @@ function createHttpClient(options = {}) {
   client.defaults.headers.common['Connection'] = 'keep-alive';
   client.defaults.headers.common['Upgrade-Insecure-Requests'] = '1';
 
-  // Request interceptor for logging
-  client.interceptors.request.use(
-    (config) => {
-      log.debug(`${config.method.toUpperCase()} ${config.url}`);
-      return config;
-    },
-    (error) => {
-      log.error('Request error:', error.message);
-      return Promise.reject(error);
-    }
-  );
-
-  // Response interceptor for logging
-  client.interceptors.response.use(
-    (response) => {
-      log.debug(`${response.status} ${response.config.url}`);
-      return response;
-    },
-    (error) => {
-      if (error.response) {
-        log.warn(`${error.response.status} ${error.config.url}`);
-      } else {
-        log.error('Response error:', error.message);
+  // Manual cookie handling interceptors (only when using proxy)
+  if (useManualCookies) {
+    // Request interceptor - add cookies from jar
+    client.interceptors.request.use(
+      async (config) => {
+        try {
+          const url = config.url;
+          // Build full URL for cookie lookup
+          const fullUrl = url.startsWith('http') ? url : `${config.baseURL || ''}${url}`;
+          const cookieString = await jar.getCookieString(fullUrl);
+          if (cookieString) {
+            config.headers = config.headers || {};
+            // Merge with existing Cookie header if present
+            const existingCookie = config.headers['Cookie'] || config.headers['cookie'] || '';
+            config.headers['Cookie'] = existingCookie ? `${existingCookie}; ${cookieString}` : cookieString;
+          }
+        } catch (err) {
+          log.debug(`Cookie injection error: ${err.message}`);
+        }
+        log.debug(`${config.method.toUpperCase()} ${config.url}`);
+        return config;
+      },
+      (error) => {
+        log.error('Request error:', error.message);
+        return Promise.reject(error);
       }
-      return Promise.reject(error);
-    }
-  );
+    );
+
+    // Response interceptor - save cookies to jar
+    client.interceptors.response.use(
+      async (response) => {
+        try {
+          const url = response.config.url;
+          const fullUrl = url.startsWith('http') ? url : `${response.config.baseURL || ''}${url}`;
+          const setCookieHeaders = response.headers['set-cookie'];
+          if (setCookieHeaders) {
+            const cookies = Array.isArray(setCookieHeaders) ? setCookieHeaders : [setCookieHeaders];
+            for (const cookie of cookies) {
+              try {
+                await jar.setCookie(cookie, fullUrl);
+              } catch (cookieErr) {
+                log.debug(`Failed to set cookie: ${cookieErr.message}`);
+              }
+            }
+          }
+        } catch (err) {
+          log.debug(`Cookie extraction error: ${err.message}`);
+        }
+        log.debug(`${response.status} ${response.config.url}`);
+        return response;
+      },
+      async (error) => {
+        // Also try to extract cookies from error responses
+        if (error.response) {
+          try {
+            const url = error.config.url;
+            const fullUrl = url.startsWith('http') ? url : `${error.config.baseURL || ''}${url}`;
+            const setCookieHeaders = error.response.headers['set-cookie'];
+            if (setCookieHeaders) {
+              const cookies = Array.isArray(setCookieHeaders) ? setCookieHeaders : [setCookieHeaders];
+              for (const cookie of cookies) {
+                try {
+                  await jar.setCookie(cookie, fullUrl);
+                } catch (_) {}
+              }
+            }
+          } catch (_) {}
+          log.warn(`${error.response.status} ${error.config.url}`);
+        } else {
+          log.error('Response error:', error.message);
+        }
+        return Promise.reject(error);
+      }
+    );
+  } else {
+    // Standard logging interceptors (no proxy case)
+    client.interceptors.request.use(
+      (config) => {
+        log.debug(`${config.method.toUpperCase()} ${config.url}`);
+        return config;
+      },
+      (error) => {
+        log.error('Request error:', error.message);
+        return Promise.reject(error);
+      }
+    );
+
+    client.interceptors.response.use(
+      (response) => {
+        log.debug(`${response.status} ${response.config.url}`);
+        return response;
+      },
+      (error) => {
+        if (error.response) {
+          log.warn(`${error.response.status} ${error.config.url}`);
+        } else {
+          log.error('Response error:', error.message);
+        }
+        return Promise.reject(error);
+      }
+    );
+  }
 
   return { client, jar };
 }

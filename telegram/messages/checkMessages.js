@@ -120,7 +120,7 @@ function buildCheckAndCaptureResult(result, capture, username, durationMs, passw
     const orderDate = capture.latestOrder || 'n/a';
     const orderId = capture.latestOrderId || '';
     if (orderId && orderId !== 'n/a') {
-      parts.push(`└ Last Order: ${codeV2(orderDate)} ${codeV2(`#${orderId}`)}`);
+      parts.push(`└ Last Order: ${codeV2(orderDate)} \\| ${codeV2(orderId)}`);
     } else {
       parts.push(`└ Last Order: ${codeV2(orderDate)}`);
     }
