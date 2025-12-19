@@ -374,6 +374,9 @@ function registerCombineHandlers(bot, options, helpers) {
       clearSession(chatId);
       log.info(`[combine] session cancelled chatId=${chatId}`);
       await ctx.reply(buildSessionCleared(), { parse_mode: 'MarkdownV2' });
+    } else {
+      // Always respond so user knows bot is working
+      await ctx.reply(escapeV2('ℹ️ Nothing to cancel.'), { parse_mode: 'MarkdownV2' });
     }
   });
 
@@ -522,9 +525,13 @@ function registerCombineHandlers(bot, options, helpers) {
         );
       } catch (_) {}
       
-      // Wait for batch to actually finish
+      // Wait for batch to finish with timeout (don't hang forever)
       if (batchBeforeAbort && batchBeforeAbort._completionPromise) {
-        await batchBeforeAbort._completionPromise;
+        const ABORT_TIMEOUT_MS = 30000; // 30 second timeout
+        await Promise.race([
+          batchBeforeAbort._completionPromise,
+          new Promise(resolve => setTimeout(resolve, ABORT_TIMEOUT_MS)),
+        ]);
       }
     } else {
       await ctx.reply(escapeV2('⚠️ No active combine batch to abort.'), {

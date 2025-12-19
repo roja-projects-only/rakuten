@@ -6,7 +6,7 @@ const { closeSession } = require('./automation/http/sessionManager');
 const { captureAccountData } = require('./automation/http/httpDataCapture');
 const { registerBatchHandlers, abortActiveBatch, hasActiveBatch } = require('./telegram/batchHandlers');
 const { registerCombineHandlers, hasSession: hasCombineSession, addFileToSession, TELEGRAM_FILE_LIMIT_BYTES } = require('./telegram/combineHandler');
-const { abortCombineBatch, hasCombineBatch } = require('./telegram/combineBatchRunner');
+const { abortCombineBatch, hasCombineBatch, getActiveCombineBatch } = require('./telegram/combineBatchRunner');
 const {
   buildStartMessage,
   buildHelpMessage,
@@ -143,8 +143,21 @@ function initializeTelegramHandler(botToken, options = {}) {
     
     // Check for active combine batch first (highest priority)
     if (hasCombineBatch(chatId)) {
+      const combineBatch = getActiveCombineBatch(chatId);
       abortCombineBatch(chatId);
-      await ctx.reply(escapeV2('⏹ Aborting combine batch, please wait...'), { parse_mode: 'MarkdownV2' });
+      const ackMsg = await ctx.reply(escapeV2('⏹ Stopping combine batch...'), { parse_mode: 'MarkdownV2' });
+      
+      // Wait for batch to finish with timeout
+      if (combineBatch && combineBatch._completionPromise) {
+        const ABORT_TIMEOUT_MS = 30000;
+        await Promise.race([
+          combineBatch._completionPromise,
+          new Promise(resolve => setTimeout(resolve, ABORT_TIMEOUT_MS)),
+        ]);
+        try {
+          await ctx.telegram.deleteMessage(chatId, ackMsg.message_id);
+        } catch (_) {}
+      }
       return;
     }
     

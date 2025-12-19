@@ -279,6 +279,7 @@ async function runCombineBatch(ctx, batch, options, helpers, checkCredentials) {
 
     counts[result.status] = (counts[result.status] || 0) + 1;
     processed += 1;
+    batchData.processed = processed; // Update for shutdown/progress tracking
 
     if (result.status === 'VALID') {
       validCreds.push({ username: cred.username, password: cred.password });
