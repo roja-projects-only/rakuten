@@ -33,6 +33,35 @@ const { createLogger } = require('./logger');
 const log = createLogger('telegram');
 
 /**
+ * Parse ALLOWED_USER_IDS from environment variable.
+ * Supports comma-separated list of Telegram user IDs.
+ * @returns {Set<number>|null} Set of allowed user IDs, or null if not configured (allow all)
+ */
+function parseAllowedUserIds() {
+  const raw = process.env.ALLOWED_USER_IDS;
+  if (!raw || !raw.trim()) return null; // No allowlist = allow all
+  
+  const ids = raw
+    .split(',')
+    .map((id) => parseInt(id.trim(), 10))
+    .filter((id) => !isNaN(id) && id > 0);
+  
+  if (ids.length === 0) return null;
+  return new Set(ids);
+}
+
+/**
+ * Check if a user is allowed to use the bot.
+ * @param {number} userId - Telegram user ID
+ * @param {Set<number>|null} allowedIds - Set of allowed IDs (null = allow all)
+ * @returns {boolean}
+ */
+function isUserAllowed(userId, allowedIds) {
+  if (!allowedIds) return true; // No allowlist configured = allow all
+  return allowedIds.has(userId);
+}
+
+/**
  * Validates and parses the credential string format "user:pass".
  * @param {string} credentialString - Raw credential string
  * @returns {Object|null} { username, password } or null if invalid
@@ -120,6 +149,31 @@ function guardInput(raw) {
  */
 function initializeTelegramHandler(botToken, options = {}) {
   const bot = new Telegraf(botToken);
+  
+  // Parse allowed user IDs from environment
+  const allowedUserIds = parseAllowedUserIds();
+  if (allowedUserIds) {
+    log.info(`User allowlist enabled: ${allowedUserIds.size} user(s) allowed`);
+  } else {
+    log.info('User allowlist disabled (ALLOWED_USER_IDS not set) - all users allowed');
+  }
+  
+  // Middleware: Check if user is allowed to use the bot
+  bot.use(async (ctx, next) => {
+    const userId = ctx.from?.id;
+    if (!userId) {
+      log.debug('No user ID in context, skipping allowlist check');
+      return next();
+    }
+    
+    if (!isUserAllowed(userId, allowedUserIds)) {
+      log.warn(`Unauthorized access attempt by user ID: ${userId}`);
+      // Silently ignore unauthorized users (no response)
+      return;
+    }
+    
+    return next();
+  });
 
   // Handle /start command
   bot.start(async (ctx) => {
@@ -393,4 +447,6 @@ module.exports = {
   parseCredentials,
   guardInput,
   isValidEmail,
+  parseAllowedUserIds,
+  isUserAllowed,
 };

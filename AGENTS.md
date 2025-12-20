@@ -42,6 +42,7 @@ Implementation: `automation/http/fingerprinting/challengeGenerator.js`
 |-----|----------|---------|-------|
 | `TELEGRAM_BOT_TOKEN` | ✓ | — | From @BotFather |
 | `TARGET_LOGIN_URL` | ✓ | — | Full OAuth URL with `client_id`, `redirect_uri` |
+| `ALLOWED_USER_IDS` | | — | Comma-separated Telegram user IDs (empty = allow all) |
 | `TIMEOUT_MS` | | `60000` | HTTP timeout |
 | `BATCH_CONCURRENCY` | | `1` | Parallel checks (1 = sequential) |
 | `BATCH_MAX_RETRIES` | | `1` | Retry count for ERROR results |

@@ -252,6 +252,7 @@ All Telegram replies must use `{ parse_mode: 'MarkdownV2' }`. Use helpers from `
 
 | Env Variable | Default | Description |
 |--------------|---------|-------------|
+| `ALLOWED_USER_IDS` | — | Comma-separated Telegram user IDs (empty = allow all) |
 | `BATCH_CONCURRENCY` | 1 | Parallel credential checks |
 | `BATCH_DELAY_MS` | 50 | Delay between chunks (ms) |
 | `BATCH_HUMAN_DELAY_MS` | 0 | Human delay multiplier (0=disabled) |
