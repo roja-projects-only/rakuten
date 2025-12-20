@@ -14,6 +14,7 @@ const { navigateToLogin, submitEmailStep, submitPasswordStep } = require('./auto
 const { detectOutcome } = require('./automation/http/htmlAnalyzer');
 const { captureAccountData } = require('./automation/http/httpDataCapture');
 const { createLogger } = require('./logger');
+const { MIN_USERNAME_LENGTH } = require('./automation/batch/parse');
 
 const log = createLogger('http-checker');
 
@@ -91,6 +92,15 @@ async function checkCredentials(email, password, options = {}) {
 
   if (!targetUrl) {
     throw new Error('Target login URL is required');
+  }
+
+  // Validate username length before making any requests
+  if (email.length < MIN_USERNAME_LENGTH) {
+    log.debug(`Username too short: ${email.length} chars (min: ${MIN_USERNAME_LENGTH})`);
+    return {
+      status: 'INVALID',
+      message: `Username too short (min ${MIN_USERNAME_LENGTH} characters)`,
+    };
   }
 
   let session = null;

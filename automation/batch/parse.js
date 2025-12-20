@@ -1,5 +1,8 @@
 const { ALLOWED_DOMAINS } = require('./constants');
 
+// Rakuten minimum username length (API returns INVALID_LENGTH for shorter)
+const MIN_USERNAME_LENGTH = 6;
+
 /**
  * Parse credential from colon-separated line.
  * @param {string} line - Input line
@@ -14,36 +17,62 @@ function parseColonCredential(line, { allowPrefix = false, requireEmail = true }
   if (!trimmed || trimmed.startsWith('#')) return null;
 
   const parts = trimmed.split(':');
-  if (!allowPrefix && parts.length !== 2) return null;
-  if (allowPrefix && parts.length < 2) return null;
+  if (!allowPrefix && parts.length < 2) return null;
+  if (allowPrefix && parts.length < 3) return null; // Need at least URL:user:pass
 
-  // For allowPrefix (ULP format), we need to handle URLs with protocols (https://)
-  // URL structure: protocol://domain/path:user:pass
-  // After split by ':', we get: ['https', '//domain/path', 'user', 'pass']
-  // So user is at index -2 and pass is at index -1
   let user, pass;
   
   if (allowPrefix) {
-    // ULP format: take last two parts as user:pass
-    user = parts[parts.length - 2].trim();
-    pass = parts[parts.length - 1].trim();
+    // ULP format: URL:user:pass (password may contain colons)
+    // Find where the URL ends by looking for the username
+    // URLs typically have format: https://domain.com/path or https://domain.com
+    // After split by ':', we need to identify the username position
     
-    // Handle edge case where user part might start with // from URL (e.g., "https://site.com:user:pass")
-    // In this case parts = ['https', '//site.com', 'user', 'pass'] - user is correct
-    // But for "https://site.com/:user:pass" parts = ['https', '//site.com/', 'user', 'pass']
-    // User should not start with '//' or be a URL path
-    if (user.startsWith('//') || user.startsWith('/')) {
+    // Strategy: Find first part that looks like a username (after URL parts)
+    // URL parts are: 'https', '//domain.com/path', etc.
+    // Username typically doesn't start with '//' and isn't 'https' or 'http'
+    
+    let userIndex = -1;
+    for (let i = 1; i < parts.length - 1; i++) {
+      const part = parts[i].trim();
+      // Skip URL-like parts (start with //, contain .com/.jp/.org, etc. in a URL context)
+      if (part.startsWith('//') || part.startsWith('/')) continue;
+      if (part === '') continue;
+      
+      // This looks like a username - it's not a URL part
+      // Take this as username, and everything after as password
+      userIndex = i;
+      break;
+    }
+    
+    if (userIndex === -1 || userIndex >= parts.length - 1) {
+      // Fallback: take second-to-last as user, last as pass
+      user = parts[parts.length - 2].trim();
+      pass = parts[parts.length - 1].trim();
+    } else {
+      user = parts[userIndex].trim();
+      // Join all remaining parts as password (handles passwords with colons)
+      pass = parts.slice(userIndex + 1).join(':').trim();
+    }
+    
+    // Validate user doesn't look like a URL part
+    if (user.startsWith('//') || user.startsWith('/') || user === '') {
       return null;
     }
   } else {
+    // Simple format: user:pass (password may contain colons)
     user = parts[0].trim();
-    pass = parts[1].trim();
+    // Join all remaining parts as password
+    pass = parts.slice(1).join(':').trim();
   }
 
   if (!user || !pass) return null;
   
   // Only require @ if explicitly requested (default for backward compatibility)
   if (requireEmail && !user.includes('@')) return null;
+  
+  // Skip usernames that are too short (Rakuten requires minimum length)
+  if (user.length < MIN_USERNAME_LENGTH) return null;
 
   return { user, pass };
 }
@@ -58,4 +87,5 @@ function isAllowedHotmailUser(user) {
 module.exports = {
   parseColonCredential,
   isAllowedHotmailUser,
+  MIN_USERNAME_LENGTH,
 };
