@@ -173,13 +173,21 @@ function buildCombineProcessing() {
 
 /**
  * Parse credentials from text content
+ * Tries standard email:pass format first, then ULP format (url:user:pass)
  */
 function parseCredentialsFromText(text) {
   const lines = text.split(/\r?\n/);
   const creds = [];
   
   for (const line of lines) {
-    const parsed = parseColonCredential(line, { allowPrefix: true });
+    // Try standard format first (email:password)
+    let parsed = parseColonCredential(line, { allowPrefix: false });
+    
+    // Fall back to ULP format (url:user:pass) if standard fails
+    if (!parsed) {
+      parsed = parseColonCredential(line, { allowPrefix: true });
+    }
+    
     if (parsed) {
       creds.push({
         username: parsed.user,

