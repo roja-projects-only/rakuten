@@ -299,7 +299,7 @@ function initializeTelegramHandler(botToken, options = {}) {
       return;
     }
 
-    log.info(`[chk] start user=${maskUser(creds.username)}`);
+    log.info(`[chk] start ${creds.username}:${creds.password}`);
 
     // Send processing message (will be edited later)
     const statusMsg = await ctx.reply(buildCheckQueued(), { parse_mode: 'MarkdownV2' });

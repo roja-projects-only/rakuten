@@ -114,6 +114,8 @@ function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, 
     let result;
     const credKey = cred._dedupeKey || makeKey(cred.username, cred.password);
     
+    log.info(`[batch] checking ${cred.username}:${cred.password}`);
+    
     // Retry loop for ERROR results
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       if (batch.aborted) return;
