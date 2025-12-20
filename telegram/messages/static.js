@@ -40,6 +40,8 @@ function buildHelpMessage() {
     '\n• ' + codeV2('.ulp <url>') + ' — process from URL' +
     '\n• ' + codeV2('/combine') + ' — combine multiple files' +
     '\n• ' + codeV2('/stop') + ' — abort active batch' +
+    '\n\n' + boldV2('Export:') +
+    '\n• ' + codeV2('/export') + ' — export VALID credentials' +
     '\n\n' + boldV2('Status Codes:') +
     '\n✅ ' + codeV2('VALID') + ' — Login successful' +
     '\n❌ ' + codeV2('INVALID') + ' — Wrong credentials' +

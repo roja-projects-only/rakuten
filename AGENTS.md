@@ -65,6 +65,7 @@ $env:LOG_LEVEL="debug"; npm start  # Verbose logging
 - `/combine` — Start combine mode (collect multiple files)
 - `/done` — Finish combine mode, show processing options
 - `/cancel` — Cancel combine session
+- `/export` — Export VALID credentials from Redis as .txt file
 - `/help` — Show help message
 
 ## Code Patterns

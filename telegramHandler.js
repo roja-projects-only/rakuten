@@ -7,6 +7,8 @@ const { captureAccountData } = require('./automation/http/httpDataCapture');
 const { registerBatchHandlers, abortActiveBatch, hasActiveBatch } = require('./telegram/batchHandlers');
 const { registerCombineHandlers, hasSession: hasCombineSession, addFileToSession, TELEGRAM_FILE_LIMIT_BYTES } = require('./telegram/combineHandler');
 const { abortCombineBatch, hasCombineBatch, getActiveCombineBatch } = require('./telegram/combineBatchRunner');
+const { registerExportHandler } = require('./telegram/exportHandler');
+const { getRedisClient, initProcessedStore } = require('./automation/batch/processedStore');
 const {
   buildStartMessage,
   buildHelpMessage,
@@ -257,6 +259,14 @@ function initializeTelegramHandler(botToken, options = {}) {
     { ...options, checkCredentials },
     { escapeV2, formatBytes, formatDurationMs }
   );
+
+  // Register export handler (export VALID credentials from Redis)
+  // Initialize processed store first to ensure Redis connection is ready
+  initProcessedStore().then(() => {
+    registerExportHandler(bot, getRedisClient);
+  }).catch((err) => {
+    log.warn(`Export handler setup failed: ${err.message}`);
+  });
 
   // Handle .chk command
   bot.hears(/^\.chk\s+(.+)/, async (ctx) => {

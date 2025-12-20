@@ -398,6 +398,22 @@ async function closeStore() {
   }
 }
 
+/**
+ * Get the Redis client instance (for export functionality).
+ * @returns {Object|null} Redis client or null if not using Redis
+ */
+function getRedisClient() {
+  return redisClient;
+}
+
+/**
+ * Check if Redis backend is active.
+ * @returns {boolean}
+ */
+function isRedisBackend() {
+  return backend === 'redis' && redisClient !== null;
+}
+
 module.exports = {
   DEFAULT_TTL_MS,
   initProcessedStore,
@@ -409,4 +425,6 @@ module.exports = {
   isSkippableStatus,
   makeKey,
   closeStore,
+  getRedisClient,
+  isRedisBackend,
 };
