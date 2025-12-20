@@ -6,7 +6,8 @@ High-speed HTTP-based Telegram bot for validating Rakuten account credentials wi
 
 - ⚡ **Fast HTTP-based** - No browser overhead, 10-50x faster than Puppeteer
 - 📊 **Auto-capture** - Points, Rakuten Cash, and membership rank
-- 🔄 **Live updates** - Real-time progress with visual indicators
+- � **Channel forwarding** - Auto-forward VALID credentials to a channel (once per credential)
+- �🔄 **Live updates** - Real-time progress with visual indicators
 - 📦 **Batch processing** - Check hundreds of credentials from files
 - 🔒 **Secure** - Credential masking and spoiler tags
 
@@ -30,6 +31,7 @@ npm start
 |----------|----------|---------|-------------|
 | `TELEGRAM_BOT_TOKEN` | ✅ | - | Bot token from @BotFather |
 | `TARGET_LOGIN_URL` | ✅ | - | Rakuten OAuth login URL |
+| `FORWARD_CHANNEL_ID` | ❌ | - | Channel ID to forward VALID credentials |
 | `TIMEOUT_MS` | ❌ | `60000` | Request timeout (ms) |
 | `BATCH_CONCURRENCY` | ❌ | `1` | Parallel batch checks (1 = sequential) |
 | `BATCH_MAX_RETRIES` | ❌ | `1` | Retry count for ERROR results |
@@ -84,7 +86,9 @@ httpChecker.js              # Core credential checker
 telegramHandler.js          # Telegram bot commands
 ├── telegram/
 │   ├── messages.js         # Message formatters (MarkdownV2)
-│   └── batchHandlers.js    # File/URL batch processing
+│   ├── batchHandlers.js    # File/URL batch processing
+│   ├── channelForwarder.js # Forward VALID creds to channel
+│   └── channelForwardStore.js # Dedupe store for forwarding
 └── automation/
     ├── http/
     │   ├── httpFlow.js     # Login flow (navigate → email → password)

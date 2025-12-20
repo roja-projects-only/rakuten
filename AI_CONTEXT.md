@@ -50,6 +50,8 @@
 │         └─ common.js       → Confirm/cancel/abort                    │
 │  telegram/combineHandler.js     → Combine mode session               │
 │  telegram/combineBatchRunner.js → Combine batch execution            │
+│  telegram/channelForwarder.js   → Forward VALID creds to channel     │
+│  telegram/channelForwardStore.js → Dedupe store (fwd: prefix keys)   │
 ├─────────────────────────────────────────────────────────────────────┤
 │                         HTTP LAYER                                   │
 ├─────────────────────────────────────────────────────────────────────┤
@@ -110,6 +112,8 @@
 | `telegram/batchHandlers.js` | Regular batch processing | `registerBatchHandlers()`, `abortActiveBatch()`, `hasActiveBatch()`, `getAllActiveBatches()` |
 | `telegram/combineHandler.js` | Combine mode session | `registerCombineHandlers()`, `hasSession()`, `clearSession()` |
 | `telegram/combineBatchRunner.js` | Combine batch execution | `runCombineBatch()`, `abortCombineBatch()`, `hasCombineBatch()`, `getActiveCombineBatch()` |
+| `telegram/channelForwarder.js` | Forward VALID to channel | `forwardValidToChannel()`, `isForwardingEnabled()` |
+| `telegram/channelForwardStore.js` | Channel forward deduplication | `hasBeenForwarded()`, `markForwarded()`, `initForwardStore()` |
 
 ### HTTP Layer
 
@@ -148,6 +152,12 @@ httpChecker.js
   ├─ submitPasswordStep() → /util/gc (POW), POST /v2/login/complete
   ├─ detectOutcome() → VALID/INVALID/BLOCKED/ERROR
   └─ if VALID: captureAccountData() → points, rank, cash
+       ↓
+channelForwarder.js (if FORWARD_CHANNEL_ID set)
+  ├─ hasBeenForwarded() → skip if already sent
+  ├─ buildChannelForwardMessage() → format with spoiler
+  ├─ telegram.sendMessage() → send to channel
+  └─ markForwarded() → dedupe for future checks
        ↓
 User: Result message with captured data
 ```
@@ -367,6 +377,14 @@ Writes are buffered and flushed in batches:
 Redis keys use prefix `proc:` with format: `proc:email:password`
 
 TTL: 7 days (configurable via `PROCESSED_TTL_MS`)
+
+### Channel Forward Store
+
+`channelForwardStore.js` tracks which credentials have been forwarded to prevent duplicates:
+- Redis keys: `fwd:{email}:{password}` with timestamp value
+- TTL: 30 days (configurable via `FORWARD_TTL_MS`)
+- Reuses same Redis client as `processedStore` when available
+- Falls back to JSONL file: `data/processed/forwarded-creds.jsonl`
 
 ---
 
