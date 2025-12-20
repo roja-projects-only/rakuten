@@ -74,14 +74,19 @@ function parseCredentials(credentialString) {
   }
 
   const parts = credentialString.split(':');
-  if (parts.length !== 2 || !parts[0].trim() || !parts[1].trim()) {
+  if (parts.length < 2) {
     return null;
   }
 
-  return {
-    username: parts[0].trim(),
-    password: parts[1].trim(),
-  };
+  // First part is username, rest is password (handles passwords with colons)
+  const username = parts[0].trim();
+  const password = parts.slice(1).join(':').trim();
+  
+  if (!username || !password) {
+    return null;
+  }
+
+  return { username, password };
 }
 
 /**
@@ -127,11 +132,14 @@ function guardInput(raw) {
   }
 
   const parts = input.split(':');
-  if (parts.length !== 2) {
-    return { valid: false, error: 'Use a single colon to separate user and password.' };
+  if (parts.length < 2) {
+    return { valid: false, error: 'Use format `user:password` (colon-separated).' };
   }
 
-  const [user, pass] = parts.map((p) => p.trim());
+  // First part is username, rest is password (handles passwords with colons)
+  const user = parts[0].trim();
+  const pass = parts.slice(1).join(':').trim();
+  
   if (!user || !pass) {
     return { valid: false, error: 'Both user and password are required.' };
   }
