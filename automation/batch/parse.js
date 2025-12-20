@@ -16,51 +16,61 @@ function parseColonCredential(line, { allowPrefix = false, requireEmail = true }
   const trimmed = line.trim();
   if (!trimmed || trimmed.startsWith('#')) return null;
 
-  const parts = trimmed.split(':');
-  if (!allowPrefix && parts.length < 2) return null;
-  if (allowPrefix && parts.length < 3) return null; // Need at least URL:user:pass
-
   let user, pass;
   
   if (allowPrefix) {
-    // ULP format: URL:user:pass (password may contain colons)
-    // Find where the URL ends by looking for the username
-    // URLs typically have format: https://domain.com/path or https://domain.com
-    // After split by ':', we need to identify the username position
-    
-    // Strategy: Find first part that looks like a username (after URL parts)
-    // URL parts are: 'https', '//domain.com/path', etc.
-    // Username typically doesn't start with '//' and isn't 'https' or 'http'
-    
-    let userIndex = -1;
-    for (let i = 1; i < parts.length - 1; i++) {
-      const part = parts[i].trim();
-      // Skip URL-like parts (start with //, contain .com/.jp/.org, etc. in a URL context)
-      if (part.startsWith('//') || part.startsWith('/')) continue;
-      if (part === '') continue;
-      
-      // This looks like a username - it's not a URL part
-      // Take this as username, and everything after as password
-      userIndex = i;
-      break;
-    }
-    
-    if (userIndex === -1 || userIndex >= parts.length - 1) {
-      // Fallback: take second-to-last as user, last as pass
-      user = parts[parts.length - 2].trim();
-      pass = parts[parts.length - 1].trim();
+    // ULP format: URL:user:pass or URL : user : pass (with spaces)
+    // Try space-delimited format first (common in logs)
+    const spaceParts = trimmed.split(' : ');
+    if (spaceParts.length >= 3) {
+      // Format: url : user : pass (password may contain ' : ')
+      user = spaceParts[1].trim();
+      pass = spaceParts.slice(2).join(' : ').trim();
     } else {
-      user = parts[userIndex].trim();
-      // Join all remaining parts as password (handles passwords with colons)
-      pass = parts.slice(userIndex + 1).join(':').trim();
+      // Fall back to colon-only parsing
+      const parts = trimmed.split(':');
+      if (parts.length < 3) return null; // Need at least URL:user:pass
+      
+      // Find where the URL ends by looking for the username
+      // URLs typically have format: https://domain.com/path or https://domain.com
+      // After split by ':', we need to identify the username position
+      
+      // Strategy: Find first part that looks like a username (after URL parts)
+      // URL parts are: 'https', '//domain.com/path', etc.
+      // Username typically doesn't start with '//' and isn't 'https' or 'http'
+      
+      let userIndex = -1;
+      for (let i = 1; i < parts.length - 1; i++) {
+        const part = parts[i].trim();
+        // Skip URL-like parts (start with //, contain .com/.jp/.org, etc. in a URL context)
+        if (part.startsWith('//') || part.startsWith('/')) continue;
+        if (part === '') continue;
+        
+        // This looks like a username - it's not a URL part
+        // Take this as username, and everything after as password
+        userIndex = i;
+        break;
+      }
+      
+      if (userIndex === -1 || userIndex >= parts.length - 1) {
+        // Fallback: take second-to-last as user, last as pass
+        user = parts[parts.length - 2].trim();
+        pass = parts[parts.length - 1].trim();
+      } else {
+        user = parts[userIndex].trim();
+        // Join all remaining parts as password (handles passwords with colons)
+        pass = parts.slice(userIndex + 1).join(':').trim();
+      }
     }
     
     // Validate user doesn't look like a URL part
-    if (user.startsWith('//') || user.startsWith('/') || user === '') {
+    if (!user || user.startsWith('//') || user.startsWith('/') || user === '') {
       return null;
     }
   } else {
     // Simple format: user:pass (password may contain colons)
+    const parts = trimmed.split(':');
+    if (parts.length < 2) return null;
     user = parts[0].trim();
     // Join all remaining parts as password
     pass = parts.slice(1).join(':').trim();
