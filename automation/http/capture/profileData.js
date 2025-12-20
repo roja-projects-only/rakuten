@@ -92,6 +92,12 @@ async function fetchProfileData(client, jar, timeoutMs) {
     let currentUrl = response.request?.res?.responseUrl || response.config?.url || '';
     log.debug(`Profile SSO Step 1 - URL: ${currentUrl.substring(0, 80)}...`);
     
+    // Check if redirected to verification/email page (requires captcha - cannot proceed)
+    if (currentUrl.includes('/verification/email') || currentUrl.includes('/verification/')) {
+      log.warn('Profile SSO requires email verification (captcha) - skipping profile capture');
+      return null;
+    }
+    
     // Step 2: Handle SSO form redirects
     if (hasSsoForm(html)) {
       const result = await followSsoRedirects(client, html, currentUrl, timeoutMs, 5);
@@ -189,11 +195,19 @@ async function fetchProfileData(client, jar, timeoutMs) {
         },
       });
       
-      log.debug(`Initiate response status: ${initiateResponse.status}`);
+      const initiateUrl2 = initiateResponse.request?.res?.responseUrl || initiateResponse.config?.url || '';
+      log.debug(`Initiate response status: ${initiateResponse.status}, URL: ${initiateUrl2.substring(0, 80)}...`);
+      
+      // Check if initiate redirected to verification/login page
+      if (initiateUrl2.includes('/verification/') || initiateUrl2.includes('login.account.rakuten.com')) {
+        log.warn('Profile gateway requires re-authentication or captcha verification - skipping profile capture');
+        return null;
+      }
+      
       bearerToken = extractBearerToken(initiateResponse.data);
       
       if (!bearerToken) {
-        log.warn('Could not obtain Bearer token from gateway/initiate');
+        log.warn('Could not obtain Bearer token from gateway/initiate (no token in response)');
         return null;
       }
     }

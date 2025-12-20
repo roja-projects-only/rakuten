@@ -44,6 +44,12 @@ async function fetchLatestOrder(client, jar, timeoutMs) {
     let currentUrl = response.request?.res?.responseUrl || response.config?.url || '';
     log.debug(`Step 1 - URL: ${currentUrl.substring(0, 80)}...`);
     
+    // Check if redirected to verification page (requires captcha - cannot proceed)
+    if (currentUrl.includes('/verification/email') || currentUrl.includes('/verification/')) {
+      log.warn('Order history SSO requires verification (captcha) - skipping order capture');
+      return null;
+    }
+    
     // Step 2: If we got SSO authorize page with auto-submit form, handle it manually
     // The page contains: <form id="post_form" action="..." method="POST">...<input name="..." value="...">
     if (html.includes('post_form') || html.includes('login.account.rakuten.com')) {
