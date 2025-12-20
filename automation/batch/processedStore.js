@@ -6,7 +6,11 @@ const log = createLogger('processed-store');
 
 const DEFAULT_TTL_MS = parseInt(process.env.PROCESSED_TTL_MS, 10) || 7 * 24 * 60 * 60 * 1000;
 const STORE_PATH = path.join(process.cwd(), 'data', 'processed', 'processed-creds.jsonl');
+
+// New key format: proc:{STATUS}:{email}:{password}
+// This makes status visible in Redis key listings (e.g., Railway dashboard)
 const REDIS_PREFIX = 'proc:';
+const STATUSES = ['VALID', 'INVALID', 'BLOCKED', 'ERROR'];
 
 // Storage backend: 'redis' or 'jsonl'
 let backend = null;
@@ -29,6 +33,22 @@ function isSkippableStatus(status) {
 
 function makeKey(username, password) {
   return `${username}:${password}`;
+}
+
+/**
+ * Make Redis key with status prefix for visibility.
+ * Format: proc:{STATUS}:{email}:{password}
+ */
+function makeRedisKey(credKey, status) {
+  return `${REDIS_PREFIX}${status.toUpperCase()}:${credKey}`;
+}
+
+/**
+ * Get all possible Redis keys for a credential (all statuses).
+ * Used for lookup when we don't know the status.
+ */
+function getAllPossibleRedisKeys(credKey) {
+  return STATUSES.map(status => makeRedisKey(credKey, status));
 }
 
 // ============ JSONL Backend ============
@@ -121,7 +141,10 @@ async function flushWriteBuffer() {
     // Use pipeline for batch writes - single round-trip for all
     const pipeline = redisClient.pipeline();
     for (const { key, status, ts, ttlSeconds } of items) {
-      pipeline.setex(`${REDIS_PREFIX}${key}`, ttlSeconds, JSON.stringify({ status, ts }));
+      // New key format: proc:{STATUS}:{email}:{password}
+      // Value is just the timestamp (status is in the key)
+      const redisKey = makeRedisKey(key, status);
+      pipeline.setex(redisKey, ttlSeconds, String(ts));
     }
     await pipeline.exec();
     log.debug(`Flushed ${items.length} writes to Redis`);
@@ -171,10 +194,30 @@ async function getProcessedStatus(key, ttlMs = DEFAULT_TTL_MS) {
   
   if (backend === 'redis') {
     try {
-      const data = await redisClient.get(`${REDIS_PREFIX}${key}`);
-      if (!data) return null;
-      const parsed = JSON.parse(data);
-      return parsed.status;
+      // Check all possible status keys using MGET
+      const possibleKeys = getAllPossibleRedisKeys(key);
+      const values = await redisClient.mget(...possibleKeys);
+      
+      // Find which status key exists
+      for (let i = 0; i < STATUSES.length; i++) {
+        if (values[i]) {
+          return STATUSES[i];
+        }
+      }
+      
+      // Fallback: check old format key for migration
+      const oldKey = `${REDIS_PREFIX}${key}`;
+      const oldData = await redisClient.get(oldKey);
+      if (oldData) {
+        try {
+          const parsed = JSON.parse(oldData);
+          return parsed.status;
+        } catch (_) {
+          return null;
+        }
+      }
+      
+      return null;
     } catch (err) {
       log.warn(`Redis get error: ${err.message}`);
       return null;
@@ -191,6 +234,8 @@ async function getProcessedStatus(key, ttlMs = DEFAULT_TTL_MS) {
 /**
  * Batch lookup for multiple keys - much faster than individual lookups.
  * Uses Redis MGET for batch operations.
+ * New format checks: proc:{STATUS}:{email}:{password} for all statuses
+ * Also checks old format: proc:{email}:{password} for migration
  * @param {string[]} keys - Array of keys to lookup
  * @param {number} ttlMs - TTL in milliseconds
  * @returns {Promise<Map<string, string|null>>} Map of key -> status
@@ -204,30 +249,56 @@ async function getProcessedStatusBatch(keys, ttlMs = DEFAULT_TTL_MS) {
   
   if (backend === 'redis') {
     try {
-      // Use MGET for batch lookup - single round trip per batch instead of per key
-      const BATCH_SIZE = 1000; // Redis MGET works best with reasonable batch sizes
+      const BATCH_SIZE = 250; // Smaller batches since we query 4 keys per credential
       const totalBatches = Math.ceil(keys.length / BATCH_SIZE);
       
       log.info(`Checking ${keys.length} keys against Redis (${totalBatches} batches)...`);
       
       for (let i = 0; i < keys.length; i += BATCH_SIZE) {
         const batch = keys.slice(i, i + BATCH_SIZE);
-        const redisKeys = batch.map(k => `${REDIS_PREFIX}${k}`);
+        
+        // Build all possible Redis keys for this batch (4 per credential: VALID, INVALID, BLOCKED, ERROR)
+        const redisKeys = [];
+        const keyIndexMap = []; // Maps redis key index to [credKey, status]
+        
+        for (const credKey of batch) {
+          for (const status of STATUSES) {
+            redisKeys.push(makeRedisKey(credKey, status));
+            keyIndexMap.push({ credKey, status });
+          }
+        }
+        
         const values = await redisClient.mget(...redisKeys);
         
-        for (let j = 0; j < batch.length; j++) {
-          const key = batch[j];
-          const data = values[j];
-          if (data) {
-            try {
-              const parsed = JSON.parse(data);
-              results.set(key, parsed.status);
-            } catch (_) {
-              results.set(key, null);
-            }
-          } else {
-            results.set(key, null);
+        // Process results - find first matching status for each credential
+        const foundStatus = new Map();
+        for (let j = 0; j < values.length; j++) {
+          if (values[j] && !foundStatus.has(keyIndexMap[j].credKey)) {
+            foundStatus.set(keyIndexMap[j].credKey, keyIndexMap[j].status);
           }
+        }
+        
+        // Check old format for keys not found in new format (migration support)
+        const notFound = batch.filter(k => !foundStatus.has(k));
+        if (notFound.length > 0) {
+          const oldKeys = notFound.map(k => `${REDIS_PREFIX}${k}`);
+          const oldValues = await redisClient.mget(...oldKeys);
+          
+          for (let j = 0; j < notFound.length; j++) {
+            if (oldValues[j]) {
+              try {
+                const parsed = JSON.parse(oldValues[j]);
+                if (parsed.status) {
+                  foundStatus.set(notFound[j], parsed.status);
+                }
+              } catch (_) {}
+            }
+          }
+        }
+        
+        // Set results
+        for (const credKey of batch) {
+          results.set(credKey, foundStatus.get(credKey) || null);
         }
         
         // Log progress for large batches

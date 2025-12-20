@@ -12,7 +12,6 @@ const {
   escapeV2,
   codeV2,
   boldV2,
-  spoilerCodeV2,
   formatDurationMs,
   buildBatchFailed,
 } = require('./messages');
@@ -85,7 +84,9 @@ function buildCombineBatchProgress({ processed, total, counts, validCreds = [] }
   if (validCreds && validCreds.length > 0) {
     parts.push('');
     parts.push(boldV2('💎 Valid Found:'));
-    validCreds.slice(0, 10).forEach((cred) => {
+    // Show only the latest 10 credentials (tail of array)
+    const displayCreds = validCreds.slice(-10);
+    displayCreds.forEach((cred) => {
       parts.push(`• ${codeV2(`${cred.username}:${cred.password}`)}`);
     });
     if (validCreds.length > 10) {
@@ -125,7 +126,7 @@ function buildCombineBatchSummary({ filename, total, skipped, counts, elapsedMs,
     parts.push(boldV2('🔐 Valid Credentials'));
     validCreds.forEach((cred, i) => {
       const prefix = i === validCreds.length - 1 ? '└' : '├';
-      parts.push(`${prefix} ${spoilerCodeV2(`${cred.username}:${cred.password}`)}`);
+      parts.push(`${prefix} ${codeV2(`${cred.username}:${cred.password}`)}`);
     });
   }
 
