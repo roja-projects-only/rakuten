@@ -26,7 +26,8 @@ function parseUlpFromUrl(fileUrl, maxBytes = MAX_BYTES_ULP) {
         rl.on('line', (line) => {
           if (!line || typeof line !== 'string') return;
           if (!line.toLowerCase().includes('rakuten.co.jp')) return;
-          const parsed = parseColonCredential(line, { allowPrefix: true });
+          // ULP format allows usernames without @ (not just emails)
+          const parsed = parseColonCredential(line, { allowPrefix: true, requireEmail: false });
           if (!parsed) return;
           const key = `${parsed.user}:${parsed.pass}`;
           if (seen.has(key)) return;
