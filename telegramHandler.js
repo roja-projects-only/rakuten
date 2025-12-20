@@ -110,12 +110,12 @@ function isValidEmail(email) {
  */
 function guardInput(raw) {
   if (!raw || typeof raw !== 'string') {
-    return { valid: false, error: 'Provide credentials in the form `.chk email:password`.' };
+    return { valid: false, error: 'Provide credentials in the form `.chk user:password`.' };
   }
 
   const input = raw.trim();
   if (!input) {
-    return { valid: false, error: 'Provide credentials in the form `.chk email:password`.' };
+    return { valid: false, error: 'Provide credentials in the form `.chk user:password`.' };
   }
 
   if (input.length > 200) {
@@ -123,21 +123,17 @@ function guardInput(raw) {
   }
 
   if (input.includes('\n')) {
-    return { valid: false, error: 'Use a single-line `email:password` pair.' };
+    return { valid: false, error: 'Use a single-line `user:password` pair.' };
   }
 
   const parts = input.split(':');
   if (parts.length !== 2) {
-    return { valid: false, error: 'Use a single colon to separate email and password.' };
+    return { valid: false, error: 'Use a single colon to separate user and password.' };
   }
 
   const [user, pass] = parts.map((p) => p.trim());
   if (!user || !pass) {
-    return { valid: false, error: 'Both email and password are required.' };
-  }
-
-  if (!isValidEmail(user)) {
-    return { valid: false, error: 'Email format looks invalid.' };
+    return { valid: false, error: 'Both user and password are required.' };
   }
 
   return { valid: true };
