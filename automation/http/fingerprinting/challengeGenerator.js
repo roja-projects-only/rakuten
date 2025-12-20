@@ -26,10 +26,13 @@ let murmurHash128;
 let useNative = false;
 try {
   const native = require('murmurhash-native');
-  murmurHash128 = (bytes, seed) => native.murmurHash128x64(bytes, seed, 'hex');
+  // Native API: murmurHash(data{Buffer}, output_type[, seed])
+  // For Buffer input, order is: (buffer, 'hex', seed)
+  murmurHash128 = (bytes, seed) => native.murmurHash128x64(bytes, 'hex', seed);
   useNative = true;
 } catch {
   const MurmurHash3 = require('murmurhash3js-revisited');
+  // JS version takes string/array directly
   murmurHash128 = (bytes, seed) => MurmurHash3.x64.hash128(bytes, seed);
 }
 
