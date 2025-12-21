@@ -110,7 +110,7 @@ async function followSsoRedirects(client, html, currentUrl, timeoutMs, maxIterat
 
 /**
  * Skips email verification challenge by POSTing to /v2/verify/email with empty code.
- * Uses POW challenge computation (same as login flow).
+ * Extracts challenge token from verification page and computes POW.
  * 
  * @param {Object} client - HTTP client
  * @param {string} verificationUrl - Full verification URL with token param
@@ -131,19 +131,19 @@ async function skipEmailVerification(client, verificationUrl, timeoutMs) {
     
     // Generate correlation ID for this request
     const correlationId = require('crypto').randomUUID();
+    const fingerprint = generateFingerprint();
+    const ratData = generateFullRatData(correlationId, fingerprint);
     
-    // Step 1: Call /util/gc to get challenge token and mdata for POW
+    // Step 1: Call /util/gc to get challenge token (using LOGIN_START like login flow)
     let challengeToken = null;
-    let cres = null;
+    let mdata = null;
+    
+    log.debug('[skip-verify] Calling /util/gc to get challenge data...');
     
     try {
-      log.debug('[skip-verify] Calling /util/gc to get challenge data');
-      const fingerprint = generateFingerprint();
-      const ratData = generateFullRatData(correlationId, fingerprint);
-      
       const gcUrl = `${LOGIN_BASE}/util/gc?client_id=rakuten_ichiba_top_web&tracking_id=${correlationId}`;
       const gcPayload = {
-        page_type: 'VERIFICATION',
+        page_type: 'LOGIN_START',  // Same as login flow
         lang: 'en-US',
         rat: ratData,
       };
@@ -155,7 +155,7 @@ async function skipEmailVerification(client, verificationUrl, timeoutMs) {
           'Accept-Language': 'en-US,en;q=0.9',
           'Content-Type': 'application/json',
           'Origin': LOGIN_BASE,
-          'Referer': verificationUrl,
+          'Referer': `${LOGIN_BASE}/`,
           'Sec-Fetch-Dest': 'empty',
           'Sec-Fetch-Mode': 'cors',
           'Sec-Fetch-Site': 'same-origin',
@@ -166,33 +166,44 @@ async function skipEmailVerification(client, verificationUrl, timeoutMs) {
       
       if (gcResponse.status === 200 && gcResponse.data?.token) {
         challengeToken = gcResponse.data.token;
+        mdata = gcResponse.data.mdata;
         log.debug(`[skip-verify] Got challenge token: ${challengeToken.substring(0, 50)}...`);
-        
-        // Compute cres from mdata using POW
-        if (gcResponse.data?.mdata) {
-          try {
-            cres = await computeCresFromMdataAsync(gcResponse.data.mdata);
-            log.debug(`[skip-verify] Computed cres: ${cres}`);
-          } catch (powErr) {
-            log.warn(`[skip-verify] POW failed: ${powErr.message}, using fallback`);
-            cres = require('crypto').randomBytes(8).toString('hex');
-          }
-        }
       } else {
-        log.warn('[skip-verify] /util/gc did not return token, using generated');
-        challengeToken = generateSessionToken('St.ott-v2');
+        log.debug(`[skip-verify] /util/gc response data: ${JSON.stringify(gcResponse.data).substring(0, 200)}`);
       }
     } catch (err) {
-      log.warn('[skip-verify] /util/gc failed:', err.message);
+      log.debug(`[skip-verify] /util/gc failed: ${err.message}`);
+    }
+    
+    // Generate fallback token if /util/gc failed
+    if (!challengeToken) {
+      log.debug('[skip-verify] Using generated challenge token');
       challengeToken = generateSessionToken('St.ott-v2');
     }
     
-    // Fallback cres if not computed
-    if (!cres) {
-      cres = require('crypto').randomBytes(8).toString('hex');
+    // Step 2: Compute cres from mdata or generate random
+    let cres = null;
+    
+    if (mdata) {
+      try {
+        cres = await computeCresFromMdataAsync(mdata);
+        log.debug(`[skip-verify] Computed cres: ${cres}`);
+      } catch (err) {
+        log.debug(`[skip-verify] POW failed: ${err.message}`);
+      }
     }
     
-    // Step 2: POST to /v2/verify/email with empty code (= skip)
+    if (!cres) {
+      // Generate random 16-char alphanumeric cres
+      const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+      cres = '';
+      for (let i = 0; i < 16; i++) {
+        cres += charset.charAt(Math.floor(Math.random() * charset.length));
+      }
+      log.debug(`[skip-verify] Using random cres: ${cres}`);
+    }
+    
+    // Step 3: POST to /v2/verify/email with empty code (= skip)
     const skipUrl = `${LOGIN_BASE}/v2/verify/email`;
     const skipPayload = {
       token: mainToken,
@@ -203,12 +214,12 @@ async function skipEmailVerification(client, verificationUrl, timeoutMs) {
       },
     };
     
-    log.debug(`[skip-verify] POSTing to ${skipUrl} with empty code`);
+    log.debug(`[skip-verify] POSTing to ${skipUrl}`);
     
     const skipResponse = await client.post(skipUrl, skipPayload, {
       timeout: timeoutMs,
-      maxRedirects: 0,  // Don't follow redirects automatically
-      validateStatus: (status) => status < 500,  // Accept 2xx, 3xx, 4xx
+      maxRedirects: 0,
+      validateStatus: (status) => status < 500,
       headers: {
         'Accept': '*/*',
         'Accept-Language': 'en-US',
@@ -222,21 +233,20 @@ async function skipEmailVerification(client, verificationUrl, timeoutMs) {
       },
     });
     
-    log.debug(`[skip-verify] Skip response status: ${skipResponse.status}`);
+    log.debug(`[skip-verify] Response status: ${skipResponse.status}`);
     
     if (skipResponse.status !== 200) {
-      log.warn(`[skip-verify] Unexpected status: ${skipResponse.status}`);
+      log.warn(`[skip-verify] Skip failed with status: ${skipResponse.status}`);
+      if (skipResponse.data) {
+        log.debug(`[skip-verify] Response: ${JSON.stringify(skipResponse.data).substring(0, 200)}`);
+      }
       return null;
     }
     
-    // Step 3: Check response for redirect URL or next step
-    const responseData = skipResponse.data;
-    log.debug(`[skip-verify] Response data: ${JSON.stringify(responseData).substring(0, 200)}...`);
+    log.info('[skip-verify] Email verification skipped successfully');
     
-    // The response should contain redirect info or we follow SSO again
-    // After successful skip, re-calling SSO authorize should bypass verification
     return { 
-      html: typeof responseData === 'string' ? responseData : JSON.stringify(responseData), 
+      html: typeof skipResponse.data === 'string' ? skipResponse.data : JSON.stringify(skipResponse.data), 
       url: skipUrl,
       skipped: true,
     };
