@@ -11,7 +11,7 @@
 
 const { createLogger } = require('../../../logger');
 const { getCookieString } = require('../httpClient');
-const { hasSsoForm, followSsoRedirects } = require('./ssoFormHandler');
+const { hasSsoForm, followSsoRedirects, skipEmailVerification } = require('./ssoFormHandler');
 
 const log = createLogger('profile-data');
 
@@ -92,10 +92,38 @@ async function fetchProfileData(client, jar, timeoutMs) {
     let currentUrl = response.request?.res?.responseUrl || response.config?.url || '';
     log.debug(`Profile SSO Step 1 - URL: ${currentUrl.substring(0, 80)}...`);
     
-    // Check if redirected to verification/email page (requires captcha - cannot proceed)
+    // Check if redirected to verification/email page - attempt to skip
     if (currentUrl.includes('/verification/email') || currentUrl.includes('/verification/')) {
-      log.warn('Profile SSO requires email verification (captcha) - skipping profile capture');
-      return null;
+      log.info('Profile SSO requires email verification - attempting to skip...');
+      
+      const skipResult = await skipEmailVerification(client, currentUrl, timeoutMs);
+      if (!skipResult) {
+        log.warn('Could not skip email verification - skipping profile capture');
+        return null;
+      }
+      
+      log.info('Email verification skipped, retrying SSO authorize...');
+      
+      // After successful skip, retry the SSO authorize request
+      response = await client.get(ssoAuthorizeUrl, {
+        timeout: timeoutMs,
+        maxRedirects: 10,
+        headers: {
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Sec-Fetch-Dest': 'document',
+          'Sec-Fetch-Mode': 'navigate',
+        },
+      });
+      
+      html = response.data;
+      currentUrl = response.request?.res?.responseUrl || response.config?.url || '';
+      log.debug(`Profile SSO after skip - URL: ${currentUrl.substring(0, 80)}...`);
+      
+      // If still on verification page, we failed
+      if (currentUrl.includes('/verification/')) {
+        log.warn('Still on verification page after skip attempt - skipping profile capture');
+        return null;
+      }
     }
     
     // Step 2: Handle SSO form redirects
@@ -198,13 +226,30 @@ async function fetchProfileData(client, jar, timeoutMs) {
       const initiateUrl2 = initiateResponse.request?.res?.responseUrl || initiateResponse.config?.url || '';
       log.debug(`Initiate response status: ${initiateResponse.status}, URL: ${initiateUrl2.substring(0, 80)}...`);
       
-      // Check if initiate redirected to verification/login page
-      if (initiateUrl2.includes('/verification/') || initiateUrl2.includes('login.account.rakuten.com')) {
-        log.warn('Profile gateway requires re-authentication or captcha verification - skipping profile capture');
+      // Check if initiate redirected to verification/login page - try to skip
+      if (initiateUrl2.includes('/verification/')) {
+        log.info('Profile gateway initiate requires verification - attempting to skip...');
+        const skipResult = await skipEmailVerification(client, initiateUrl2, timeoutMs);
+        if (!skipResult) {
+          log.warn('Could not skip verification during initiate - skipping profile capture');
+          return null;
+        }
+        // Retry initiate after skip
+        const retryResponse = await client.get(initiateUrl, {
+          timeout: timeoutMs,
+          maxRedirects: 5,
+          headers: { 
+            'Accept': 'application/json, text/html, */*',
+            'Referer': 'https://profile.id.rakuten.co.jp/',
+          },
+        });
+        bearerToken = extractBearerToken(retryResponse.data);
+      } else if (initiateUrl2.includes('login.account.rakuten.com')) {
+        log.warn('Profile gateway requires re-authentication - skipping profile capture');
         return null;
+      } else {
+        bearerToken = extractBearerToken(initiateResponse.data);
       }
-      
-      bearerToken = extractBearerToken(initiateResponse.data);
       
       if (!bearerToken) {
         log.warn('Could not obtain Bearer token from gateway/initiate (no token in response)');
