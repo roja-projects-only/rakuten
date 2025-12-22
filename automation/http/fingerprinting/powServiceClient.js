@@ -44,13 +44,19 @@ class POWServiceClient {
     };
     
     // Create axios instance with default config
+    // IMPORTANT: Disable proxy for internal service calls
     this.httpClient = axios.create({
       baseURL: this.serviceUrl,
       timeout: this.timeout,
       headers: {
         'Content-Type': 'application/json',
         'User-Agent': 'POW-Client/1.0.0'
-      }
+      },
+      // Explicitly disable proxy for internal service communication
+      proxy: false,
+      // Ensure no proxy agents are used
+      httpsAgent: undefined,
+      httpAgent: undefined
     });
     
     log.info('POW service client initialized', { 
