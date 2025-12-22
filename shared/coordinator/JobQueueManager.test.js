@@ -1,7 +1,7 @@
 /**
  * JobQueueManager Tests
  * 
- * Basic tests to verify JobQueueManager functionality
+ * Jest tests to verify JobQueueManager functionality
  */
 
 const JobQueueManager = require('./JobQueueManager');
@@ -56,62 +56,81 @@ class MockRedisClient {
         return 1;
       
       default:
-        throw new Error(`Mock Redis command not implemented: ${command}`);
+        return 'OK';
     }
   }
 }
 
-async function testJobQueueManager() {
-  console.log('Testing JobQueueManager...');
-  
-  const mockRedis = new MockRedisClient();
-  const proxyPool = new ProxyPoolManager(mockRedis, ['http://proxy1:8080', 'http://proxy2:8080']);
-  const jobQueue = new JobQueueManager(mockRedis, proxyPool);
-  
-  // Test 1: Enqueue batch
-  console.log('Test 1: Enqueue batch');
-  const batchId = 'test-batch-001';
-  const credentials = [
-    { username: 'user1@example.com', password: 'pass1' },
-    { username: 'user2@example.com', password: 'pass2' },
-    { username: 'user3@example.com', password: 'pass3' }
-  ];
-  
-  const result = await jobQueue.enqueueBatch(batchId, credentials, {
-    batchType: 'TEST',
-    chatId: 123456,
-    messageId: 789
+describe('JobQueueManager', () => {
+  let mockRedis;
+  let proxyPool;
+  let jobQueue;
+
+  beforeEach(() => {
+    mockRedis = new MockRedisClient();
+    proxyPool = new ProxyPoolManager(mockRedis, ['http://proxy1:8080', 'http://proxy2:8080']);
+    jobQueue = new JobQueueManager(mockRedis, proxyPool);
   });
-  
-  console.log('Enqueue result:', result);
-  console.assert(result.queued === 3, 'Should queue 3 credentials');
-  console.assert(result.cached === 0, 'Should have 0 cached credentials');
-  
-  // Test 2: Check queue stats
-  console.log('Test 2: Check queue stats');
-  const stats = await jobQueue.getQueueStats();
-  console.log('Queue stats:', stats);
-  console.assert(stats.mainQueue === 3, 'Main queue should have 3 tasks');
-  console.assert(stats.total === 3, 'Total should be 3');
-  
-  // Test 3: Cancel batch
-  console.log('Test 3: Cancel batch');
-  const cancelResult = await jobQueue.cancelBatch(batchId);
-  console.log('Cancel result:', cancelResult);
-  console.assert(cancelResult.drained === 3, 'Should drain 3 tasks');
-  
-  // Test 4: Check queue is empty after cancellation
-  console.log('Test 4: Check queue after cancellation');
-  const statsAfterCancel = await jobQueue.getQueueStats();
-  console.log('Queue stats after cancel:', statsAfterCancel);
-  console.assert(statsAfterCancel.total === 0, 'Queue should be empty after cancellation');
-  
-  console.log('✅ All JobQueueManager tests passed!');
-}
 
-// Run tests if this file is executed directly
-if (require.main === module) {
-  testJobQueueManager().catch(console.error);
-}
+  describe('enqueueBatch', () => {
+    test('should enqueue batch with correct counts', async () => {
+      const batchId = 'test-batch-001';
+      const credentials = [
+        { username: 'user1@example.com', password: 'pass1' },
+        { username: 'user2@example.com', password: 'pass2' },
+        { username: 'user3@example.com', password: 'pass3' }
+      ];
+      
+      const result = await jobQueue.enqueueBatch(batchId, credentials, {
+        batchType: 'TEST',
+        chatId: 123456,
+        messageId: 789
+      });
+      
+      expect(result.queued).toBe(3);
+      expect(result.cached).toBe(0);
+    });
+  });
 
-module.exports = { testJobQueueManager };
+  describe('getQueueStats', () => {
+    test('should return correct queue statistics', async () => {
+      const batchId = 'test-batch-002';
+      const credentials = [
+        { username: 'user1@example.com', password: 'pass1' },
+        { username: 'user2@example.com', password: 'pass2' }
+      ];
+      
+      await jobQueue.enqueueBatch(batchId, credentials, {
+        batchType: 'TEST',
+        chatId: 123456,
+        messageId: 789
+      });
+      
+      const stats = await jobQueue.getQueueStats();
+      expect(stats.mainQueue).toBe(2);
+      expect(stats.total).toBe(2);
+    });
+  });
+
+  describe('cancelBatch', () => {
+    test('should cancel batch and drain tasks', async () => {
+      const batchId = 'test-batch-003';
+      const credentials = [
+        { username: 'user1@example.com', password: 'pass1' },
+        { username: 'user2@example.com', password: 'pass2' }
+      ];
+      
+      await jobQueue.enqueueBatch(batchId, credentials, {
+        batchType: 'TEST',
+        chatId: 123456,
+        messageId: 789
+      });
+      
+      const cancelResult = await jobQueue.cancelBatch(batchId);
+      expect(cancelResult.drained).toBe(2);
+      
+      const statsAfterCancel = await jobQueue.getQueueStats();
+      expect(statsAfterCancel.total).toBe(0);
+    });
+  });
+});
