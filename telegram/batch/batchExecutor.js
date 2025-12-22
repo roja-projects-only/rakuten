@@ -79,19 +79,28 @@ async function runDistributedBatch(ctx, batch, msgId, statusMsg, options, helper
     
     log.info(`Queuing ${batch.count} credentials to job queue`);
     
-    // Queue the batch
-    const batchId = await coordinator.jobQueue.enqueueBatch({
-      credentials: batch.creds,
-      chatId,
-      filename: batch.filename,
-      userId: ctx.from.id
-    });
+    // Generate batch ID
+    const { generateBatchId } = require('../../shared/redis/keys');
+    const batchId = generateBatchId();
+    
+    // Queue the batch with correct parameters
+    const result = await coordinator.jobQueue.enqueueBatch(
+      batchId,
+      batch.creds,
+      {
+        batchType: 'HOTMAIL', // or determine from context
+        chatId,
+        filename: batch.filename,
+        userId: ctx.from.id
+      }
+    );
     
     // Update message with queued status
     const text = helpers.escapeV2(`✅ Batch queued!\n\n` +
       `📁 File: ${batch.filename}\n` +
       `📊 Total: ${batch.count} credentials\n` +
-      `🔄 Status: Queued for worker processing\n` +
+      `✨ Queued: ${result.queued} new tasks\n` +
+      `💾 Cached: ${result.cached} already processed\n` +
       `🆔 Batch ID: ${batchId}\n\n` +
       `Workers will process this batch. Check back soon!`);
     
