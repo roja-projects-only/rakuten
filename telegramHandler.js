@@ -202,6 +202,23 @@ function initializeTelegramHandler(botToken, options = {}) {
   bot.command('stop', async (ctx) => {
     const chatId = ctx.chat.id;
     
+    // In coordinator mode, abort batch via Redis
+    if (options.compatibility && options.compatibility.isDistributed && options.compatibility.isDistributed()) {
+      const coordinator = options.compatibility.coordinator;
+      if (coordinator && coordinator.progressTracker) {
+        // Find active batch for this chat
+        const activeBatches = await coordinator.progressTracker.getActiveBatchesForChat(chatId);
+        if (activeBatches && activeBatches.length > 0) {
+          const batchId = activeBatches[0];
+          await coordinator.progressTracker.abortBatch(batchId);
+          await ctx.reply(escapeV2(`⏹ Stopped batch ${batchId}`), { parse_mode: 'MarkdownV2' });
+          return;
+        }
+      }
+      await ctx.reply(escapeV2('No active batches to stop.'), { parse_mode: 'MarkdownV2' });
+      return;
+    }
+    
     // Check for active combine batch first (highest priority)
     if (hasCombineBatch(chatId)) {
       const combineBatch = getActiveCombineBatch(chatId);

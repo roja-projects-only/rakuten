@@ -95,14 +95,16 @@ async function runDistributedBatch(ctx, batch, msgId, statusMsg, options, helper
       }
     );
     
-    // Update message with queued status
-    const text = helpers.escapeV2(`✅ Batch queued!\n\n` +
-      `📁 File: ${batch.filename}\n` +
-      `📊 Total: ${batch.count} credentials\n` +
-      `✨ Queued: ${result.queued} new tasks\n` +
-      `💾 Cached: ${result.cached} already processed\n` +
-      `🆔 Batch ID: ${batchId}\n\n` +
-      `Workers will process this batch. Check back soon!`);
+    // Update message with initial progress format (0 processed)
+    const { buildBatchProgress } = require('../messages');
+    const text = buildBatchProgress({
+      filename: batch.filename,
+      processed: 0,
+      total: result.queued,
+      counts: { VALID: 0, INVALID: 0, BLOCKED: 0, ERROR: 0 },
+      validCreds: [],
+      cached: result.cached
+    });
     
     await ctx.telegram.editMessageText(chatId, statusMsg.message_id, undefined, text, {
       parse_mode: 'MarkdownV2',
