@@ -243,6 +243,7 @@ POW_SERVICE_URL=http://pow-service-private-ip:8080
 TARGET_LOGIN_URL=https://login.account.rakuten.com/sso/authorize?client_id=rakuten_ichiba_top_web&service_id=s245&response_type=code&scope=openid&redirect_uri=https%3A%2F%2Fwww.rakuten.co.jp%2F
 
 # Performance
+WORKER_CONCURRENCY=3  # Concurrent tasks per worker (1-50, default: 3)
 TIMEOUT_MS=60000
 BATCH_MAX_RETRIES=2
 LOG_LEVEL=info
