@@ -7,7 +7,7 @@
  * Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 1.6, 5.7, 5.8, 7.3, 8.1
  */
 
-const pLimit = require('p-limit');
+const pLimit = require('p-limit').default || require('p-limit');
 const { createLogger } = require('../../logger');
 const { createStructuredLogger } = require('../logger/structured');
 const { checkCredentials } = require('../../httpChecker');
