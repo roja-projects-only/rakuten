@@ -43,12 +43,77 @@ const PROCESSED_TTL_MS = parseInt(process.env.PROCESSED_TTL_MS, 10) || 7 * 24 * 
  * @param {Object} batch - Batch object with creds, filename, count
  * @param {string} msgId - Source message ID
  * @param {Object} statusMsg - Status message to update
- * @param {Object} options - Check options (timeoutMs, proxy, targetUrl)
+ * @param {Object} options - Check options (timeoutMs, proxy, targetUrl, compatibility)
  * @param {Object} helpers - Helper functions (escapeV2, formatDurationMs)
  * @param {string} key - Batch key for state management
  * @param {Function} checkCredentials - Credential checking function
  */
 function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, checkCredentials) {
+  const chatId = ctx.chat.id;
+  
+  // Check if we're in coordinator mode - if so, queue to Redis instead of processing directly
+  if (options.compatibility && options.compatibility.isDistributed && options.compatibility.isDistributed()) {
+    log.info(`Coordinator mode detected - queuing ${batch.count} tasks to Redis instead of direct processing`);
+    return runDistributedBatch(ctx, batch, msgId, statusMsg, options, helpers, key);
+  }
+  
+  // Otherwise, run single-node batch processing
+  return runSingleNodeBatch(ctx, batch, msgId, statusMsg, options, helpers, key, checkCredentials);
+}
+
+/**
+ * Queue batch to Redis for distributed worker processing
+ */
+async function runDistributedBatch(ctx, batch, msgId, statusMsg, options, helpers, key) {
+  const chatId = ctx.chat.id;
+  
+  try {
+    const coordinator = options.compatibility.components.coordinator;
+    if (!coordinator || !coordinator.jobQueue) {
+      throw new Error('Coordinator not initialized properly');
+    }
+    
+    log.info(`Queuing ${batch.count} credentials to job queue`);
+    
+    // Queue the batch
+    const batchId = await coordinator.jobQueue.enqueueBatch({
+      credentials: batch.creds,
+      chatId,
+      filename: batch.filename,
+      userId: ctx.from.id
+    });
+    
+    // Update message with queued status
+    const text = helpers.escapeV2(`✅ Batch queued!\n\n` +
+      `📁 File: ${batch.filename}\n` +
+      `📊 Total: ${batch.count} credentials\n` +
+      `🔄 Status: Queued for worker processing\n` +
+      `🆔 Batch ID: ${batchId}\n\n` +
+      `Workers will process this batch. Check back soon!`);
+    
+    await ctx.telegram.editMessageText(chatId, statusMsg.message_id, undefined, text, {
+      parse_mode: 'MarkdownV2',
+    });
+    
+    log.info(`Batch queued successfully: ${batchId}`);
+    
+  } catch (error) {
+    log.error('Failed to queue batch', { error: error.message });
+    
+    const errorText = helpers.escapeV2(`❌ Failed to queue batch\n\n` +
+      `Error: ${error.message}\n\n` +
+      `Please try again or contact support.`);
+    
+    await ctx.telegram.editMessageText(chatId, statusMsg.message_id, undefined, errorText, {
+      parse_mode: 'MarkdownV2',
+    });
+  }
+}
+
+/**
+ * Run batch in single-node mode (original behavior)
+ */
+function runSingleNodeBatch(ctx, batch, msgId, statusMsg, options, helpers, key, checkCredentials) {
   const chatId = ctx.chat.id;
   const counts = { VALID: 0, INVALID: 0, BLOCKED: 0, ERROR: 0 };
   let processed = 0;
