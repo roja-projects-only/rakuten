@@ -351,7 +351,7 @@ class JobQueueManager {
   }
 
   /**
-   * Drain tasks from a specific queue by batchId
+   * Drain tasks from a specific queue by batchId (optimized for bulk operations)
    * @param {string} queueName - Queue name to drain from
    * @param {string} batchId - Batch ID to match
    * @returns {Promise<number>} - Number of tasks drained
@@ -361,36 +361,66 @@ class JobQueueManager {
     const tempQueue = `${queueName}:temp:${Date.now()}`;
 
     try {
-      // Move all tasks to temp queue, filtering out matching batchId
-      let task;
-      while ((task = await this.redis.executeCommand('lpop', queueName)) !== null) {
+      // Get queue length first to optimize bulk operations
+      const queueLength = await this.redis.executeCommand('llen', queueName);
+      
+      if (queueLength === 0) {
+        log.debug(`Queue ${queueName} is empty, nothing to drain`);
+        return 0;
+      }
+
+      log.info(`Draining batch ${batchId} from ${queueName} (${queueLength} tasks to check)`);
+
+      // Use LRANGE to get all tasks at once instead of LPOP loop
+      const allTasks = await this.redis.executeCommand('lrange', queueName, 0, -1);
+      
+      if (allTasks.length === 0) {
+        return 0;
+      }
+
+      // Filter tasks in memory (much faster than Redis operations)
+      const tasksToKeep = [];
+      const tasksToRemove = [];
+
+      for (const task of allTasks) {
         try {
           const taskObj = JSON.parse(task);
           if (taskObj.batchId === batchId) {
+            tasksToRemove.push(taskObj);
             drainedCount++;
-            log.debug(`Drained task ${taskObj.taskId} from ${queueName}`, {
-              taskId: taskObj.taskId,
-              batchId: taskObj.batchId
-            });
           } else {
-            // Keep tasks from other batches
-            await this.redis.executeCommand('rpush', tempQueue, task);
+            tasksToKeep.push(task);
           }
         } catch (parseError) {
-          log.warn('Error parsing task during drain, skipping', {
+          log.warn('Error parsing task during drain, keeping task', {
             error: parseError.message,
             task: task.substring(0, 100) // Log first 100 chars
           });
+          tasksToKeep.push(task); // Keep unparseable tasks to avoid data loss
         }
       }
 
-      // Move remaining tasks back to original queue
-      while ((task = await this.redis.executeCommand('lpop', tempQueue)) !== null) {
-        await this.redis.executeCommand('rpush', queueName, task);
+      // Use atomic operations to replace the queue
+      const pipeline = this.redis.pipeline();
+      
+      // Clear the original queue
+      pipeline.del(queueName);
+      
+      // Add back the tasks we want to keep (if any)
+      if (tasksToKeep.length > 0) {
+        pipeline.rpush(queueName, ...tasksToKeep);
       }
+      
+      // Execute pipeline atomically
+      await pipeline.exec();
 
-      // Clean up temp queue
-      await this.redis.executeCommand('del', tempQueue);
+      if (drainedCount > 0) {
+        log.info(`Drained ${drainedCount} tasks from ${queueName} for batch ${batchId}`, {
+          batchId,
+          drainedCount,
+          remainingTasks: tasksToKeep.length
+        });
+      }
 
     } catch (error) {
       log.error('Error draining queue by batchId', {
@@ -399,7 +429,7 @@ class JobQueueManager {
         error: error.message
       });
       
-      // Try to clean up temp queue on error
+      // Try to clean up temp queue on error (if it was created)
       try {
         await this.redis.executeCommand('del', tempQueue);
       } catch (cleanupError) {

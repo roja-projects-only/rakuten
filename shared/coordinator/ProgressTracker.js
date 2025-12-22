@@ -211,14 +211,24 @@ class ProgressTracker {
         startTime: progressData.startTime
       });
       
-      // Edit Telegram message
-      await this.telegram.editMessageText(
-        progressData.chatId,
-        progressData.messageId,
-        undefined,
-        progressMessage,
-        { parse_mode: 'MarkdownV2' }
-      );
+      // Edit Telegram message (catch "not modified" errors)
+      try {
+        await this.telegram.editMessageText(
+          progressData.chatId,
+          progressData.messageId,
+          undefined,
+          progressMessage,
+          { parse_mode: 'MarkdownV2' }
+        );
+      } catch (error) {
+        // Ignore "message not modified" errors - this is normal when progress hasn't changed
+        if (error.message && error.message.includes('message is not modified')) {
+          this.logger.debug('Progress message unchanged, skipping update', { batchId });
+          return;
+        }
+        // Re-throw other errors
+        throw error;
+      }
       
       // Update throttle timer
       this.updateTimers.set(batchId, now);
