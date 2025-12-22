@@ -180,7 +180,7 @@ class CompatibilityLayer {
    * @returns {Promise<Object>} Coordinator components
    */
   async initializeCoordinator(redisClient, config, options) {
-    const { Coordinator } = require('../coordinator');
+    const { Coordinator, ProxyPoolManager } = require('../coordinator');
     
     // Initialize coordinator with configuration
     const coordinator = new Coordinator(redisClient, options.telegram, {

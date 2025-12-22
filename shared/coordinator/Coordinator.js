@@ -10,12 +10,10 @@
 const { Telegraf } = require('telegraf');
 const { createLogger } = require('../../logger');
 const { createStructuredLogger } = require('../logger/structured');
-const { 
-  JobQueueManager,
-  ProxyPoolManager, 
-  ProgressTracker,
-  ChannelForwarder
-} = require('./index');
+const JobQueueManager = require('./JobQueueManager');
+const ProxyPoolManager = require('./ProxyPoolManager');
+const ProgressTracker = require('./ProgressTracker');
+const ChannelForwarder = require('./ChannelForwarder');
 const MetricsManager = require('./MetricsManager');
 const MetricsServer = require('./MetricsServer');
 const { 
