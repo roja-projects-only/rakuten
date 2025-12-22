@@ -34,7 +34,7 @@ class RedisClient {
       
       // Connection timeout
       connectTimeout: 10000,
-      commandTimeout: 5000,
+      commandTimeout: parseInt(process.env.REDIS_COMMAND_TIMEOUT, 10) || 60000, // Configurable, default 60s
       
       // Override with provided options
       ...options

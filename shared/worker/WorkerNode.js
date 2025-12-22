@@ -98,7 +98,16 @@ class WorkerNode {
             break;
           }
           
-          // Wait before retrying on error
+          // For timeout errors, continue immediately (no extra delay)
+          if (error.message.includes('Command timed out') || 
+              error.message.includes('timeout')) {
+            log.debug('Timeout error in main loop, continuing', {
+              workerId: this.workerId
+            });
+            continue;
+          }
+          
+          // Wait before retrying on other errors
           await this.sleep(5000);
         }
       }
@@ -185,6 +194,16 @@ class WorkerNode {
       return null;
       
     } catch (error) {
+      // Handle timeout errors gracefully
+      if (error.message.includes('Command timed out') || 
+          error.message.includes('timeout')) {
+        log.debug('BLPOP timeout - no tasks available', {
+          workerId: this.workerId,
+          timeout: this.queueTimeout
+        });
+        return null;
+      }
+      
       if (error.message.includes('BLPOP') && this.shutdown) {
         // Expected during shutdown
         return null;
@@ -622,9 +641,16 @@ class WorkerNode {
    * @returns {boolean} True if fatal
    */
   isFatalError(error) {
+    // Timeout errors are not fatal - they're expected during normal operation
+    if (error.message.includes('Command timed out') || 
+        error.message.includes('timeout')) {
+      return false;
+    }
+    
     // Redis connection errors are fatal
     if (error.message.includes('Connection is closed') ||
         error.message.includes('ECONNREFUSED') ||
+        error.message.includes('ENOTFOUND') ||
         error.message.includes('Redis connection')) {
       return true;
     }

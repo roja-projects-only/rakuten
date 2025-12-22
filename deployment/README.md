@@ -105,6 +105,20 @@ Required environment variables:
 - `PORT`: Service port (default: 3001)
 - `LOG_LEVEL`: Logging level (info, debug, etc.)
 
+### Timeout Configuration
+
+For distributed worker deployments, configure these timeout values:
+
+```bash
+# Redis timeouts (in milliseconds)
+REDIS_COMMAND_TIMEOUT=60000    # Must be > WORKER_QUEUE_TIMEOUT
+WORKER_QUEUE_TIMEOUT=30000     # BLPOP timeout for task dequeue
+WORKER_TASK_TIMEOUT=120000     # Max time per credential check
+WORKER_HEARTBEAT_INTERVAL=10000 # Heartbeat frequency
+```
+
+**Important**: `REDIS_COMMAND_TIMEOUT` must be greater than `WORKER_QUEUE_TIMEOUT` to prevent Redis client timeouts during normal BLPOP operations.
+
 ### 5. Install Systemd Service
 
 ```bash
@@ -221,6 +235,18 @@ Expected response:
    - Check Docker memory limits
    - Monitor cache size and hit rate
    - Consider Redis memory optimization
+
+5. **Worker timeout errors**:
+   ```bash
+   # Check for "Command timed out" errors
+   docker logs rakuten-worker | grep "Command timed out"
+   
+   # Verify timeout configuration
+   docker exec rakuten-worker env | grep -E "(REDIS_COMMAND_TIMEOUT|WORKER_QUEUE_TIMEOUT)"
+   
+   # Fix: Ensure REDIS_COMMAND_TIMEOUT > WORKER_QUEUE_TIMEOUT
+   # Example: REDIS_COMMAND_TIMEOUT=60000, WORKER_QUEUE_TIMEOUT=30000
+   ```
 
 ### Performance Tuning
 
