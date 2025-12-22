@@ -2,6 +2,8 @@ Default shell is PowerShell; keep commands compatible. Avoid generating docs unl
 
 The user's has an apostrophe and it should be closed in quotes.
 
+- Commit in the terminal every time a task is done (except if it's included in the .gitignore), do not push it.
+
 > 📖 **For comprehensive context**, see [`AI_CONTEXT.md`](AI_CONTEXT.md) — full module reference, data flows, and troubleshooting.
 
 # Rakuten Telegram Credential Checker — AI Agent Playbook
