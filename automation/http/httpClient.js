@@ -23,6 +23,7 @@ const UserAgent = require('user-agents');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 const { HttpProxyAgent } = require('http-proxy-agent');
 const { createLogger } = require('../../logger');
+const { attachProxyRedirectCookieHandling } = require('./proxyRedirectCookieTracker');
 
 const log = createLogger('http-client');
 
@@ -203,6 +204,11 @@ function createHttpClient(options = {}) {
     process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
     
     log.debug(`Proxy configured (tunnel): ${proxyConfig.host}:${proxyConfig.port}${proxyConfig.auth ? ' (with auth)' : ''}`);
+  }
+
+  // Attach redirect-aware cookie handling only for proxy mode so we capture Set-Cookie from every hop
+  if (useManualCookies) {
+    attachProxyRedirectCookieHandling(client, jar);
   }
 
   // Set default headers (browser-like)
