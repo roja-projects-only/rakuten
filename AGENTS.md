@@ -14,12 +14,35 @@ telegramHandler.js                # Command routing (.chk), input guards, respon
 ├── telegram/batchHandlers.js     # File uploads + batch processing (HOTMAIL/ULP/JP/ALL)
 ├── telegram/combineHandler.js    # Combine mode session (/combine, /done, /cancel)
 ├── telegram/combineBatchRunner.js# Combine batch execution
-httpChecker.js                    # HTTP-based credential checker (cres POW implemented)
+├── telegram/channelForwarder.js  # Forward VALID to channel + delete on INVALID/update on BLOCKED
+├── telegram/messageTracker.js    # Track forwarded messages with unique codes for updates/deletion
+httpChecker.js                    # HTTP-based credential checker (cres POW + IP detection)
 automation/batch/processedStore.js# Redis/JSONL cache with batch MGET + write buffering
+automation/http/ipFetcher.js      # Exit IP detection via ipify.org
 ```
 
 ### HTTP Flow
 `httpChecker.js` → `httpFlow.js` → `htmlAnalyzer.js` → `httpDataCapture.js`
+
+### IP Address Detection
+When a credential check returns **VALID** and a proxy is configured:
+1. Fetch exit IP via `api.ipify.org` using the same session client
+2. IP attached to result as `result.ipAddress`
+3. Displayed in Telegram message: `🌐 IP Address: {ip}`
+
+Implementation: `automation/http/ipFetcher.js` → `fetchIpInfo(client, timeoutMs)`
+
+### Channel Message Tracking
+Forwarded channel messages include a unique tracking code (`RK-XXXXXXXX`) for management:
+- **On VALID**: Generate tracking code, append to message, store in Redis
+- **On INVALID recheck**: Delete the channel message, clean up Redis refs
+- **On BLOCKED recheck**: Update message to show blocked status
+
+Redis Schema:
+- `msg:{trackingCode}` → `{ messageId, chatId, username, password, forwardedAt }`
+- `msg:cred:{username}:{password}` → `trackingCode` (reverse lookup)
+
+Implementation: `telegram/messageTracker.js`, `telegram/channelForwarder.js` → `handleCredentialStatusChange()`
 
 ### Email Verification Skip
 When SSO redirects to `/verification/email`, the system auto-skips:
@@ -144,12 +167,25 @@ Forwards VALID credentials to channel only if:
 ```javascript
 const validation = validateCaptureForForwarding(capture);
 // { valid: boolean, reason: string }
+
+// Handle status changes for previously forwarded credentials
+await handleCredentialStatusChange(telegram, username, password, 'INVALID'); // Deletes message
+await handleCredentialStatusChange(telegram, username, password, 'BLOCKED'); // Updates to blocked status
+```
+
+### Message Tracking (`messageTracker.js`)
+```javascript
+const trackingCode = generateTrackingCode(username, password); // RK-XXXXXXXX
+await storeMessageRef(trackingCode, { messageId, chatId, username, password });
+const ref = await getMessageRefByCredentials(username, password); // Reverse lookup
+await deleteMessageRef(username, password); // Clean up after delete
 ```
 
 ## File Conventions
-- `automation/http/` — HTTP flow, fingerprinting, data capture
+- `automation/http/` — HTTP flow, fingerprinting, data capture, IP fetching
 - `automation/batch/` — `hotmail.js`, `ulp.js`, `processedStore.js` (dedup cache)
-- `telegram/` — Message builders, batch UX handlers
+- `telegram/` — Message builders, batch UX handlers, channel forwarding
+- `scripts/` — One-time migration scripts (e.g., `migrate-redis-ttl.js`)
 
 ## Batch Domain Filter
 HOTMAIL mode only accepts: `live.jp`, `hotmail.co.jp`, `hotmail.jp`, `outlook.jp`, `outlook.co.jp`, `msn.co.jp`
@@ -157,7 +193,9 @@ HOTMAIL mode only accepts: `live.jp`, `hotmail.co.jp`, `hotmail.jp`, `outlook.jp
 ## Key Constants
 - Telegram file download limit: 20MB
 - ULP stream limit: ~1.5GB
-- Processed cache TTL: 7 days (env `PROCESSED_TTL_MS`)
+- Processed cache TTL: 30 days (env `PROCESSED_TTL_MS`)
+- Forward store TTL: 30 days (env `FORWARD_TTL_MS`)
+- Message tracker TTL: 30 days
 - Progress edit throttle: 5 seconds
 
 ## Deployment (Railway)

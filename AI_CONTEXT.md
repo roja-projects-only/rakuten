@@ -52,6 +52,7 @@
 │  telegram/combineBatchRunner.js → Combine batch execution            │
 │  telegram/channelForwarder.js   → Forward VALID creds to channel     │
 │  telegram/channelForwardStore.js → Dedupe store (fwd: prefix keys)   │
+│  telegram/messageTracker.js     → Track messages for update/delete   │
 ├─────────────────────────────────────────────────────────────────────┤
 │                         HTTP LAYER                                   │
 ├─────────────────────────────────────────────────────────────────────┤
@@ -60,6 +61,7 @@
 │  automation/http/httpClient.js  → Axios client with cookie jar       │
 │  automation/http/htmlAnalyzer.js → Outcome detection                 │
 │  automation/http/sessionManager.js → Session lifecycle               │
+│  automation/http/ipFetcher.js       → Exit IP detection (ipify.org)  │
 │  automation/http/payloads/      → Request payload builders           │
 │    ├─ authorizeRequest.js      → OAuth authorize_request             │
 │    ├─ ratPayload.js            → RAT fingerprint (~150 lines)        │
@@ -89,6 +91,10 @@
 │  utils/                          → Shared utility functions          │
 │    ├─ retryWithBackoff.js       → Exponential backoff retry          │
 │    └─ mapWithTtl.js             → Map with auto-expiry               │
+├─────────────────────────────────────────────────────────────────────┤
+│                         SCRIPTS                                      │
+├─────────────────────────────────────────────────────────────────────┤
+│  scripts/migrate-redis-ttl.js   → One-time TTL migration to 30 days  │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -112,8 +118,9 @@
 | `telegram/batchHandlers.js` | Regular batch processing | `registerBatchHandlers()`, `abortActiveBatch()`, `hasActiveBatch()`, `getAllActiveBatches()` |
 | `telegram/combineHandler.js` | Combine mode session | `registerCombineHandlers()`, `hasSession()`, `clearSession()` |
 | `telegram/combineBatchRunner.js` | Combine batch execution | `runCombineBatch()`, `abortCombineBatch()`, `hasCombineBatch()`, `getActiveCombineBatch()` |
-| `telegram/channelForwarder.js` | Forward VALID to channel (requires order + cards) | `forwardValidToChannel()`, `isForwardingEnabled()`, `validateCaptureForForwarding()` |
+| `telegram/channelForwarder.js` | Forward VALID to channel (requires order + cards) | `forwardValidToChannel()`, `handleCredentialStatusChange()`, `isForwardingEnabled()`, `validateCaptureForForwarding()` |
 | `telegram/channelForwardStore.js` | Channel forward deduplication | `hasBeenForwarded()`, `markForwarded()`, `initForwardStore()` |
+| `telegram/messageTracker.js` | Track forwarded messages for update/delete | `generateTrackingCode()`, `storeMessageRef()`, `getMessageRefByCredentials()`, `deleteMessageRef()`, `clearForwardedStatus()` |
 
 ### HTTP Layer
 
@@ -124,6 +131,7 @@
 | `automation/http/htmlAnalyzer.js` | Response analysis | `detectOutcome()`, `isRedirect()`, `getRedirectUrl()` |
 | `automation/http/httpDataCapture.js` | Account data capture | `captureAccountData(session)` |
 | `automation/http/sessionManager.js` | Session lifecycle | `createSession()`, `closeSession()`, `touchSession()` |
+| `automation/http/ipFetcher.js` | Exit IP detection | `fetchIpInfo(client, timeoutMs)`, `fetchIpInfoWithFallback()` |
 
 ### Storage Layer
 
@@ -155,11 +163,29 @@ httpChecker.js
        ↓
 channelForwarder.js (if FORWARD_CHANNEL_ID set)
   ├─ hasBeenForwarded() → skip if already sent
-  ├─ buildChannelForwardMessage() → format with spoiler
+  ├─ generateTrackingCode() → RK-XXXXXXXX
+  ├─ appendTrackingCode() → add code to message
   ├─ telegram.sendMessage() → send to channel
+  ├─ storeMessageRef() → store message ID for future updates
   └─ markForwarded() → dedupe for future checks
        ↓
-User: Result message with captured data
+User: Result message with captured data + IP address
+```
+
+### Channel Message Status Change Flow
+```
+User: .chk email:pass (recheck of previously forwarded credential)
+       ↓
+Result: INVALID or BLOCKED
+       ↓
+handleCredentialStatusChange()
+  ├─ getMessageRefByCredentials() → find tracked message
+  ├─ if INVALID:
+  │    ├─ telegram.deleteMessage() → remove from channel
+  │    ├─ deleteMessageRef() → clean up tracking
+  │    └─ clearForwardedStatus() → allow re-forwarding
+  └─ if BLOCKED:
+       └─ telegram.editMessageText() → update to BLOCKED status
 ```
 
 ### Batch Processing Flow
@@ -387,7 +413,7 @@ Writes are buffered and flushed in batches:
 
 Redis keys use prefix `proc:` with format: `proc:email:password`
 
-TTL: 7 days (configurable via `PROCESSED_TTL_MS`)
+TTL: 30 days (configurable via `PROCESSED_TTL_MS`)
 
 ### Channel Forward Store
 
@@ -396,6 +422,15 @@ TTL: 7 days (configurable via `PROCESSED_TTL_MS`)
 - TTL: 30 days (configurable via `FORWARD_TTL_MS`)
 - Reuses same Redis client as `processedStore` when available
 - Falls back to JSONL file: `data/processed/forwarded-creds.jsonl`
+
+### Message Tracker Store
+
+`messageTracker.js` tracks forwarded channel messages for updates/deletion:
+- Redis keys: `msg:{trackingCode}` → `{ messageId, chatId, username, password, forwardedAt }`
+- Reverse lookup: `msg:cred:{email}:{password}` → `trackingCode`
+- TTL: 30 days
+- Tracking code format: `RK-XXXXXXXX` (8 hex chars from SHA256 hash)
+- Used to delete messages on INVALID, update on BLOCKED
 
 ### Channel Forwarding Requirements
 
@@ -407,6 +442,16 @@ TTL: 7 days (configurable via `PROCESSED_TTL_MS`)
 | Card Data | `profile.cards.length > 0` | Skip logic worked, cards captured |
 
 Use `validateCaptureForForwarding(capture)` to check: returns `{ valid: boolean, reason: string }`
+
+### IP Address Detection
+
+When credentials are VALID and a proxy is configured, the exit IP is fetched:
+- Uses `api.ipify.org` via the same session client (inherits proxy)
+- Fallback APIs: `ipapi.co`, `ip-api.com`
+- Result attached to `result.ipAddress`
+- Displayed in Telegram message under `🌐 IP Address` section
+
+Implementation: `automation/http/ipFetcher.js`
 
 ---
 
