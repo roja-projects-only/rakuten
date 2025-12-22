@@ -94,7 +94,7 @@ describe('WorkerNode', () => {
       const task = await worker.dequeueTask();
       
       expect(mockRedis.executeCommand).toHaveBeenCalledWith('blpop', JOB_QUEUE.retry, 1);
-      expect(mockRedis.executeCommand).toHaveBeenCalledWith('blpop', JOB_QUEUE.tasks, 30);
+      expect(mockRedis.executeCommand).toHaveBeenCalledWith('blpop', JOB_QUEUE.tasks, 5);
       expect(task).toEqual({
         taskId: 'test-task-001',
         batchId: 'test-batch',

@@ -127,7 +127,7 @@ This implementation plan transforms the Rakuten credential checker from a single
     - **Property 21: Proxy health tracking**
     - **Validates: Requirements 4.2, 4.4, 4.5, 4.7**
 
-- [-] 7. Implement Worker Node as standalone process
+- [x] 7. Implement Worker Node as standalone process
   - [x] 7.1 Create WorkerNode class with main processing loop
     - Register worker with unique ID in Redis on startup
     - Implement run() loop: BLPOP from `queue:tasks` (30s timeout)
@@ -173,7 +173,7 @@ This implementation plan transforms the Rakuten credential checker from a single
     - **Property 29: Result caching**
     - **Validates: Requirements 1.4, 1.6, 2.1, 2.2, 2.3, 2.4, 5.7, 5.8, 7.3, 8.1**
 
-- [ ] 8. Checkpoint - Ensure worker nodes can process tasks
+- [-] 8. Checkpoint - Ensure worker nodes can process tasks
   - Ensure all tests pass, ask the user if questions arise.
 
 
