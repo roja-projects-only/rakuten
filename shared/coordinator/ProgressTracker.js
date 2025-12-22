@@ -557,6 +557,51 @@ class ProgressTracker {
       throw error;
     }
   }
+
+  /**
+   * Get active batches for a specific chat
+   * @param {number} chatId - Telegram chat ID
+   * @returns {Promise<Array<string>>} Array of batch IDs
+   */
+  async getActiveBatchesForChat(chatId) {
+    const batches = [];
+    for (const [batchId, data] of this.activeTrackers.entries()) {
+      if (data.chatId === chatId && data.completed < data.total) {
+        batches.push(batchId);
+      }
+    }
+    return batches;
+  }
+
+  /**
+   * Abort a batch
+   * @param {string} batchId - Batch identifier
+   * @returns {Promise<void>}
+   */
+  async abortBatch(batchId) {
+    try {
+      // Mark batch as aborted in Redis
+      const key = PROGRESS_TRACKER.generate(batchId);
+      const data = await this.getProgressData(batchId);
+      
+      if (data) {
+        data.aborted = true;
+        data.abortedAt = Date.now();
+        await this.redis.setex(key, PROGRESS_TRACKER.ttl, JSON.stringify(data));
+        
+        // Update local cache
+        this.activeTrackers.set(batchId, data);
+        
+        this.logger.info('Batch aborted', { batchId });
+      }
+    } catch (error) {
+      this.logger.error('Failed to abort batch', {
+        batchId,
+        error: error.message
+      });
+      throw error;
+    }
+  }
 }
 
 module.exports = ProgressTracker;
