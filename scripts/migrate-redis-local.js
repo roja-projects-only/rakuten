@@ -7,6 +7,9 @@
  * Runs locally on Windows using environment variables
  */
 
+// Load environment variables from .env file
+require('dotenv').config();
+
 const Redis = require('ioredis');
 const { createLogger } = require('../logger');
 const readline = require('readline');
