@@ -226,38 +226,25 @@ class ProgressTracker {
 
   /**
    * Subscribe to Redis pub/sub for progress events
+   * Note: For now, we use polling instead of pub/sub since the Redis client wrapper
+   * doesn't expose the native subscribe method. Progress updates happen via
+   * handleProgressUpdate() called from the Coordinator's worker heartbeat handler.
    * @returns {Promise<void>}
    */
   async subscribeToProgressEvents() {
     try {
-      // Subscribe to worker heartbeats channel for progress updates
-      await this.redis.subscribe(PUBSUB_CHANNELS.workerHeartbeats);
+      // Pub/sub requires a dedicated Redis connection in ioredis
+      // For now, progress updates are handled via polling in handleProgressUpdate()
+      // which is called by the Coordinator when processing worker results
       
-      this.redis.on('message', async (channel, message) => {
-        if (channel === PUBSUB_CHANNELS.workerHeartbeats) {
-          try {
-            const { batchId } = JSON.parse(message);
-            if (batchId && this.activeTrackers.has(batchId)) {
-              await this.handleProgressUpdate(batchId);
-            }
-          } catch (parseError) {
-            this.logger.warn('Failed to parse worker heartbeat message', {
-              channel,
-              message,
-              error: parseError.message
-            });
-          }
-        }
-      });
-      
-      this.logger.info('Subscribed to progress events');
+      this.logger.info('Progress event tracking initialized (polling mode)');
       
     } catch (error) {
-      this.logger.error('Failed to subscribe to progress events', {
+      this.logger.error('Failed to initialize progress events', {
         error: error.message,
         stack: error.stack
       });
-      throw error;
+      // Don't throw - progress updates are non-critical
     }
   }
 
@@ -556,6 +543,53 @@ class ProgressTracker {
       });
       throw error;
     }
+  }
+
+  /**
+   * Start tracking progress for a batch with polling
+   * @param {string} batchId - Batch identifier  
+   * @param {string} filename - Batch filename for display
+   * @returns {void}
+   */
+  startTracking(batchId, filename) {
+    this.logger.info('Started progress tracking with polling', { batchId, filename });
+    
+    // Store filename in tracker data
+    const data = this.activeTrackers.get(batchId);
+    if (data) {
+      data.filename = filename;
+      this.activeTrackers.set(batchId, data);
+    }
+    
+    // Start polling interval for this batch (every 3 seconds)
+    const pollInterval = setInterval(async () => {
+      try {
+        const progressData = this.activeTrackers.get(batchId);
+        if (!progressData) {
+          clearInterval(pollInterval);
+          return;
+        }
+        
+        // Check if batch is complete or aborted
+        if (progressData.aborted || progressData.completed >= progressData.total) {
+          clearInterval(pollInterval);
+          this.logger.info('Polling stopped - batch complete or aborted', { batchId });
+          return;
+        }
+        
+        // Trigger progress update
+        await this.handleProgressUpdate(batchId);
+        
+      } catch (error) {
+        this.logger.warn('Progress polling error', { batchId, error: error.message });
+      }
+    }, this.throttleMs);
+    
+    // Store interval reference for cleanup
+    if (!this.pollingIntervals) {
+      this.pollingIntervals = new Map();
+    }
+    this.pollingIntervals.set(batchId, pollInterval);
   }
 
   /**
