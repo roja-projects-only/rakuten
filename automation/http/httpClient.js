@@ -24,6 +24,7 @@ const { HttpsProxyAgent } = require('https-proxy-agent');
 const { HttpProxyAgent } = require('http-proxy-agent');
 const { createLogger } = require('../../logger');
 const { attachProxyRedirectCookieHandling } = require('./proxyRedirectCookieTracker');
+const { attachRetryInterceptor } = require('./retryInterceptor');
 
 const log = createLogger('http-client');
 
@@ -204,6 +205,15 @@ function createHttpClient(options = {}) {
     process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
     
     log.debug(`Proxy configured (tunnel): ${proxyConfig.host}:${proxyConfig.port}${proxyConfig.auth ? ' (with auth)' : ''}`);
+    
+    // Attach retry interceptor for unstable proxy connections
+    // Must be attached BEFORE cookie interceptors so retries preserve cookie state
+    attachRetryInterceptor(client, {
+      retries: 3,
+      retryDelay: 1000,
+      retryDelayMax: 8000,
+      exponentialBackoff: true,
+    });
   }
 
   // Attach redirect-aware cookie handling only for proxy mode so we capture Set-Cookie from every hop
