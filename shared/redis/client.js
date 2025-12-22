@@ -71,15 +71,29 @@ class RedisClient {
     const redisUrl = process.env.REDIS_URL;
     if (redisUrl) {
       // When using Redis URL, ensure options are properly merged
-      this.client = new Redis(redisUrl, {
+      // IMPORTANT: Never use HTTP proxy for Redis connections
+      const redisOptions = {
         ...this.options,
         // Explicitly set critical timeout options
         commandTimeout: this.options.commandTimeout,
         connectTimeout: this.options.connectTimeout,
         lazyConnect: this.options.lazyConnect
-      });
+      };
+      
+      // Remove any proxy-related options that might interfere with Redis
+      delete redisOptions.proxy;
+      delete redisOptions.httpsAgent;
+      delete redisOptions.httpAgent;
+      
+      this.client = new Redis(redisUrl, redisOptions);
     } else {
-      this.client = new Redis(this.options);
+      // Remove any proxy-related options for direct Redis connections
+      const redisOptions = { ...this.options };
+      delete redisOptions.proxy;
+      delete redisOptions.httpsAgent;
+      delete redisOptions.httpAgent;
+      
+      this.client = new Redis(redisOptions);
     }
 
     // Set up event handlers
@@ -230,6 +244,17 @@ class RedisClient {
    */
   getClient() {
     return this.client;
+  }
+
+  /**
+   * Create a Redis pipeline for batch operations
+   * @returns {Pipeline} Redis pipeline instance
+   */
+  pipeline() {
+    if (!this.client) {
+      throw new Error('Redis client not initialized. Call connect() first.');
+    }
+    return this.client.pipeline();
   }
 
   /**
