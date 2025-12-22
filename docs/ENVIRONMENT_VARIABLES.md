@@ -71,7 +71,7 @@ The system automatically detects the deployment mode based on environment variab
 | `WORKER_ID` | No | *auto* | Unique worker identifier (auto-generated) |
 | `WORKER_CONCURRENCY` | No | `3` | Concurrent tasks per worker (1-50) |
 | `POW_SERVICE_URL` | No | — | POW service HTTP endpoint |
-| `POW_SERVICE_TIMEOUT` | No | `5000` | POW service timeout (1000-30000ms) |
+| `POW_SERVICE_TIMEOUT` | No | `30000` | POW service timeout (5000-60000ms) |
 
 ### POW Service Mode
 

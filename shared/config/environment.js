@@ -101,12 +101,12 @@ const ENV_DEFINITIONS = {
 
   POW_SERVICE_TIMEOUT: {
     required: false,
-    default: 5000,
+    default: 30000,
     description: 'POW service request timeout in milliseconds',
     validate: (value) => {
       const timeout = parseInt(value, 10);
-      if (isNaN(timeout) || timeout < 1000 || timeout > 30000) {
-        throw new Error('POW_SERVICE_TIMEOUT must be between 1000-30000ms');
+      if (isNaN(timeout) || timeout < 5000 || timeout > 60000) {
+        throw new Error('POW_SERVICE_TIMEOUT must be between 5000-60000ms');
       }
       return timeout;
     }
