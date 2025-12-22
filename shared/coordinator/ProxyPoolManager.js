@@ -106,7 +106,6 @@ class ProxyPoolManager {
   async assignProxy(taskId) {
     // Return null if no proxies configured (fallback to direct connection)
     if (this.proxies.length === 0) {
-      log.debug(`No proxies configured for task ${taskId} - using direct connection`);
       return null;
     }
 

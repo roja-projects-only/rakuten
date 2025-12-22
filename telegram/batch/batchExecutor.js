@@ -110,6 +110,17 @@ async function runDistributedBatch(ctx, batch, msgId, statusMsg, options, helper
     
     log.info(`Batch queued successfully: ${batchId}`);
     
+    // Initialize progress tracker with the Telegram message
+    await coordinator.progressTracker.initBatch(
+      batchId,
+      result.queued,
+      chatId,
+      statusMsg.message_id
+    );
+    
+    // Subscribe to progress updates for this batch
+    coordinator.progressTracker.startTracking(batchId, batch.filename);
+    
   } catch (error) {
     log.error('Failed to queue batch', { error: error.message });
     
