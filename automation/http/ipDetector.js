@@ -15,12 +15,12 @@ const { createLogger } = require('../../logger');
 
 const log = createLogger('ip-detect');
 
-// IP detection services (ordered by reliability)
+// IP detection services (ordered by reliability and speed)
 const IP_SERVICES = [
-  { url: 'https://api.ipify.org?format=json', parser: (data) => data.ip },
-  { url: 'https://ipinfo.io/json', parser: (data) => data.ip },
-  { url: 'https://api.myip.com', parser: (data) => data.ip },
-  { url: 'https://httpbin.org/ip', parser: (data) => data.origin?.split(',')[0]?.trim() },
+  { url: 'https://api.ipify.org?format=json', parser: (data) => data?.ip },
+  { url: 'https://ipinfo.io/json', parser: (data) => data?.ip },
+  { url: 'https://api.myip.com', parser: (data) => data?.ip },
+  { url: 'https://httpbin.org/ip', parser: (data) => data?.origin?.split(',')[0]?.trim() },
 ];
 
 /**
@@ -30,41 +30,45 @@ const IP_SERVICES = [
  * @param {Object} client - Axios HTTP client instance
  * @param {Object} [options] - Detection options
  * @param {number} [options.timeout=10000] - Request timeout
- * @param {number} [options.maxAttempts=2] - Max services to try
+ * @param {number} [options.maxAttempts=4] - Max services to try
  * @returns {Promise<string|null>} External IP address or null if detection failed
  */
 async function detectExternalIp(client, options = {}) {
-  const { timeout = 10000, maxAttempts = 2 } = options;
+  const { timeout = 10000, maxAttempts = 4 } = options;
   
-  let attempts = 0;
+  log.debug(`[ip-detect] Starting IP detection (timeout=${timeout}ms, maxAttempts=${maxAttempts})`);
   
-  for (const service of IP_SERVICES) {
-    if (attempts >= maxAttempts) {
-      break;
-    }
-    
-    attempts++;
+  for (let i = 0; i < Math.min(maxAttempts, IP_SERVICES.length); i++) {
+    const service = IP_SERVICES[i];
     
     try {
-      log.debug(`[ip-detect] Trying ${service.url}`);
+      log.debug(`[ip-detect] Trying service ${i + 1}/${maxAttempts}: ${service.url}`);
       
       const response = await client.get(service.url, {
         timeout,
         headers: {
           'Accept': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         },
+        // Don't follow redirects for IP check
+        maxRedirects: 0,
+        validateStatus: (status) => status === 200,
       });
       
-      if (response.status === 200 && response.data) {
+      log.debug(`[ip-detect] Service responded: status=${response.status}, data=${JSON.stringify(response.data).substring(0, 100)}`);
+      
+      if (response.data) {
         const ip = service.parser(response.data);
         
         if (ip && isValidIp(ip)) {
-          log.info(`[ip-detect] External IP: ${ip}`);
+          log.info(`[ip-detect] Detected external IP: ${ip}`);
           return ip;
+        } else {
+          log.debug(`[ip-detect] Invalid IP from response: ${ip}`);
         }
       }
     } catch (err) {
-      log.debug(`[ip-detect] Service ${service.url} failed: ${err.message}`);
+      log.debug(`[ip-detect] Service ${service.url} failed: ${err.code || err.message}`);
     }
   }
   
@@ -83,6 +87,9 @@ function isValidIp(ip) {
   }
   
   const trimmed = ip.trim();
+  if (!trimmed || trimmed.length < 7) {
+    return false;
+  }
   
   // IPv4 pattern
   const ipv4Pattern = /^(\d{1,3}\.){3}\d{1,3}$/;
@@ -94,10 +101,9 @@ function isValidIp(ip) {
     });
   }
   
-  // IPv6 pattern (simplified)
-  const ipv6Pattern = /^([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$|^::([0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4}$|^([0-9a-fA-F]{1,4}:){1,7}:$/;
-  if (ipv6Pattern.test(trimmed) || trimmed.includes('::')) {
-    return true;
+  // IPv6 pattern (simplified - accept anything with colons)
+  if (trimmed.includes(':')) {
+    return /^[0-9a-fA-F:]+$/.test(trimmed);
   }
   
   return false;
