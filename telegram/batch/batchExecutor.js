@@ -68,9 +68,13 @@ async function runDistributedBatch(ctx, batch, msgId, statusMsg, options, helper
   const chatId = ctx.chat.id;
   
   try {
-    const coordinator = options.compatibility.components.coordinator;
+    // Access coordinator from compatibility layer (spread at top level)
+    const compatibility = options.compatibility;
+    const coordinator = compatibility.coordinator;
+    
     if (!coordinator || !coordinator.jobQueue) {
-      throw new Error('Coordinator not initialized properly');
+      log.error('Coordinator structure:', Object.keys(compatibility || {}));
+      throw new Error('Coordinator not initialized - jobQueue not available');
     }
     
     log.info(`Queuing ${batch.count} credentials to job queue`);
