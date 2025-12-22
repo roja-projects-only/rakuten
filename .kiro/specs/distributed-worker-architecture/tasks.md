@@ -250,27 +250,27 @@ This implementation plan transforms the Rakuten credential checker from a single
     - **Property 41: Two-phase commit atomicity**
     - **Validates: Requirements 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 11.7, 11.8, 11.9, 12.7**
 
-- [ ] 11. Implement Coordinator with High Availability
-  - [ ] 11.1 Create Coordinator class integrating all components
+- [x] 11. Implement Coordinator with High Availability
+  - [x] 11.1 Create Coordinator class integrating all components
     - Initialize JobQueueManager, ProxyPoolManager, ProgressTracker, ChannelForwarder
     - Maintain existing Telegram bot commands (.chk, /combine, /export, /stop)
     - Route batch submissions to JobQueueManager
     - _Requirements: 9.1, 10.1_
 
-  - [ ] 11.2 Implement coordinator heartbeat and crash recovery
+  - [x] 11.2 Implement coordinator heartbeat and crash recovery
     - Send heartbeat every 30 seconds: SET `coordinator:heartbeat` with 30-sec TTL
     - On startup, check Redis for in-progress batches
     - Resume progress tracking for in-progress batches
     - Retry pending channel forwards via ChannelForwarder
     - _Requirements: 12.1, 12.2, 12.5, 12.6_
 
-  - [ ] 11.3 Implement distributed locking for multi-coordinator setup
+  - [x] 11.3 Implement distributed locking for multi-coordinator setup
     - Use Redis SETNX for distributed locks: `coordinator:lock:{operation}`
     - Acquire lock before Telegram updates (10-second TTL)
     - Release lock after operation completes
     - _Requirements: 12.3, 12.4_
 
-  - [ ] 11.4 Implement health monitoring and status command
+  - [x] 11.4 Implement health monitoring and status command
     - Background job to detect dead workers (every 30 seconds)
     - Mark workers dead if heartbeat missing for 30 seconds
     - Implement /status command to report active workers and queue depth
