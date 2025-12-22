@@ -6,8 +6,10 @@
 
 const JobQueueManager = require('./JobQueueManager');
 const ProxyPoolManager = require('./ProxyPoolManager');
+const ProgressTracker = require('./ProgressTracker');
 
 module.exports = {
   JobQueueManager,
-  ProxyPoolManager
+  ProxyPoolManager,
+  ProgressTracker
 };
