@@ -12,14 +12,15 @@
 # =============================================================================
 
 # Build stage - compile native dependencies
-FROM node:18-alpine AS builder
+FROM node:20-alpine AS builder
 
 # Install build dependencies
 RUN apk add --no-cache \
     python3 \
     make \
     g++ \
-    git
+    git \
+    npm
 
 # Set working directory
 WORKDIR /app
@@ -28,7 +29,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install all dependencies (including dev dependencies for building)
-RUN npm ci --include=dev
+RUN npm install --include=dev
 
 # Copy source code
 COPY . .
@@ -38,7 +39,7 @@ RUN npm prune --production && \
     npm cache clean --force
 
 # Production stage
-FROM node:18-alpine AS production
+FROM node:20-alpine AS production
 
 # Create non-root user for security
 RUN addgroup -g 1001 -S powservice && \

@@ -36,3 +36,4 @@ temp/
 *.tmp
 data/
 .kiro/
+*.pem
