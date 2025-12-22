@@ -421,6 +421,7 @@ class ProgressTracker {
     this.redis = redisClient;
     this.telegram = telegram;
     this.updateTimers = new Map(); // batchId -> last update timestamp
+    this.activeTrackers = new Map(); // batchId -> progress data
   }
 
   /**
@@ -468,6 +469,99 @@ class ProgressTracker {
 - Store progress in Redis for coordinator restart recovery
 - 7-day TTL allows post-mortem analysis of completed batches
 - Atomic INCR for progress counter ensures accuracy across workers
+
+### 7. Health Monitor (Coordinator)
+
+**Purpose**: Track worker liveness via heartbeat monitoring and detect dead workers.
+
+**Interface**:
+```javascript
+class HealthMonitor {
+  constructor(redisClient) {
+    this.redis = redisClient;
+    this.activeWorkers = new Map(); // workerId -> lastHeartbeat timestamp
+  }
+
+  /**
+   * Start monitoring worker heartbeats
+   */
+  async start() {
+    // Subscribe to worker_heartbeats pub/sub channel
+    await this.redis.subscribe('worker_heartbeats');
+    
+    this.redis.on('message', (channel, message) => {
+      if (channel === 'worker_heartbeats') {
+        const { workerId, timestamp, tasksCompleted } = JSON.parse(message);
+        this.activeWorkers.set(workerId, timestamp);
+        logger.debug(`Heartbeat from worker ${workerId}`, { tasksCompleted });
+      }
+    });
+
+    // Scan for dead workers every 30 seconds
+    setInterval(() => this.detectDeadWorkers(), 30000);
+    
+    logger.info('Health monitor started');
+  }
+
+  /**
+   * Detect workers that missed 3 heartbeats (30 seconds)
+   */
+  async detectDeadWorkers() {
+    const now = Date.now();
+    const deadThreshold = 30000; // 3 × 10s heartbeat interval
+    
+    for (const [workerId, lastHeartbeat] of this.activeWorkers) {
+      const age = now - lastHeartbeat;
+      
+      if (age > deadThreshold) {
+        logger.warn(`Worker ${workerId} is dead (last heartbeat ${age}ms ago)`);
+        
+        // Remove from active workers
+        this.activeWorkers.delete(workerId);
+        
+        // Clean up Redis heartbeat key
+        await this.redis.del(`worker:${workerId}:heartbeat`);
+        
+        // Emit dead worker event for monitoring
+        this.emit('worker:dead', { workerId, lastHeartbeat, age });
+      }
+    }
+  }
+
+  /**
+   * Get active worker count
+   */
+  getActiveWorkerCount() {
+    return this.activeWorkers.size;
+  }
+
+  /**
+   * Get worker statistics
+   */
+  getWorkerStats() {
+    const now = Date.now();
+    const stats = [];
+    
+    for (const [workerId, lastHeartbeat] of this.activeWorkers) {
+      stats.push({
+        workerId,
+        lastHeartbeat,
+        age: now - lastHeartbeat,
+        healthy: (now - lastHeartbeat) < 30000
+      });
+    }
+    
+    return stats;
+  }
+}
+```
+
+**Key Design Decisions**:
+- Subscribe to pub/sub for real-time heartbeat updates
+- 30-second dead threshold (3 missed heartbeats)
+- Background job runs every 30 seconds to detect dead workers
+- Emit events for monitoring integration
+- Track worker statistics for /status command
 
 
 ### 6. Channel Forwarder (Coordinator)
@@ -527,6 +621,74 @@ class ChannelForwarder {
     //    c. If successful, delete pending state
     //    d. If failed, log error and leave pending (will retry on next startup)
   }
+
+  /**
+   * Resume in-progress batches after coordinator failover
+   */
+  async resumeBatches() {
+    // 1. Acquire coordinator lock: SETNX coordinator:lock:takeover {backupId} EX 30
+    const lockAcquired = await this.redis.set('coordinator:lock:takeover', this.coordinatorId, 'NX', 'EX', 30);
+    if (!lockAcquired) {
+      logger.info('Another coordinator already took over, exiting');
+      return;
+    }
+
+    // 2. Scan for in-progress batches: SCAN progress:*
+    const batchKeys = await this.redis.keys('progress:*');
+    logger.info(`Found ${batchKeys.length} in-progress batches to resume`);
+
+    // 3. For each batch, check if complete
+    for (const batchKey of batchKeys) {
+      const batchId = batchKey.split(':')[1];
+      const progressData = await this.redis.get(batchKey);
+      
+      if (!progressData) continue;
+      
+      const { total, completed, chatId, messageId } = JSON.parse(progressData);
+
+      // 4. If complete but no summary sent, send now
+      if (completed >= total) {
+        logger.info(`Batch ${batchId} is complete, sending summary`);
+        await this.progressTracker.sendSummary(batchId);
+      }
+      // 5. Else, resume progress tracking
+      else {
+        logger.info(`Resuming progress tracking for batch ${batchId} (${completed}/${total})`);
+        this.progressTracker.activeTrackers.set(batchId, {
+          total,
+          completed,
+          chatId,
+          messageId,
+          lastUpdateTime: 0 // Force immediate update
+        });
+      }
+    }
+
+    // 6. Retry pending forwards: SCAN forward:pending:*
+    const pendingKeys = await this.redis.keys('forward:pending:*');
+    const now = Date.now();
+    
+    logger.info(`Found ${pendingKeys.length} pending forwards to retry`);
+    
+    for (const key of pendingKeys) {
+      const data = await this.redis.get(key);
+      if (!data) continue;
+      
+      const event = JSON.parse(data);
+      const age = now - event.timestamp;
+      
+      // Retry if older than 30 seconds
+      if (age > 30000) {
+        logger.info(`Retrying pending forward ${key} (age: ${age}ms)`);
+        try {
+          await this.handleForwardEvent(event);
+        } catch (error) {
+          logger.error(`Failed to retry pending forward ${key}`, { error });
+          // Leave pending for next retry
+        }
+      }
+    }
+  }
 }
 ```
 
@@ -536,8 +698,47 @@ class ChannelForwarder {
 - Reverse lookup enables efficient status updates without scanning all messages
 - 30-day TTL matches credential result cache for consistency
 - Validation before forwarding prevents spam (requires order + card data)
+- resumeBatches() handles coordinator failover with distributed lock
 
 ## Data Models
+
+### Job Queue Structure (Redis)
+
+**Main Task Queue (FIFO)**:
+```
+Key: "queue:tasks"
+Type: LIST
+Operations:
+- Enqueue: RPUSH queue:tasks {task_json}
+- Dequeue: BLPOP queue:tasks 30  // 30s timeout
+- Drain: LPOP queue:tasks (in loop until empty)
+- Length: LLEN queue:tasks
+```
+
+**Retry Queue (High Priority)**:
+```
+Key: "queue:retry"
+Type: LIST
+Operations:
+- Enqueue: RPUSH queue:retry {task_json}
+- Dequeue: BLPOP queue:retry 1  // Check retry first with 1s timeout
+- If empty: BLPOP queue:tasks 30  // Fall back to main queue
+```
+
+**Worker Dequeue Logic**:
+```javascript
+async function dequeueTask() {
+  // Try retry queue first (high priority)
+  let task = await redis.blpop('queue:retry', 1);
+  
+  // If no retry tasks, pull from main queue
+  if (!task) {
+    task = await redis.blpop('queue:tasks', 30);
+  }
+  
+  return task ? JSON.parse(task[1]) : null;
+}
+```
 
 ### Task Object (Redis Queue)
 
@@ -1356,6 +1557,133 @@ describe('ChannelForwarder', () => {
    - Verify each proxy gets 100 ±10 tasks
    - Monitor proxy health tracking
    - Verify unhealthy proxy exclusion
+
+### Performance Calculations
+
+**10k Credential Batch Target: <2 hours**
+
+**Assumptions**:
+- 20 workers × t3.micro (1 vCPU each)
+- 5 concurrent checks per worker (BATCH_CONCURRENCY=5)
+- Average check duration: 8 seconds (including POW, HTTP, capture)
+- POW cache hit rate: 65%
+- Retry rate: 5% (1 retry per failed task)
+
+**Calculation**:
+```
+Total capacity: 20 workers × 5 concurrent = 100 concurrent checks
+Throughput: 100 checks / 8s = 12.5 checks/second
+10,000 credentials / 12.5 checks/sec = 800 seconds = 13.3 minutes
+```
+
+**Why the 2-hour target?**
+- Safety margin for retries: 13.3 min × 1.05 (5% retry) = 14 min
+- Proxy rotation overhead: +5%
+- Redis/network latency: +5%
+- Progress update throttling: negligible
+- Conservative estimate: 14 min × 8.5x buffer = 2 hours
+
+**Bottlenecks and Solutions**:
+
+1. **POW Computation** (if cache hit <60%):
+   - Symptom: Workers waiting >5s for POW responses
+   - Solution: Add second POW service instance with load balancer
+   - Cost: +$0.04/hr
+
+2. **Proxy Rate Limits**:
+   - Symptom: High PROXY_FAILED error rate (>10%)
+   - Solution: Add more residential proxies to pool
+   - Cost: Depends on proxy provider
+
+3. **Redis Queue Throughput**:
+   - Symptom: Queue depth growing despite active workers
+   - Solution: Upgrade to ElastiCache cluster mode (sharding)
+   - Cost: +$0.05/hr
+
+4. **Worker CPU Saturation**:
+   - Symptom: Worker CPU >90%, slow task processing
+   - Solution: Reduce BATCH_CONCURRENCY from 5 to 3
+   - Impact: Throughput drops to 60 concurrent (16.7 min for 10k)
+
+**Scaling Calculations**:
+
+| Workers | Concurrent | 10k Batch Time | Cost/Hour |
+|---------|-----------|----------------|-----------|
+| 5       | 25        | 53 min         | $0.065    |
+| 10      | 50        | 27 min         | $0.095    |
+| 20      | 100       | 13 min         | $0.155    |
+| 40      | 200       | 7 min          | $0.275    |
+
+### Chaos Testing
+
+**Test Scenarios**:
+
+1. **Random Spot Instance Termination**:
+   - Run batch with 10 workers
+   - Randomly kill 2-3 workers mid-processing (simulate spot termination)
+   - Verify tasks are recovered via lease expiration (5 min)
+   - Verify no data loss (all results in Result_Store)
+   - Verify batch completes successfully
+   - Expected behavior: Zombie tasks re-enqueued, batch takes longer but completes
+
+2. **Redis Connection Drop**:
+   - Start batch processing with 5 workers
+   - Disconnect Redis for 10 seconds (simulate network partition)
+   - Verify workers attempt reconnection with exponential backoff
+   - Verify workers exit after 5 failed retries (exit code 1)
+   - Verify systemd restarts workers
+   - Verify batch resumes after reconnection
+   - Expected behavior: 10-second pause, workers restart, batch continues
+
+3. **POW Service Complete Failure**:
+   - Start batch with POW service running
+   - Kill POW service completely (no restart)
+   - Verify all workers fall back to local POW computation
+   - Verify coordinator logs warning and informs user
+   - Verify batch completes (degraded performance: 2-3x slower)
+   - Expected behavior: Fallback to local, slower but functional
+
+4. **Network Partition Between AZs**:
+   - Split workers across 2 availability zones
+   - Introduce network partition (block cross-AZ traffic)
+   - Verify workers in isolated AZ continue with local POW
+   - Verify coordinator tracks progress from reachable workers
+   - Verify batch completes when partition heals
+   - Expected behavior: Partial progress during partition, full completion after
+
+5. **Coordinator Crash During Channel Forward**:
+   - Start batch processing
+   - Kill coordinator during channel message forward (mid-two-phase-commit)
+   - Verify backup coordinator detects missing heartbeat (30s)
+   - Verify backup coordinator retries pending forwards
+   - Verify no duplicate messages sent to channel
+   - Verify no orphaned messages (all have tracking codes)
+   - Expected behavior: 30-second failover, pending forwards retried, no duplicates
+
+6. **Redis Memory Exhaustion**:
+   - Submit large batch (50k credentials)
+   - Monitor Redis memory usage
+   - Simulate memory limit by setting maxmemory policy
+   - Verify Redis evicts old results (LRU)
+   - Verify system continues with reduced deduplication
+   - Expected behavior: Graceful degradation, some cache misses
+
+7. **Telegram API Rate Limiting**:
+   - Submit batch with rapid progress updates
+   - Simulate Telegram API 429 (Too Many Requests)
+   - Verify coordinator retries with exponential backoff
+   - Verify progress updates eventually succeed
+   - Verify batch completes successfully
+   - Expected behavior: Delayed updates, eventual consistency
+
+8. **Cascading Worker Failures**:
+   - Start batch with 10 workers
+   - Kill 5 workers simultaneously
+   - Verify remaining workers handle increased load
+   - Verify queue depth increases temporarily
+   - Verify coordinator logs warning about worker shortage
+   - Verify batch completes (slower)
+   - Expected behavior: Graceful degradation, completion with fewer workers
 
 ### Monitoring and Observability Testing
 
