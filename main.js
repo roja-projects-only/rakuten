@@ -147,6 +147,11 @@ async function main() {
 
     const bot = initializeTelegramHandler(botToken, handlerOptions);
 
+    // Set telegram instance in coordinator if in distributed mode
+    if (compatibility.isDistributed && compatibility.isDistributed() && compatibility.setTelegram) {
+      compatibility.setTelegram(bot.telegram);
+    }
+
     log.success('Telegram bot initialized successfully!');
     log.info('Polling for messages...');
     log.info('Bot is ready! Send messages to start checking credentials.');

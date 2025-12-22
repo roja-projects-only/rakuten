@@ -671,10 +671,13 @@ class ProgressTracker {
       if (data) {
         data.aborted = true;
         data.abortedAt = Date.now();
-        await this.redis.setex(key, PROGRESS_TRACKER.ttl, JSON.stringify(data));
+        await this.redis.executeCommand('setex', key, PROGRESS_TRACKER.ttl, JSON.stringify(data));
         
         // Update local cache
         this.activeTrackers.set(batchId, data);
+        
+        // Send aborted message to Telegram
+        await this.sendAbortedMessage(batchId);
         
         this.logger.info('Batch aborted', { batchId });
       }
@@ -684,6 +687,76 @@ class ProgressTracker {
         error: error.message
       });
       throw error;
+    }
+  }
+
+  /**
+   * Send aborted message to Telegram
+   * @param {string} batchId - Batch identifier
+   * @returns {Promise<void>}
+   */
+  async sendAbortedMessage(batchId) {
+    try {
+      const progressData = await this.getProgressData(batchId);
+      if (!progressData) {
+        this.logger.warn('Cannot send aborted message for unknown batch', { batchId });
+        return;
+      }
+      
+      // Get current counts and valid credentials from Redis
+      const countsKey = PROGRESS_TRACKER.generateCounts(batchId);
+      const countsData = await this.redis.executeCommand('hgetall', countsKey);
+      const counts = {
+        VALID: parseInt(countsData.VALID) || 0,
+        INVALID: parseInt(countsData.INVALID) || 0,
+        BLOCKED: parseInt(countsData.BLOCKED) || 0,
+        ERROR: parseInt(countsData.ERROR) || 0
+      };
+      
+      const validCredsKey = PROGRESS_TRACKER.generateValidCreds(batchId);
+      const validCredsData = await this.redis.executeCommand('lrange', validCredsKey, 0, -1);
+      const validCreds = validCredsData.map(data => {
+        try {
+          return JSON.parse(data);
+        } catch (e) {
+          return null;
+        }
+      }).filter(Boolean);
+      
+      // Use the same aborted message format as single-node mode
+      const { buildBatchAborted } = require('../../telegram/messages');
+      const abortedMessage = buildBatchAborted({
+        filename: progressData.filename,
+        total: progressData.total,
+        processed: progressData.completed,
+        counts,
+        validCreds
+      });
+      
+      // Edit the progress message to show aborted status
+      await this.telegram.editMessageText(
+        progressData.chatId,
+        progressData.messageId,
+        undefined,
+        abortedMessage,
+        { parse_mode: 'MarkdownV2' }
+      );
+      
+      this.logger.info('Batch aborted message sent', {
+        batchId,
+        processed: progressData.completed,
+        total: progressData.total,
+        validCount: validCreds.length
+      });
+      
+      // Clean up progress tracker
+      await this.cleanup(batchId);
+      
+    } catch (error) {
+      this.logger.error('Failed to send aborted message', {
+        batchId,
+        error: error.message
+      });
     }
   }
 }

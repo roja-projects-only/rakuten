@@ -210,8 +210,45 @@ function initializeTelegramHandler(botToken, options = {}) {
         const activeBatches = await coordinator.progressTracker.getActiveBatchesForChat(chatId);
         if (activeBatches && activeBatches.length > 0) {
           const batchId = activeBatches[0];
-          await coordinator.progressTracker.abortBatch(batchId);
-          await ctx.reply(escapeV2(`⏹ Stopped batch ${batchId}`), { parse_mode: 'MarkdownV2' });
+          
+          // Send immediate acknowledgment
+          const ackMsg = await ctx.reply(escapeV2(`⏹ Stopping batch ${batchId}...`), { parse_mode: 'MarkdownV2' });
+          
+          try {
+            // Cancel the batch in the job queue (stops workers from picking up new tasks)
+            await coordinator.cancelBatch(batchId);
+            
+            // Abort the batch in progress tracker (marks as aborted)
+            await coordinator.progressTracker.abortBatch(batchId);
+            
+            // Update the acknowledgment message
+            await ctx.telegram.editMessageText(
+              chatId, 
+              ackMsg.message_id, 
+              undefined, 
+              escapeV2(`⏹ Batch ${batchId} stopped successfully`), 
+              { parse_mode: 'MarkdownV2' }
+            );
+            
+            log.info(`[stop] Coordinator batch cancelled chatId=${chatId} batchId=${batchId}`);
+            
+          } catch (error) {
+            log.error(`[stop] Failed to cancel coordinator batch`, {
+              chatId,
+              batchId,
+              error: error.message
+            });
+            
+            // Update acknowledgment with error
+            await ctx.telegram.editMessageText(
+              chatId, 
+              ackMsg.message_id, 
+              undefined, 
+              escapeV2(`❌ Failed to stop batch: ${error.message}`), 
+              { parse_mode: 'MarkdownV2' }
+            );
+          }
+          
           return;
         }
       }

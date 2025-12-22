@@ -309,6 +309,16 @@ class WorkerNode {
     let leaseAcquired = false;
     
     try {
+      // Check if batch is cancelled before processing
+      if (await this.isBatchCancelled(task.batchId)) {
+        log.info(`Skipping task ${task.taskId} - batch ${task.batchId} is cancelled`, {
+          workerId: this.workerId,
+          taskId: task.taskId,
+          batchId: task.batchId
+        });
+        return;
+      }
+      
       // Acquire task lease: SET with TTL and NX (only if not exists)
       const leaseValue = JSON.stringify({
         workerId: this.workerId,
@@ -336,6 +346,16 @@ class WorkerNode {
       
       leaseAcquired = true;
       this.currentTask = task;
+      
+      // Double-check batch cancellation after acquiring lease
+      if (await this.isBatchCancelled(task.batchId)) {
+        log.info(`Task ${task.taskId} cancelled after lease acquisition`, {
+          workerId: this.workerId,
+          taskId: task.taskId,
+          batchId: task.batchId
+        });
+        return;
+      }
       
       log.info(`Processing task ${task.taskId}`, {
         workerId: this.workerId,
@@ -806,6 +826,26 @@ class WorkerNode {
     }
     
     return false;
+  }
+
+  /**
+   * Check if a batch is cancelled
+   * @param {string} batchId - Batch ID to check
+   * @returns {Promise<boolean>} True if batch is cancelled
+   */
+  async isBatchCancelled(batchId) {
+    try {
+      const cancelKey = `batch:${batchId}:cancelled`;
+      const result = await this.redis.executeCommand('get', cancelKey);
+      return result !== null;
+    } catch (error) {
+      log.error('Error checking batch cancellation status', {
+        workerId: this.workerId,
+        batchId,
+        error: error.message
+      });
+      return false; // On error, assume not cancelled to avoid blocking
+    }
   }
 
   /**

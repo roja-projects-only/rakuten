@@ -232,8 +232,8 @@ class CompatibilityLayer {
   async initializeCoordinator(redisClient, config, options) {
     const { Coordinator, ProxyPoolManager } = require('../coordinator');
     
-    // Initialize coordinator with configuration
-    const coordinator = new Coordinator(redisClient, options.telegram, {
+    // Initialize coordinator with configuration (telegram will be set later)
+    const coordinator = new Coordinator(redisClient, null, {
       proxies: config.PROXY_POOL || [],
       channelId: config.FORWARD_CHANNEL_ID,
       metrics: {
@@ -251,7 +251,14 @@ class CompatibilityLayer {
       progressTracker: coordinator.progressTracker,
       channelForwarder: coordinator.channelForwarder,
       proxyPool: coordinator.proxyPool,
-      metricsManager: coordinator.metricsManager
+      metricsManager: coordinator.metricsManager,
+      
+      // Method to set telegram instance after it's created
+      setTelegram: (telegram) => {
+        coordinator.telegram = telegram;
+        coordinator.progressTracker.telegram = telegram;
+        coordinator.channelForwarder.telegram = telegram;
+      }
     };
   }
 
