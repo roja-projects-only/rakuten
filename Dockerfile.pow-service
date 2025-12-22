@@ -1,0 +1,85 @@
+# =============================================================================
+# POW SERVICE DOCKERFILE - Multi-stage build for production deployment
+# =============================================================================
+# 
+# Optimized for c6i.large spot instances with:
+# - Multi-stage build to reduce image size
+# - Native dependencies compilation
+# - Security hardening
+# - Health checks
+# 
+# Requirements: 6.3, 10.4
+# =============================================================================
+
+# Build stage - compile native dependencies
+FROM node:18-alpine AS builder
+
+# Install build dependencies
+RUN apk add --no-cache \
+    python3 \
+    make \
+    g++ \
+    git
+
+# Set working directory
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install all dependencies (including dev dependencies for building)
+RUN npm ci --include=dev
+
+# Copy source code
+COPY . .
+
+# Remove dev dependencies and clean up
+RUN npm prune --production && \
+    npm cache clean --force
+
+# Production stage
+FROM node:18-alpine AS production
+
+# Create non-root user for security
+RUN addgroup -g 1001 -S powservice && \
+    adduser -S powservice -u 1001 -G powservice
+
+# Install runtime dependencies only
+RUN apk add --no-cache \
+    dumb-init \
+    curl
+
+# Set working directory
+WORKDIR /app
+
+# Copy built application from builder stage
+COPY --from=builder --chown=powservice:powservice /app/node_modules ./node_modules
+COPY --from=builder --chown=powservice:powservice /app/package*.json ./
+
+# Copy application files
+COPY --chown=powservice:powservice pow-service.js ./
+COPY --chown=powservice:powservice logger.js ./
+COPY --chown=powservice:powservice shared/ ./shared/
+COPY --chown=powservice:powservice automation/http/fingerprinting/ ./automation/http/fingerprinting/
+
+# Set environment variables
+ENV NODE_ENV=production
+ENV PORT=3001
+ENV LOG_LEVEL=info
+ENV JSON_LOGGING=true
+
+# Expose port
+EXPOSE 3001
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:3001/health || exit 1
+
+# Switch to non-root user
+USER powservice
+
+# Use dumb-init to handle signals properly
+ENTRYPOINT ["dumb-init", "--"]
+
+# Start the POW service
+CMD ["node", "pow-service.js"]

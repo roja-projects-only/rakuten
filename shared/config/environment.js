@@ -15,7 +15,7 @@ const log = createLogger('config');
 const ENV_DEFINITIONS = {
   // Redis Configuration
   REDIS_URL: {
-    required: true,
+    required: false, // Required only for coordinator and worker modes
     description: 'Redis connection URL for distributed coordination',
     example: 'redis://localhost:6379',
     validate: (value) => {
@@ -344,7 +344,7 @@ function validateEnvironment(mode = 'auto') {
   const modeRequirements = {
     coordinator: ['REDIS_URL', 'TELEGRAM_BOT_TOKEN', 'TARGET_LOGIN_URL'],
     worker: ['REDIS_URL'],
-    'pow-service': ['REDIS_URL'],
+    'pow-service': [], // Redis is optional for POW service (runs without cache)
     single: [] // Single-node mode (existing behavior)
   };
 

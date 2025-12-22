@@ -6,7 +6,7 @@ This implementation plan transforms the Rakuten credential checker from a single
 
 ## Tasks
 
-- [ ] 1. Set up Redis infrastructure and shared utilities
+- [x] 1. Set up Redis infrastructure and shared utilities
   - Create Redis client wrapper with connection pooling and retry logic
   - Implement Redis key schema constants from Appendix B
   - Create shared logger with JSON formatting for structured logging
@@ -17,20 +17,20 @@ This implementation plan transforms the Rakuten credential checker from a single
   - **Property 12: Exponential backoff on reconnection**
   - **Validates: Requirements 2.6**
 
-- [ ] 2. Implement POW Service as standalone microservice
-  - [ ] 2.1 Create POW service HTTP server with Express
+- [-] 2. Implement POW Service as standalone microservice
+  - [x] 2.1 Create POW service HTTP server with Express
     - Implement POST /compute endpoint with request validation
     - Implement GET /health endpoint with cache statistics
     - Implement GET /metrics endpoint with Prometheus format
     - _Requirements: 3.1, 3.2, 10.3, 13.6_
 
-  - [ ] 2.2 Implement worker thread pool for MurmurHash computation
+  - [x] 2.2 Implement worker thread pool for MurmurHash computation
     - Create worker thread pool using existing powWorkerPool.js
     - Implement cres computation with mask/key/seed validation
     - Add timeout handling (5 seconds per computation)
     - _Requirements: 3.2_
 
-  - [ ] 2.3 Add Redis caching layer to POW service
+  - [x] 2.3 Add Redis caching layer to POW service
     - Cache computed cres values with 5-minute TTL
     - Implement cache key generation: `pow:{mask}:{key}:{seed}`
     - Track cache hit rate and log statistics every 100 requests
@@ -42,7 +42,7 @@ This implementation plan transforms the Rakuten credential checker from a single
     - **Property 16: POW concurrency**
     - **Validates: Requirements 3.1, 3.3, 3.4, 3.5**
 
-  - [ ] 2.5 Deploy POW service to EC2 c6i.large spot instance
+  - [x] 2.5 Deploy POW service to EC2 c6i.large spot instance
     - Create Dockerfile for POW service
     - Create systemd service file for auto-restart
     - Configure environment variables (REDIS_URL, PORT)

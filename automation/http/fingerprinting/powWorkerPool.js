@@ -329,3 +329,4 @@ process.on('SIGINT', () => workerPool.shutdown());
 process.on('SIGTERM', () => workerPool.shutdown());
 
 module.exports = workerPool;
+module.exports.PowWorkerPool = PowWorkerPool;
