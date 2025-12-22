@@ -35,6 +35,7 @@ function buildCheckProgress(phase) {
     email: '✉️ Verifying account...',
     password: '🔑 Authenticating...',
     analyze: '🔍 Analyzing response...',
+    ip: '🌐 Detecting exit IP...',
     capture: '📊 Capturing data...',
   };
   return escapeV2(map[phase] || '⏳ Processing...');
@@ -46,9 +47,10 @@ function buildCheckProgress(phase) {
  * @param {string} username - Username
  * @param {number} durationMs - Duration
  * @param {string} password - Password
+ * @param {string} [ipAddress] - Exit IP address
  * @returns {string} Result message
  */
-function buildCheckResult(result, username = null, durationMs = null, password = null) {
+function buildCheckResult(result, username = null, durationMs = null, password = null, ipAddress = null) {
   const statusEmoji = { VALID: '✅', INVALID: '❌', BLOCKED: '🔒', ERROR: '⚠️' };
   const statusLabel = {
     VALID: 'LOGIN SUCCESSFUL',
@@ -75,6 +77,12 @@ function buildCheckResult(result, username = null, durationMs = null, password =
     parts.push(`└ Pass: ${codeV2('••••••••')}`);
   }
 
+  if (ipAddress) {
+    parts.push('');
+    parts.push(boldV2('🌐 IP Address'));
+    parts.push(`└ ${codeV2(ipAddress)}`);
+  }
+
   if (durationMs != null) {
     parts.push('');
     const seconds = durationMs / 1000;
@@ -92,9 +100,10 @@ function buildCheckResult(result, username = null, durationMs = null, password =
  * @param {string} username - Username
  * @param {number} durationMs - Duration
  * @param {string} password - Password
+ * @param {string} [ipAddress] - Exit IP address
  * @returns {string} Combined result message
  */
-function buildCheckAndCaptureResult(result, capture, username, durationMs, password = null) {
+function buildCheckAndCaptureResult(result, capture, username, durationMs, password = null, ipAddress = null) {
   const statusEmoji = { VALID: '✅', INVALID: '❌', BLOCKED: '🔒', ERROR: '⚠️' };
   const statusLabel = {
     VALID: 'LOGIN SUCCESSFUL',
@@ -184,6 +193,12 @@ function buildCheckAndCaptureResult(result, capture, username, durationMs, passw
     parts.push(`└ Pass: ${spoilerCodeV2(password)}`);
   } else if (username) {
     parts.push(`└ Pass: ${codeV2('••••••••')}`);
+  }
+
+  if (ipAddress) {
+    parts.push('');
+    parts.push(boldV2('🌐 IP Address'));
+    parts.push(`└ ${codeV2(ipAddress)}`);
   }
   
   if (durationMs != null) {

