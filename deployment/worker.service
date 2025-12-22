@@ -1,0 +1,41 @@
+[Unit]
+Description=Rakuten Credential Checker - Distributed Worker Node
+After=network.target redis.service
+Wants=redis.service
+
+[Service]
+Type=simple
+User=rakuten
+WorkingDirectory=/opt/rakuten-checker
+ExecStart=/usr/bin/node worker.js
+
+# Environment variables
+Environment="NODE_ENV=production"
+EnvironmentFile=/opt/rakuten-checker/.env
+
+# Restart policy
+Restart=always
+RestartSec=10
+StartLimitInterval=300
+StartLimitBurst=5
+
+# Resource limits
+LimitNOFILE=65536
+MemoryLimit=512M
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=rakuten-worker
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+
+# Graceful shutdown
+TimeoutStopSec=150
+KillMode=mixed
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target

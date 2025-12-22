@@ -127,8 +127,8 @@ This implementation plan transforms the Rakuten credential checker from a single
     - **Property 21: Proxy health tracking**
     - **Validates: Requirements 4.2, 4.4, 4.5, 4.7**
 
-- [ ] 7. Implement Worker Node as standalone process
-  - [ ] 7.1 Create WorkerNode class with main processing loop
+- [-] 7. Implement Worker Node as standalone process
+  - [x] 7.1 Create WorkerNode class with main processing loop
     - Register worker with unique ID in Redis on startup
     - Implement run() loop: BLPOP from `queue:tasks` (30s timeout)
     - Acquire task lease: SET `job:{batchId}:{taskId}` with 5-min TTL
@@ -136,7 +136,7 @@ This implementation plan transforms the Rakuten credential checker from a single
     - Release lease after completion: DEL `job:{batchId}:{taskId}`
     - _Requirements: 2.1, 2.2, 1.6_
 
-  - [ ] 7.2 Implement task processing in WorkerNode
+  - [x] 7.2 Implement task processing in WorkerNode
     - Extract credential, proxy, batchId from task
     - Request cres from POW service (with fallback)
     - Execute credential check via existing httpChecker.js
@@ -146,13 +146,13 @@ This implementation plan transforms the Rakuten credential checker from a single
     - Increment progress counter: INCR `progress:{batchId}`
     - _Requirements: 2.3, 2.4, 5.7, 5.8, 7.3_
 
-  - [ ] 7.3 Implement heartbeat mechanism in WorkerNode
+  - [x] 7.3 Implement heartbeat mechanism in WorkerNode
     - Send heartbeat every 10 seconds to Redis
     - SET `worker:{workerId}:heartbeat` with 30-second TTL
     - PUBLISH to `worker_heartbeats` channel with metadata
     - _Requirements: 8.1_
 
-  - [ ] 7.4 Implement graceful shutdown in WorkerNode
+  - [x] 7.4 Implement graceful shutdown in WorkerNode
     - Handle SIGTERM signal
     - Stop pulling new tasks immediately
     - Finish current task (max 2 minutes timeout)
