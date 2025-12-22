@@ -1,0 +1,460 @@
+/**
+ * Job Queue Manager - Coordinator Component
+ * 
+ * Orchestrates batch processing by splitting credentials into individual tasks
+ * and managing the Redis-based job queue with deduplication and retry logic.
+ * 
+ * Requirements: 1.1, 1.2, 1.5, 1.8, 1.9, 5.6, 7.1, 7.2
+ */
+
+const { createLogger } = require('../../logger');
+const { 
+  JOB_QUEUE, 
+  RESULT_CACHE, 
+  PROGRESS_TRACKER,
+  generateTaskId 
+} = require('../redis/keys');
+
+const log = createLogger('job-queue-manager');
+
+class JobQueueManager {
+  constructor(redisClient, proxyPoolManager) {
+    this.redis = redisClient;
+    this.proxyPool = proxyPoolManager;
+    this.maxRetries = parseInt(process.env.BATCH_MAX_RETRIES, 10) || 2;
+    this.errorExclusionTtl = 24 * 60 * 60; // 24 hours in seconds
+  }
+
+  /**
+   * Enqueue a batch of credentials for processing
+   * @param {string} batchId - Unique batch identifier
+   * @param {Array<{username, password}>} credentials - Credentials to check
+   * @param {Object} options - Batch options (type, retries, etc.)
+   * @returns {Promise<{queued: number, cached: number}>}
+   */
+  async enqueueBatch(batchId, credentials, options = {}) {
+    log.info(`Enqueuing batch ${batchId} with ${credentials.length} credentials`, {
+      batchId,
+      credentialCount: credentials.length,
+      batchType: options.batchType || 'UNKNOWN'
+    });
+
+    // 1. Query Result_Store for already-processed credentials (dedup)
+    const credentialKeys = credentials.map(cred => `${cred.username}:${cred.password}`);
+    const cachedResults = await this.checkCachedResults(credentialKeys);
+    
+    // 2. Filter out cached results (within 30 days)
+    const newCredentials = [];
+    const cachedCredentials = [];
+    
+    for (let i = 0; i < credentials.length; i++) {
+      const credential = credentials[i];
+      const key = credentialKeys[i];
+      const cachedStatus = cachedResults.get(key);
+      
+      if (cachedStatus) {
+        cachedCredentials.push({ ...credential, cachedStatus });
+        log.debug(`Credential ${credential.username} already processed with status: ${cachedStatus}`);
+      } else {
+        newCredentials.push(credential);
+      }
+    }
+
+    log.info(`Deduplication complete: ${newCredentials.length} new, ${cachedCredentials.length} cached`, {
+      batchId,
+      newCount: newCredentials.length,
+      cachedCount: cachedCredentials.length
+    });
+
+    // 3. Create task objects with proxy assignments
+    const tasks = [];
+    for (let i = 0; i < newCredentials.length; i++) {
+      const credential = newCredentials[i];
+      const taskId = generateTaskId(batchId, i);
+      
+      // 4. Assign proxy using round-robin from ProxyPoolManager
+      const proxyAssignment = await this.proxyPool.assignProxy(taskId);
+      
+      const task = {
+        taskId,
+        batchId,
+        username: credential.username,
+        password: credential.password,
+        proxyId: proxyAssignment?.proxyId || null,
+        proxyUrl: proxyAssignment?.proxyUrl || null,
+        retryCount: 0,
+        createdAt: Date.now(),
+        batchType: options.batchType || 'UNKNOWN'
+      };
+      
+      tasks.push(task);
+    }
+
+    // 5. RPUSH tasks to Redis list: `queue:tasks`
+    if (tasks.length > 0) {
+      const taskJsons = tasks.map(task => JSON.stringify(task));
+      await this.redis.executeCommand('rpush', JOB_QUEUE.tasks, ...taskJsons);
+      
+      log.info(`Enqueued ${tasks.length} tasks to Redis queue`, {
+        batchId,
+        queuedCount: tasks.length
+      });
+    }
+
+    // 6. Initialize progress tracker in Redis
+    await this.initializeProgressTracker(batchId, newCredentials.length, options);
+
+    return {
+      queued: newCredentials.length,
+      cached: cachedCredentials.length,
+      cachedCredentials: cachedCredentials
+    };
+  }
+
+  /**
+   * Check Redis Result_Store for cached credential results
+   * @param {Array<string>} credentialKeys - Array of "username:password" keys
+   * @returns {Promise<Map<string, string|null>>} Map of key -> status
+   */
+  async checkCachedResults(credentialKeys) {
+    const results = new Map();
+    
+    if (credentialKeys.length === 0) {
+      return results;
+    }
+
+    try {
+      // Use batch lookup for efficiency - check all possible status keys
+      const STATUSES = ['VALID', 'INVALID', 'BLOCKED', 'ERROR'];
+      const BATCH_SIZE = 250; // Limit batch size for Redis
+      
+      log.debug(`Checking ${credentialKeys.length} credentials for cached results`);
+      
+      for (let i = 0; i < credentialKeys.length; i += BATCH_SIZE) {
+        const batch = credentialKeys.slice(i, i + BATCH_SIZE);
+        
+        // Build all possible Redis keys for this batch
+        const redisKeys = [];
+        const keyIndexMap = []; // Maps redis key index to [credKey, status]
+        
+        for (const credKey of batch) {
+          for (const status of STATUSES) {
+            redisKeys.push(RESULT_CACHE.generate(status, ...credKey.split(':')));
+            keyIndexMap.push({ credKey, status });
+          }
+        }
+        
+        const values = await this.redis.executeCommand('mget', ...redisKeys);
+        
+        // Process results - find first matching status for each credential
+        const foundStatus = new Map();
+        for (let j = 0; j < values.length; j++) {
+          if (values[j] && !foundStatus.has(keyIndexMap[j].credKey)) {
+            foundStatus.set(keyIndexMap[j].credKey, keyIndexMap[j].status);
+          }
+        }
+        
+        // Set results for this batch
+        for (const credKey of batch) {
+          results.set(credKey, foundStatus.get(credKey) || null);
+        }
+      }
+      
+      const cachedCount = Array.from(results.values()).filter(status => status !== null).length;
+      log.debug(`Found ${cachedCount} cached results out of ${credentialKeys.length} credentials`);
+      
+    } catch (error) {
+      log.error('Error checking cached results', { 
+        error: error.message,
+        credentialCount: credentialKeys.length 
+      });
+      // Return empty results on error - will process all credentials
+    }
+    
+    return results;
+  }
+
+  /**
+   * Initialize progress tracker for a batch
+   * @param {string} batchId - Batch identifier
+   * @param {number} totalTasks - Total number of tasks to process
+   * @param {Object} options - Batch options containing chatId, messageId
+   */
+  async initializeProgressTracker(batchId, totalTasks, options) {
+    const progressData = {
+      batchId,
+      total: totalTasks,
+      completed: 0,
+      chatId: options.chatId,
+      messageId: options.messageId,
+      startTime: Date.now(),
+      batchType: options.batchType || 'UNKNOWN'
+    };
+
+    try {
+      // Store progress tracker data
+      await this.redis.executeCommand(
+        'setex',
+        PROGRESS_TRACKER.generate(batchId),
+        PROGRESS_TRACKER.ttl,
+        JSON.stringify(progressData)
+      );
+
+      // Initialize progress counter
+      await this.redis.executeCommand(
+        'setex',
+        PROGRESS_TRACKER.generateCounter(batchId),
+        PROGRESS_TRACKER.ttl,
+        '0'
+      );
+
+      log.info(`Initialized progress tracker for batch ${batchId}`, {
+        batchId,
+        totalTasks,
+        chatId: options.chatId,
+        messageId: options.messageId
+      });
+    } catch (error) {
+      log.error('Error initializing progress tracker', {
+        batchId,
+        error: error.message
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Re-enqueue a failed task for retry
+   * @param {Object} task - Original task object
+   * @param {string} errorCode - Error code from failure
+   * @returns {Promise<boolean>} - True if re-enqueued, false if max retries exceeded
+   */
+  async retryTask(task, errorCode) {
+    log.info(`Retrying task ${task.taskId} (attempt ${task.retryCount + 1}/${this.maxRetries})`, {
+      taskId: task.taskId,
+      batchId: task.batchId,
+      retryCount: task.retryCount,
+      errorCode
+    });
+
+    // 1. Check if task.retryCount < MAX_RETRIES
+    if (task.retryCount >= this.maxRetries) {
+      // 2. If exceeded, mark as ERROR in Result_Store with 24hr exclusion
+      await this.markTaskAsError(task, errorCode);
+      
+      log.warn(`Task ${task.taskId} exceeded max retries (${this.maxRetries}), marked as ERROR`, {
+        taskId: task.taskId,
+        batchId: task.batchId,
+        finalErrorCode: errorCode
+      });
+      
+      return false;
+    }
+
+    // 3. If retryable, increment retryCount, preserve proxy assignment
+    const retryTask = {
+      ...task,
+      retryCount: task.retryCount + 1,
+      lastErrorCode: errorCode,
+      retryAt: Date.now()
+    };
+
+    // 4. RPUSH to retry queue (higher priority than main queue)
+    try {
+      await this.redis.executeCommand('rpush', JOB_QUEUE.retry, JSON.stringify(retryTask));
+      
+      log.info(`Task ${task.taskId} re-enqueued for retry`, {
+        taskId: task.taskId,
+        batchId: task.batchId,
+        retryCount: retryTask.retryCount,
+        proxyId: task.proxyId // Preserved proxy assignment
+      });
+      
+      return true;
+    } catch (error) {
+      log.error('Error re-enqueuing task for retry', {
+        taskId: task.taskId,
+        error: error.message
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Mark a task as ERROR in Result_Store with 24-hour exclusion
+   * @param {Object} task - Task object
+   * @param {string} errorCode - Final error code
+   */
+  async markTaskAsError(task, errorCode) {
+    try {
+      const resultKey = RESULT_CACHE.generate('ERROR', task.username, task.password);
+      const resultData = JSON.stringify({
+        username: task.username,
+        password: task.password,
+        status: 'ERROR',
+        errorCode: errorCode,
+        checkedAt: Date.now(),
+        retryCount: task.retryCount,
+        batchId: task.batchId,
+        taskId: task.taskId
+      });
+
+      // Store with 24-hour TTL for exclusion
+      await this.redis.executeCommand('setex', resultKey, this.errorExclusionTtl, resultData);
+      
+      log.debug(`Marked task ${task.taskId} as ERROR in Result_Store`, {
+        taskId: task.taskId,
+        username: task.username,
+        errorCode,
+        exclusionTtl: this.errorExclusionTtl
+      });
+    } catch (error) {
+      log.error('Error marking task as ERROR', {
+        taskId: task.taskId,
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Cancel a batch and drain remaining tasks
+   * @param {string} batchId - Batch to cancel
+   * @returns {Promise<{drained: number}>}
+   */
+  async cancelBatch(batchId) {
+    log.info(`Cancelling batch ${batchId}`, { batchId });
+
+    let drainedCount = 0;
+
+    try {
+      // 1. Mark batch as cancelled in Redis
+      const cancelKey = `batch:${batchId}:cancelled`;
+      await this.redis.executeCommand('setex', cancelKey, 3600, Date.now().toString()); // 1 hour TTL
+
+      // 2. Remove all tasks matching batchId from both queues
+      drainedCount += await this.drainQueueByBatchId(JOB_QUEUE.tasks, batchId);
+      drainedCount += await this.drainQueueByBatchId(JOB_QUEUE.retry, batchId);
+
+      log.info(`Batch ${batchId} cancelled, drained ${drainedCount} tasks`, {
+        batchId,
+        drainedCount
+      });
+
+      return { drained: drainedCount };
+    } catch (error) {
+      log.error('Error cancelling batch', {
+        batchId,
+        error: error.message
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Drain tasks from a specific queue by batchId
+   * @param {string} queueName - Queue name to drain from
+   * @param {string} batchId - Batch ID to match
+   * @returns {Promise<number>} - Number of tasks drained
+   */
+  async drainQueueByBatchId(queueName, batchId) {
+    let drainedCount = 0;
+    const tempQueue = `${queueName}:temp:${Date.now()}`;
+
+    try {
+      // Move all tasks to temp queue, filtering out matching batchId
+      let task;
+      while ((task = await this.redis.executeCommand('lpop', queueName)) !== null) {
+        try {
+          const taskObj = JSON.parse(task);
+          if (taskObj.batchId === batchId) {
+            drainedCount++;
+            log.debug(`Drained task ${taskObj.taskId} from ${queueName}`, {
+              taskId: taskObj.taskId,
+              batchId: taskObj.batchId
+            });
+          } else {
+            // Keep tasks from other batches
+            await this.redis.executeCommand('rpush', tempQueue, task);
+          }
+        } catch (parseError) {
+          log.warn('Error parsing task during drain, skipping', {
+            error: parseError.message,
+            task: task.substring(0, 100) // Log first 100 chars
+          });
+        }
+      }
+
+      // Move remaining tasks back to original queue
+      while ((task = await this.redis.executeCommand('lpop', tempQueue)) !== null) {
+        await this.redis.executeCommand('rpush', queueName, task);
+      }
+
+      // Clean up temp queue
+      await this.redis.executeCommand('del', tempQueue);
+
+    } catch (error) {
+      log.error('Error draining queue by batchId', {
+        queueName,
+        batchId,
+        error: error.message
+      });
+      
+      // Try to clean up temp queue on error
+      try {
+        await this.redis.executeCommand('del', tempQueue);
+      } catch (cleanupError) {
+        log.warn('Error cleaning up temp queue', { 
+          tempQueue, 
+          error: cleanupError.message 
+        });
+      }
+      
+      throw error;
+    }
+
+    return drainedCount;
+  }
+
+  /**
+   * Get queue statistics
+   * @returns {Promise<Object>} Queue depth and statistics
+   */
+  async getQueueStats() {
+    try {
+      const [tasksLength, retryLength] = await Promise.all([
+        this.redis.executeCommand('llen', JOB_QUEUE.tasks),
+        this.redis.executeCommand('llen', JOB_QUEUE.retry)
+      ]);
+
+      return {
+        mainQueue: tasksLength || 0,
+        retryQueue: retryLength || 0,
+        total: (tasksLength || 0) + (retryLength || 0)
+      };
+    } catch (error) {
+      log.error('Error getting queue stats', { error: error.message });
+      return { mainQueue: 0, retryQueue: 0, total: 0 };
+    }
+  }
+
+  /**
+   * Check if a batch is cancelled
+   * @param {string} batchId - Batch ID to check
+   * @returns {Promise<boolean>} True if batch is cancelled
+   */
+  async isBatchCancelled(batchId) {
+    try {
+      const cancelKey = `batch:${batchId}:cancelled`;
+      const result = await this.redis.executeCommand('get', cancelKey);
+      return result !== null;
+    } catch (error) {
+      log.error('Error checking batch cancellation status', {
+        batchId,
+        error: error.message
+      });
+      return false;
+    }
+  }
+}
+
+module.exports = JobQueueManager;

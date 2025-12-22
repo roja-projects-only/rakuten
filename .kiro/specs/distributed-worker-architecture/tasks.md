@@ -77,8 +77,8 @@ This implementation plan transforms the Rakuten credential checker from a single
     - Monitor cache hit rates and response times
     - _Requirements: 3.4, 3.8_
 
-- [ ] 5. Implement Job Queue Manager (Coordinator component)
-  - [ ] 5.1 Create JobQueueManager class with batch enqueue logic
+- [x] 5. Implement Job Queue Manager (Coordinator component)
+  - [x] 5.1 Create JobQueueManager class with batch enqueue logic
     - Implement enqueueBatch() to split credentials into tasks
     - Query Result_Store for deduplication (30-day cache)
     - Assign proxies using round-robin with ProxyPoolManager
@@ -86,13 +86,13 @@ This implementation plan transforms the Rakuten credential checker from a single
     - Initialize progress tracker in Redis
     - _Requirements: 1.1, 1.2, 7.1, 7.2_
 
-  - [ ] 5.2 Implement retry logic in JobQueueManager
+  - [x] 5.2 Implement retry logic in JobQueueManager
     - Implement retryTask() with MAX_RETRIES enforcement (default: 2)
     - Preserve proxy assignment on retry (sticky proxy)
     - Mark tasks as ERROR with 24-hour exclusion after max retries
     - _Requirements: 1.5, 1.8, 1.9_
 
-  - [ ] 5.3 Implement batch cancellation in JobQueueManager
+  - [x] 5.3 Implement batch cancellation in JobQueueManager
     - Implement cancelBatch() to drain queue by batchId
     - Remove all matching tasks from Redis queue
     - Return count of drained tasks
