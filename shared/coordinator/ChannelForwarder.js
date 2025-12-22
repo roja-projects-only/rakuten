@@ -19,7 +19,8 @@ const log = createLogger('channel-forwarder');
 
 class ChannelForwarder {
   constructor(redisClient, telegram, channelId) {
-    this.redis = redisClient;
+    this.redis = redisClient; // For regular commands
+    this.pubSubRedis = null; // Will be initialized for pub/sub operations
     this.telegram = telegram;
     this.channelId = channelId;
     this.isSubscribed = false;
@@ -39,12 +40,17 @@ class ChannelForwarder {
     }
 
     try {
+      // Initialize separate pub/sub Redis connection
+      const { getPubSubClient } = require('../../shared/redis/client');
+      this.pubSubRedis = getPubSubClient();
+      await this.pubSubRedis.connect();
+
       // Subscribe to forward and update events
-      await this.redis.executeCommand('subscribe', 'forward_events', 'update_events');
+      await this.pubSubRedis.executeCommand('subscribe', 'forward_events', 'update_events');
       
       // Set up message handlers
-      const client = this.redis.getClient();
-      client.on('message', async (channel, message) => {
+      const pubSubClient = this.pubSubRedis.getClient();
+      pubSubClient.on('message', async (channel, message) => {
         try {
           const event = JSON.parse(message);
           
@@ -81,7 +87,11 @@ class ChannelForwarder {
     if (!this.isSubscribed) return;
 
     try {
-      await this.redis.executeCommand('unsubscribe', 'forward_events', 'update_events');
+      if (this.pubSubRedis) {
+        await this.pubSubRedis.executeCommand('unsubscribe', 'forward_events', 'update_events');
+        await this.pubSubRedis.close();
+        this.pubSubRedis = null;
+      }
       this.isSubscribed = false;
       log.info('Channel forwarder stopped');
     } catch (error) {

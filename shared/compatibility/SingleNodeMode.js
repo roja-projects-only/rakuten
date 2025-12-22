@@ -328,10 +328,11 @@ class SingleNodeMode {
 
   /**
    * Create a compatibility wrapper for distributed components
+   * @param {boolean} force - Force creation even when Redis is available
    * @returns {Object} Mock distributed components
    */
-  static createCompatibilityWrapper() {
-    const jobQueue = SingleNodeMode.initialize();
+  static createCompatibilityWrapper(force = false) {
+    const jobQueue = force ? new SingleNodeJobQueue() : SingleNodeMode.initialize();
     
     return {
       jobQueue,

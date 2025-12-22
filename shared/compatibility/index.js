@@ -106,6 +106,55 @@ class CompatibilityLayer {
   }
 
   /**
+   * Initialize single-node mode as fallback (even when Redis is available)
+   * @param {Object} config - Environment configuration
+   * @param {Object} options - Additional options
+   * @returns {Promise<Object>} Single-node components
+   */
+  async initializeSingleNodeFallback(config, options) {
+    log.info('Initializing single-node mode as fallback (Redis available but distributed mode failed)');
+    
+    // Create graceful degradation layer
+    this.degradation = new GracefulDegradation();
+    this.degradation.startMonitoring();
+    
+    // Force single-node components even when Redis is available
+    const singleNodeComponents = SingleNodeMode.createCompatibilityWrapper(true); // Force mode
+    
+    // Create wrapped components with degradation
+    this.components = {
+      mode: 'single-fallback',
+      config,
+      
+      // Core components (single-node implementations)
+      jobQueue: singleNodeComponents.jobQueue,
+      coordinator: singleNodeComponents.coordinator,
+      progressTracker: singleNodeComponents.progressTracker,
+      channelForwarder: singleNodeComponents.channelForwarder,
+      
+      // Degradation wrappers
+      degradation: this.degradation,
+      
+      // Wrapper functions
+      wrapTelegram: (telegram) => this.degradation.createTelegramWrapper(telegram),
+      wrapPowService: (powClient) => this.degradation.createPowServiceWrapper(powClient),
+      
+      // Compatibility helpers
+      isDistributed: () => false,
+      isSingleNode: () => true,
+      getMode: () => 'single-fallback',
+      
+      // Legacy support
+      processCredentialBatch: async (credentials, options = {}) => {
+        return await this.processBatchLegacy(credentials, options);
+      }
+    };
+    
+    log.info('Single-node fallback mode initialized successfully');
+    return this.components;
+  }
+
+  /**
    * Initialize distributed mode with fallback capabilities
    * @param {Object} config - Environment configuration
    * @param {Object} options - Additional options
@@ -167,8 +216,9 @@ class CompatibilityLayer {
         error: error.message
       });
       
-      // Fallback to single-node mode
-      return await this.initializeSingleNodeMode(config, options);
+      // Force fallback to single-node mode even when Redis is available
+      // This handles cases where Redis is available but distributed mode fails
+      return await this.initializeSingleNodeFallback(config, options);
     }
   }
 

@@ -299,11 +299,12 @@ class RedisClient {
   }
 }
 
-// Singleton instance for shared use
+// Singleton instances for shared use
 let sharedClient = null;
+let sharedPubSubClient = null;
 
 /**
- * Get shared Redis client instance
+ * Get shared Redis client instance (for regular commands)
  */
 function getRedisClient(options = {}) {
   if (!sharedClient) {
@@ -313,10 +314,31 @@ function getRedisClient(options = {}) {
 }
 
 /**
+ * Get shared Redis pub/sub client instance (for subscribe/publish operations)
+ * This is a separate connection because Redis connections in subscriber mode
+ * cannot execute regular commands
+ */
+function getPubSubClient(options = {}) {
+  if (!sharedPubSubClient) {
+    sharedPubSubClient = new RedisClient(options);
+  }
+  return sharedPubSubClient;
+}
+
+/**
  * Initialize shared Redis client
  */
 async function initRedisClient(options = {}) {
   const client = getRedisClient(options);
+  await client.connect();
+  return client;
+}
+
+/**
+ * Initialize shared pub/sub Redis client
+ */
+async function initPubSubClient(options = {}) {
+  const client = getPubSubClient(options);
   await client.connect();
   return client;
 }
@@ -331,9 +353,22 @@ async function closeRedisClient() {
   }
 }
 
+/**
+ * Close shared pub/sub Redis client
+ */
+async function closePubSubClient() {
+  if (sharedPubSubClient) {
+    await sharedPubSubClient.close();
+    sharedPubSubClient = null;
+  }
+}
+
 module.exports = {
   RedisClient,
   getRedisClient,
+  getPubSubClient,
   initRedisClient,
-  closeRedisClient
+  initPubSubClient,
+  closeRedisClient,
+  closePubSubClient
 };

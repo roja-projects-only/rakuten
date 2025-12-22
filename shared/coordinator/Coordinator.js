@@ -30,7 +30,8 @@ const log = createLogger('coordinator');
 
 class Coordinator {
   constructor(redisClient, telegram, options = {}) {
-    this.redis = redisClient;
+    this.redis = redisClient; // For regular commands
+    this.pubSubRedis = null; // Will be initialized for pub/sub operations
     this.telegram = telegram;
     this.options = options;
     this.logger = createStructuredLogger('Coordinator');
@@ -78,6 +79,11 @@ class Coordinator {
 
     try {
       this.logger.info('Starting coordinator...', { coordinatorId: this.coordinatorId });
+
+      // Initialize separate pub/sub Redis connection
+      const { getPubSubClient } = require('../redis/client');
+      this.pubSubRedis = getPubSubClient();
+      await this.pubSubRedis.connect();
 
       // Start progress tracker (subscribe to pub/sub events)
       await this.progressTracker.subscribeToProgressEvents();
@@ -163,6 +169,12 @@ class Coordinator {
       
       // Clean up coordinator heartbeat
       await this.redis.executeCommand('del', COORDINATOR_HEARTBEAT.key);
+      
+      // Close pub/sub connection
+      if (this.pubSubRedis) {
+        await this.pubSubRedis.close();
+        this.pubSubRedis = null;
+      }
       
       this.isRunning = false;
       this.logger.info('Coordinator stopped', { coordinatorId: this.coordinatorId });
@@ -416,12 +428,12 @@ class Coordinator {
    */
   async subscribeToWorkerHeartbeats() {
     try {
-      // Subscribe to worker heartbeats channel
-      await this.redis.executeCommand('subscribe', PUBSUB_CHANNELS.workerHeartbeats);
+      // Subscribe to worker heartbeats channel using pub/sub connection
+      await this.pubSubRedis.executeCommand('subscribe', PUBSUB_CHANNELS.workerHeartbeats);
       
       // Set up message handler
-      const client = this.redis.getClient();
-      client.on('message', this.handleWorkerHeartbeat);
+      const pubSubClient = this.pubSubRedis.getClient();
+      pubSubClient.on('message', this.handleWorkerHeartbeat);
       
       this.logger.info('Subscribed to worker heartbeats');
       
