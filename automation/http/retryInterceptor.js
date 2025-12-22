@@ -20,7 +20,7 @@ const log = createLogger('retry');
 
 // Default retry configuration
 const DEFAULT_CONFIG = {
-  retries: 3,
+  retries: 5,
   retryDelay: 1000,        // Base delay in ms
   retryDelayMax: 10000,    // Max delay cap
   exponentialBackoff: true,

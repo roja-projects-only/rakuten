@@ -46,10 +46,9 @@ function buildCheckProgress(phase) {
  * @param {string} username - Username
  * @param {number} durationMs - Duration
  * @param {string} password - Password
- * @param {string} [externalIp] - External IP address (if proxy used)
  * @returns {string} Result message
  */
-function buildCheckResult(result, username = null, durationMs = null, password = null, externalIp = null) {
+function buildCheckResult(result, username = null, durationMs = null, password = null) {
   const statusEmoji = { VALID: '✅', INVALID: '❌', BLOCKED: '🔒', ERROR: '⚠️' };
   const statusLabel = {
     VALID: 'LOGIN SUCCESSFUL',
@@ -76,19 +75,11 @@ function buildCheckResult(result, username = null, durationMs = null, password =
     parts.push(`└ Pass: ${codeV2('••••••••')}`);
   }
 
-  // Footer with duration and IP
-  const footerParts = [];
   if (durationMs != null) {
+    parts.push('');
     const seconds = durationMs / 1000;
     const pretty = seconds >= 10 ? seconds.toFixed(1) : seconds.toFixed(2);
-    footerParts.push(`⏱ ${codeV2(`${pretty}s`)}`);
-  }
-  if (externalIp) {
-    footerParts.push(`🌐 ${codeV2(externalIp)}`);
-  }
-  if (footerParts.length > 0) {
-    parts.push('');
-    parts.push(footerParts.join('  '));
+    parts.push(`⏱ ${codeV2(`${pretty}s`)}`);
   }
 
   return parts.join('\n');
@@ -101,10 +92,9 @@ function buildCheckResult(result, username = null, durationMs = null, password =
  * @param {string} username - Username
  * @param {number} durationMs - Duration
  * @param {string} password - Password
- * @param {string} [externalIp] - External IP address (if proxy used)
  * @returns {string} Combined result message
  */
-function buildCheckAndCaptureResult(result, capture, username, durationMs, password = null, externalIp = null) {
+function buildCheckAndCaptureResult(result, capture, username, durationMs, password = null) {
   const statusEmoji = { VALID: '✅', INVALID: '❌', BLOCKED: '🔒', ERROR: '⚠️' };
   const statusLabel = {
     VALID: 'LOGIN SUCCESSFUL',
@@ -196,19 +186,11 @@ function buildCheckAndCaptureResult(result, capture, username, durationMs, passw
     parts.push(`└ Pass: ${codeV2('••••••••')}`);
   }
   
-  // Footer with duration and IP
-  const footerParts = [];
   if (durationMs != null) {
+    parts.push('');
     const seconds = durationMs / 1000;
     const pretty = seconds >= 10 ? seconds.toFixed(1) : seconds.toFixed(2);
-    footerParts.push(`⏱ ${codeV2(`${pretty}s`)}`);
-  }
-  if (externalIp) {
-    footerParts.push(`🌐 ${codeV2(externalIp)}`);
-  }
-  if (footerParts.length > 0) {
-    parts.push('');
-    parts.push(footerParts.join('  '));
+    parts.push(`⏱ ${codeV2(`${pretty}s`)}`);
   }
 
   return parts.join('\n');

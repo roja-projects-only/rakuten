@@ -31,6 +31,14 @@ const log = createLogger('http-client');
 // Track if we've already warned about TLS bypass
 let tlsBypassWarned = false;
 
+// Suppress Node.js TLS warning globally
+process.on('warning', (warning) => {
+  if (warning.name === 'Warning' && warning.message.includes('NODE_TLS_REJECT_UNAUTHORIZED')) {
+    // Silently ignore TLS warnings
+    return;
+  }
+});
+
 /**
  * Parses various proxy formats into a standard config object.
  * Supported formats:
@@ -199,8 +207,10 @@ function createHttpClient(options = {}) {
     // Disable TLS verification globally for this proxy session
     // This is required for BrightData and similar proxies that perform SSL interception
     if (!tlsBypassWarned) {
-      log.warn('SSL certificate verification disabled for proxy connections');
+      log.debug('SSL certificate verification disabled for proxy connections');
       tlsBypassWarned = true;
+      // Suppress Node.js TLS warning
+      process.removeAllListeners('warning');
     }
     process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
     
