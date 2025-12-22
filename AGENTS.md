@@ -3,6 +3,7 @@ Default shell is PowerShell; keep commands compatible. Avoid generating docs unl
 The user's has an apostrophe and it should be closed in quotes.
 
 - Commit in the terminal every time a task is done (except if it's included in the .gitignore), do not push it.
+- Do not create documentation unless explicitly stated.
 
 > 📖 **For comprehensive context**, see [`AI_CONTEXT.md`](AI_CONTEXT.md) — full module reference, data flows, and troubleshooting.
 
@@ -187,7 +188,10 @@ await deleteMessageRef(username, password); // Clean up after delete
 - `automation/http/` — HTTP flow, fingerprinting, data capture, IP fetching
 - `automation/batch/` — `hotmail.js`, `ulp.js`, `processedStore.js` (dedup cache)
 - `telegram/` — Message builders, batch UX handlers, channel forwarding
-- `scripts/` — One-time migration scripts (e.g., `migrate-redis-ttl.js`)
+- `scripts/` — Organized into subdirectories:
+  - `scripts/migration/` — Redis data migration scripts
+  - `scripts/tests/` — Integration and performance test scripts
+  - `scripts/deploy/` — Deployment verification and management scripts
 
 ## Batch Domain Filter
 HOTMAIL mode only accepts: `live.jp`, `hotmail.co.jp`, `hotmail.jp`, `outlook.jp`, `outlook.co.jp`, `msn.co.jp`

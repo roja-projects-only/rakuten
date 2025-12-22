@@ -719,17 +719,23 @@ class WorkerNode {
       });
       
     } catch (error) {
-      structuredLog.logError('Failed to send heartbeat', error, {
-        workerId: this.workerId
-      });
+      // Heartbeat timeouts are expected under load - log as warning, not error
+      const isTimeout = error.message.includes('timeout');
+      const logLevel = isTimeout ? 'warn' : 'error';
       
-      log.error('Failed to send heartbeat', {
+      if (!isTimeout) {
+        structuredLog.logError('Failed to send heartbeat', error, {
+          workerId: this.workerId
+        });
+      }
+      
+      log[logLevel]('Failed to send heartbeat', {
         workerId: this.workerId,
         error: error.message
       });
       
       // Don't treat heartbeat timeouts as fatal - they're expected under load
-      if (!error.message.includes('timeout') && this.isFatalError(error)) {
+      if (!isTimeout && this.isFatalError(error)) {
         log.error('Heartbeat failure indicates fatal error, initiating shutdown', {
           workerId: this.workerId
         });

@@ -94,7 +94,19 @@
 ├─────────────────────────────────────────────────────────────────────┤
 │                         SCRIPTS                                      │
 ├─────────────────────────────────────────────────────────────────────┤
-│  scripts/migrate-redis-ttl.js   → One-time TTL migration to 30 days  │
+│  scripts/migration/             → Redis data migration scripts       │
+│    ├─ migrate-redis-ttl.js     → One-time TTL migration to 30 days   │
+│    ├─ migrate-redis-data.js    → Data migration between instances    │
+│    └─ migrate-redis-local.*    → Local Redis migration helpers       │
+│  scripts/tests/                 → Integration & performance tests    │
+│    ├─ run-all-integration-tests.js → Run all integration tests       │
+│    ├─ run-performance-tests.js     → Performance benchmarks          │
+│    ├─ test-*.js                    → Individual test scripts         │
+│    └─ validate-integration-tests.js → Test validation                │
+│  scripts/deploy/                → Deployment scripts                 │
+│    ├─ verify-pow-deployment.js → POW service deployment check        │
+│    ├─ verify-deployment.sh     → General deployment verification     │
+│    └─ deploy-worker-fix.sh     → Worker deployment fixes             │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
