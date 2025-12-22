@@ -156,7 +156,10 @@ class StructuredLogger {
     const {
       workerId,
       tasksCompleted,
-      currentTask,
+      concurrency,
+      activeTasks,
+      taskIds,
+      utilization,
       uptime,
       memoryUsage
     } = workerData;
@@ -165,9 +168,45 @@ class StructuredLogger {
       event: 'worker_heartbeat',
       workerId,
       tasksCompleted,
-      currentTask,
+      concurrency,
+      activeTasks,
+      taskIds,
+      utilization,
       uptime,
       memoryUsage,
+      timestamp: Date.now()
+    });
+  }
+
+  /**
+   * Log worker metrics for monitoring
+   */
+  logWorkerMetrics(metricsData) {
+    const {
+      workerId,
+      activeTasks,
+      concurrency,
+      utilization,
+      tasksCompleted,
+      tasksPerMinute,
+      uptime,
+      memory
+    } = metricsData;
+
+    this.log('info', 'Worker metrics', {
+      event: 'worker_metrics',
+      workerId,
+      activeTasks,
+      concurrency,
+      utilization,
+      tasksCompleted,
+      tasksPerMinute,
+      uptime,
+      memory: memory ? {
+        heapUsedMB: Math.round(memory.heapUsed / 1024 / 1024),
+        heapTotalMB: Math.round(memory.heapTotal / 1024 / 1024),
+        rssMB: Math.round(memory.rss / 1024 / 1024)
+      } : undefined,
       timestamp: Date.now()
     });
   }

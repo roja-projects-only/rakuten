@@ -7,6 +7,7 @@
  * Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 1.6, 5.7, 5.8, 7.3, 8.1
  */
 
+const pLimit = require('p-limit');
 const { createLogger } = require('../../logger');
 const { createStructuredLogger } = require('../logger/structured');
 const { checkCredentials } = require('../../httpChecker');
@@ -32,17 +33,27 @@ class WorkerNode {
     this.workerId = options.workerId || generateWorkerId();
     this.powServiceUrl = options.powServiceUrl || process.env.POW_SERVICE_URL;
     
-    // Worker state
-    this.currentTask = null;
+    // Concurrency configuration
+    this.concurrency = options.concurrency || 
+      parseInt(process.env.WORKER_CONCURRENCY, 10) || 3;
+    this.limit = pLimit(this.concurrency);
+    
+    // Worker state - parallel task tracking
+    this.activeTasks = new Map(); // taskId -> { promise, startedAt, task }
+    this.activeTaskCount = 0;
     this.shutdown = false;
-    this.isProcessing = false;
     this.tasksCompleted = 0;
     this.startTime = Date.now();
+    
+    // Metrics tracking
+    this.metricsInterval = null;
+    this.lastMetricsLog = Date.now();
+    this.metricsLogInterval = 30000; // Log metrics every 30s
     
     // Timeouts and intervals
     this.taskTimeout = options.taskTimeout || 120000; // 2 minutes max per task
     this.heartbeatInterval = options.heartbeatInterval || 10000; // 10 seconds
-    this.queueTimeout = options.queueTimeout || 30000; // 30 seconds BLPOP timeout
+    this.queueTimeout = options.queueTimeout || 5000; // 5 seconds BLPOP timeout (reduced for faster task pickup)
     
     // Intervals
     this.heartbeatTimer = null;
@@ -50,16 +61,17 @@ class WorkerNode {
     log.info(`Worker node initialized`, {
       workerId: this.workerId,
       powServiceUrl: this.powServiceUrl,
+      concurrency: this.concurrency,
       taskTimeout: this.taskTimeout,
       heartbeatInterval: this.heartbeatInterval
     });
   }
 
   /**
-   * Main worker loop - continuously pull and process tasks
+   * Main worker loop - continuously pull and process tasks in parallel
    */
   async run() {
-    log.info(`Worker ${this.workerId} starting up`);
+    log.info(`Worker ${this.workerId} starting up with concurrency ${this.concurrency}`);
     
     try {
       // 1. Register worker with unique ID in Redis
@@ -68,25 +80,38 @@ class WorkerNode {
       // 2. Start heartbeat interval (10s)
       this.startHeartbeat();
       
-      // 3. Main processing loop
+      // 3. Start metrics logging
+      this.startMetricsLogging();
+      
+      // 4. Main processing loop - parallel task execution
       while (!this.shutdown) {
         try {
-          // BLPOP task from queue with timeout
-          const task = await this.dequeueTask();
-          
-          if (task) {
-            await this.processTaskWithLease(task);
+          // Only pull new tasks if we have capacity
+          if (this.activeTaskCount < this.concurrency) {
+            const task = await this.dequeueTask();
+            
+            if (task) {
+              // Fire-and-forget with concurrency limit
+              this.spawnTaskProcessor(task);
+            }
+          } else {
+            // At capacity - wait for any task to complete before checking queue
+            if (this.activeTasks.size > 0) {
+              const promises = Array.from(this.activeTasks.values()).map(t => t.promise);
+              await Promise.race(promises).catch(() => {}); // Ignore errors, just wait for completion
+            }
           }
           
-          // Small delay to prevent busy waiting
+          // Small delay to prevent busy waiting (reduced for faster task pickup)
           if (!this.shutdown) {
-            await this.sleep(100);
+            await this.sleep(10);
           }
           
         } catch (error) {
           log.error('Error in worker main loop', {
             workerId: this.workerId,
-            error: error.message
+            error: error.message,
+            activeTasks: this.activeTaskCount
           });
           
           // Continue processing unless it's a fatal error
@@ -112,6 +137,17 @@ class WorkerNode {
         }
       }
       
+      // Wait for all active tasks to complete before exiting
+      if (this.activeTasks.size > 0) {
+        log.info(`Waiting for ${this.activeTasks.size} active tasks to complete`, {
+          workerId: this.workerId,
+          taskIds: Array.from(this.activeTasks.keys())
+        });
+        
+        const promises = Array.from(this.activeTasks.values()).map(t => t.promise);
+        await Promise.allSettled(promises);
+      }
+      
     } catch (error) {
       log.error('Worker startup failed', {
         workerId: this.workerId,
@@ -122,7 +158,54 @@ class WorkerNode {
       await this.cleanup();
     }
     
-    log.info(`Worker ${this.workerId} shut down complete`);
+    log.info(`Worker ${this.workerId} shut down complete`, {
+      tasksCompleted: this.tasksCompleted
+    });
+  }
+
+  /**
+   * Spawn a task processor (fire-and-forget with tracking)
+   * @param {Object} task - Task object from queue
+   */
+  spawnTaskProcessor(task) {
+    // Increment counter immediately
+    this.activeTaskCount++;
+    
+    // Create promise wrapped with concurrency limit
+    const promise = this.limit(async () => {
+      try {
+        await this.processTaskWithLease(task);
+      } catch (error) {
+        // Error already logged in processTaskWithLease
+      }
+    });
+    
+    // Track the task
+    this.activeTasks.set(task.taskId, {
+      promise,
+      startedAt: Date.now(),
+      task
+    });
+    
+    // Clean up when done
+    promise.finally(() => {
+      this.activeTasks.delete(task.taskId);
+      this.activeTaskCount--;
+      
+      log.debug(`Task slot freed`, {
+        workerId: this.workerId,
+        taskId: task.taskId,
+        activeNow: this.activeTaskCount,
+        concurrency: this.concurrency
+      });
+    });
+    
+    log.debug(`Spawned task processor`, {
+      workerId: this.workerId,
+      taskId: task.taskId,
+      activeNow: this.activeTaskCount,
+      concurrency: this.concurrency
+    });
   }
 
   /**
@@ -689,12 +772,12 @@ class WorkerNode {
         workerId: this.workerId,
         timestamp: Date.now(),
         tasksCompleted: this.tasksCompleted,
-        isProcessing: this.isProcessing,
-        currentTask: this.currentTask ? {
-          taskId: this.currentTask.taskId,
-          batchId: this.currentTask.batchId,
-          startedAt: this.currentTask.startedAt
-        } : null,
+        // Concurrency info
+        concurrency: this.concurrency,
+        activeTasks: this.activeTaskCount,
+        taskIds: Array.from(this.activeTasks.keys()),
+        // Utilization percentage
+        utilization: Math.round((this.activeTaskCount / this.concurrency) * 100),
         uptime: Date.now() - this.startTime,
         memoryUsage: process.memoryUsage()
       };
@@ -715,7 +798,9 @@ class WorkerNode {
       log.debug('Heartbeat sent', {
         workerId: this.workerId,
         tasksCompleted: this.tasksCompleted,
-        uptime: heartbeatData.uptime
+        activeTasks: this.activeTaskCount,
+        concurrency: this.concurrency,
+        utilization: heartbeatData.utilization + '%'
       });
       
     } catch (error) {
@@ -769,56 +854,67 @@ class WorkerNode {
    * Handle graceful shutdown
    */
   async handleShutdown(signal = 'SIGTERM') {
-    log.info(`Worker ${this.workerId} received ${signal}, initiating graceful shutdown`);
+    log.info(`Worker ${this.workerId} received ${signal}, initiating graceful shutdown`, {
+      activeTasks: this.activeTaskCount,
+      taskIds: Array.from(this.activeTasks.keys())
+    });
     
     // 1. Stop pulling new tasks immediately
     this.shutdown = true;
     
-    // 2. If currentTask exists, wait up to 2 minutes for completion
-    if (this.currentTask) {
-      log.info(`Waiting for current task ${this.currentTask.taskId} to complete`, {
+    // 2. If active tasks exist, wait for all to complete (with timeout)
+    if (this.activeTasks.size > 0) {
+      const maxWait = this.taskTimeout * Math.max(1, Math.ceil(this.activeTasks.size / 2));
+      
+      log.info(`Waiting for ${this.activeTasks.size} active tasks to complete`, {
         workerId: this.workerId,
-        taskId: this.currentTask.taskId,
-        maxWait: this.taskTimeout
+        taskIds: Array.from(this.activeTasks.keys()),
+        maxWait
       });
       
-      const startWait = Date.now();
-      while (this.currentTask && (Date.now() - startWait) < this.taskTimeout) {
-        await this.sleep(1000);
-      }
+      const promises = Array.from(this.activeTasks.values()).map(t => t.promise);
       
-      // 3. If timeout exceeded, release task lease and log incomplete task
-      if (this.currentTask) {
-        const leaseKey = TASK_LEASE.generate(this.currentTask.batchId, this.currentTask.taskId);
-        
-        try {
-          await this.redis.executeCommand('del', leaseKey);
-          log.warn(`Released lease for incomplete task ${this.currentTask.taskId}`, {
-            workerId: this.workerId,
-            taskId: this.currentTask.taskId,
-            batchId: this.currentTask.batchId
-          });
-        } catch (error) {
-          log.error('Failed to release lease for incomplete task', {
-            workerId: this.workerId,
-            taskId: this.currentTask.taskId,
-            error: error.message
-          });
-        }
-        
-        // 4. Log incomplete task ID
-        log.warn(`Task ${this.currentTask.taskId} incomplete at shutdown`, {
+      // Wait for all tasks or timeout
+      await Promise.race([
+        Promise.allSettled(promises),
+        new Promise(resolve => setTimeout(resolve, maxWait))
+      ]);
+      
+      // 3. If tasks still pending after timeout, release their leases
+      if (this.activeTasks.size > 0) {
+        log.warn(`${this.activeTasks.size} tasks still active after timeout, releasing leases`, {
           workerId: this.workerId,
-          taskId: this.currentTask.taskId,
-          batchId: this.currentTask.batchId
+          taskIds: Array.from(this.activeTasks.keys())
         });
+        
+        for (const [taskId, taskInfo] of this.activeTasks) {
+          const task = taskInfo.task;
+          const leaseKey = TASK_LEASE.generate(task.batchId, task.taskId);
+          
+          try {
+            await this.redis.executeCommand('del', leaseKey);
+            log.warn(`Released lease for incomplete task ${taskId}`, {
+              workerId: this.workerId,
+              taskId,
+              batchId: task.batchId
+            });
+          } catch (error) {
+            log.error('Failed to release lease for incomplete task', {
+              workerId: this.workerId,
+              taskId,
+              error: error.message
+            });
+          }
+        }
       }
     }
     
     await this.cleanup();
     
-    // 5. Exit with code 0 for systemd restart
-    log.info(`Worker ${this.workerId} graceful shutdown complete`);
+    // 4. Exit with code 0 for systemd restart
+    log.info(`Worker ${this.workerId} graceful shutdown complete`, {
+      tasksCompleted: this.tasksCompleted
+    });
     process.exit(0);
   }
 
@@ -830,6 +926,12 @@ class WorkerNode {
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
+    }
+    
+    // Stop metrics logging
+    if (this.metricsInterval) {
+      clearInterval(this.metricsInterval);
+      this.metricsInterval = null;
     }
     
     // Clean up worker registration
@@ -844,6 +946,58 @@ class WorkerNode {
         error: error.message
       });
     }
+  }
+
+  /**
+   * Start metrics logging interval
+   */
+  startMetricsLogging() {
+    this.metricsInterval = setInterval(() => {
+      this.logMetrics();
+    }, this.metricsLogInterval);
+    
+    log.debug(`Metrics logging started (${this.metricsLogInterval}ms interval)`, {
+      workerId: this.workerId
+    });
+  }
+
+  /**
+   * Log worker metrics for monitoring
+   */
+  logMetrics() {
+    const now = Date.now();
+    const uptime = now - this.startTime;
+    const utilization = Math.round((this.activeTaskCount / this.concurrency) * 100);
+    const memory = process.memoryUsage();
+    
+    // Calculate tasks per minute
+    const uptimeMinutes = uptime / 60000;
+    const tasksPerMinute = uptimeMinutes > 0 ? (this.tasksCompleted / uptimeMinutes).toFixed(2) : 0;
+    
+    log.info(`Worker metrics`, {
+      workerId: this.workerId,
+      activeTasks: this.activeTaskCount,
+      concurrency: this.concurrency,
+      utilization: `${utilization}%`,
+      tasksCompleted: this.tasksCompleted,
+      tasksPerMinute,
+      uptimeMinutes: Math.round(uptimeMinutes),
+      heapUsedMB: Math.round(memory.heapUsed / 1024 / 1024),
+      heapTotalMB: Math.round(memory.heapTotal / 1024 / 1024),
+      rssMB: Math.round(memory.rss / 1024 / 1024)
+    });
+    
+    // Log structured metrics
+    structuredLog.logWorkerMetrics({
+      workerId: this.workerId,
+      activeTasks: this.activeTaskCount,
+      concurrency: this.concurrency,
+      utilization,
+      tasksCompleted: this.tasksCompleted,
+      tasksPerMinute: parseFloat(tasksPerMinute),
+      uptime,
+      memory
+    });
   }
 }
 

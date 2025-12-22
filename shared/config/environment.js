@@ -75,7 +75,7 @@ const ENV_DEFINITIONS = {
 
   WORKER_CONCURRENCY: {
     required: false,
-    default: 5,
+    default: 3,
     description: 'Number of concurrent tasks per worker',
     validate: (value) => {
       const concurrency = parseInt(value, 10);

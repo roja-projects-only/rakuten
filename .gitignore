@@ -36,3 +36,4 @@ temp/
 *.tmp
 data/
 *.pem
+ssh-logs.bat
