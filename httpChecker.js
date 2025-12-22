@@ -149,18 +149,21 @@ async function checkCredentials(email, password, options = {}) {
     // Fetch exit IP for VALID credentials if proxy is configured
     if (outcome.status === 'VALID' && proxy) {
       try {
+        log.info('[ip-detect] Starting IP detection (proxy configured)');
         onProgress && (await onProgress('ip'));
         const ipInfo = await fetchIpInfo(session.client, timeoutMs);
         if (ipInfo.ip) {
           outcome.ipAddress = ipInfo.ip;
-          log.debug(`Detected exit IP: ${ipInfo.ip}`);
+          log.info(`[ip-detect] Exit IP attached to outcome: ${ipInfo.ip}`);
         } else {
-          log.debug(`Failed to fetch IP: ${ipInfo.error}`);
+          log.warn(`[ip-detect] Failed to fetch IP: ${ipInfo.error}`);
         }
       } catch (ipError) {
-        log.warn(`IP fetch error during credential check: ${ipError.message}`);
+        log.warn(`[ip-detect] IP fetch error: ${ipError.message}`);
         // Don't fail the credential check if IP fetch fails
       }
+    } else if (outcome.status === 'VALID' && !proxy) {
+      log.debug('[ip-detect] Skipped (no proxy configured)');
     }
 
     preserveSession = deferCloseOnValid && outcome.status === 'VALID';

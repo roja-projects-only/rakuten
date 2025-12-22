@@ -23,7 +23,7 @@ const log = createLogger('ip-fetcher');
  */
 async function fetchIpInfo(client, timeoutMs = 10000) {
   try {
-    log.debug('Fetching external IP address');
+    log.info('Fetching exit IP address via ipify.org');
     
     // Use ipify.org API for simplicity and speed
     // Returns { ip: "1.2.3.4" } as JSON
@@ -42,7 +42,7 @@ async function fetchIpInfo(client, timeoutMs = 10000) {
       return { ip: null, error: 'Invalid response format' };
     }
     
-    log.debug(`Fetched IP: ${ip}`);
+    log.info(`Exit IP address retrieved: ${ip}`);
     return { ip };
   } catch (error) {
     log.warn(`IP fetch error: ${error.message}`);
@@ -79,7 +79,7 @@ async function fetchIpInfoWithFallback(client, timeoutMs = 10000) {
   
   for (const api of apis) {
     try {
-      log.debug(`Trying IP API: ${api.name}`);
+      log.info(`Trying IP API: ${api.name}`);
       
       const response = await client.get(api.url, {
         timeout: timeoutMs / apis.length, // Divide timeout across APIs
@@ -92,19 +92,19 @@ async function fetchIpInfoWithFallback(client, timeoutMs = 10000) {
       const ip = api.extract(response.data);
       
       if (!ip) {
-        log.debug(`${api.name}: Missing IP field`);
+        log.warn(`${api.name}: Missing IP field`);
         continue;
       }
       
-      log.debug(`Fetched IP from ${api.name}: ${ip}`);
+      log.info(`Exit IP address retrieved from ${api.name}: ${ip}`);
       return { ip, source: api.name };
     } catch (error) {
-      log.debug(`${api.name} failed: ${error.message}`);
+      log.warn(`${api.name} failed: ${error.message}`);
       continue;
     }
   }
   
-  log.warn('All IP APIs failed');
+  log.warn('All IP APIs failed - no exit IP available');
   return { ip: null, error: 'All IP APIs failed' };
 }
 
