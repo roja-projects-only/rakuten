@@ -192,6 +192,9 @@ class CompatibilityLayer {
       }
     });
     
+    // Start the coordinator (pub/sub listeners, heartbeats, monitoring)
+    await coordinator.start();
+    
     return {
       coordinator,
       jobQueue: coordinator.jobQueue,
