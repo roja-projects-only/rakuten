@@ -212,7 +212,7 @@ Create `/opt/rakuten-checker/.env.coordinator`:
 ```bash
 # Required
 TELEGRAM_BOT_TOKEN=your_bot_token_here
-TARGET_LOGIN_URL=https://grp01.id.rakuten.co.jp/rms/nid/vc?__event=login&service_id=top
+TARGET_LOGIN_URL="https://login.account.rakuten.com/sso/authorize?client_id=rakuten_ichiba_top_web&service_id=s245&response_type=code&scope=openid&redirect_uri=https%3A%2F%2Fwww.rakuten.co.jp%2F"
 REDIS_URL=redis://your-redis-endpoint:6379
 POW_SERVICE_URL=http://pow-service-private-ip:8080
 
@@ -240,7 +240,7 @@ Create `/opt/rakuten-checker/.env.worker`:
 # Required
 REDIS_URL=redis://your-redis-endpoint:6379
 POW_SERVICE_URL=http://pow-service-private-ip:8080
-TARGET_LOGIN_URL=https://grp01.id.rakuten.co.jp/rms/nid/vc?__event=login&service_id=top
+TARGET_LOGIN_URL="https://login.account.rakuten.com/sso/authorize?client_id=rakuten_ichiba_top_web&service_id=s245&response_type=code&scope=openid&redirect_uri=https%3A%2F%2Fwww.rakuten.co.jp%2F"
 
 # Performance
 TIMEOUT_MS=60000

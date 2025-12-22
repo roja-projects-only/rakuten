@@ -18,6 +18,7 @@
  */
 
 require('dotenv').config();
+const { createCompatibilityLayer } = require('./shared/compatibility');
 const { initializeTelegramHandler } = require('./telegramHandler');
 const { getAllActiveBatches, waitForAllBatchCompletion } = require('./telegram/batchHandlers');
 const { getAllActiveCombineBatches, waitForAllCombineBatchCompletion } = require('./telegram/combineBatchRunner');
@@ -29,24 +30,43 @@ const { createLogger } = require('./logger');
 const log = createLogger('main');
 
 /**
- * Validates required environment variables.
+ * Validates required environment variables based on deployment mode.
  * @throws {Error} If any required variable is missing
  */
 function validateEnvironment() {
-  const required = ['TELEGRAM_BOT_TOKEN', 'TARGET_LOGIN_URL'];
-  const missing = required.filter(key => !process.env[key]);
-
-  if (missing.length > 0) {
-    throw new Error(
-      `❌ Missing required environment variables: ${missing.join(', ')}\n\n` +
-      '📝 Please create a .env file with:\n' +
-      '   TELEGRAM_BOT_TOKEN=your_token_here\n' +
-      '   TARGET_LOGIN_URL=https://login.account.rakuten.com/...\n\n' +
-      '💡 Copy .env.example to .env and fill in your values.'
-    );
+  // Use compatibility layer for validation
+  try {
+    const { validateEnvironment } = require('./shared/config/environment');
+    const { config, mode, warnings } = validateEnvironment('auto');
+    
+    log.info(`Detected deployment mode: ${mode}`);
+    
+    if (warnings.length > 0) {
+      warnings.forEach(warning => log.warn(warning));
+    }
+    
+    // Check for required variables based on mode
+    if (mode === 'single') {
+      const required = ['TELEGRAM_BOT_TOKEN', 'TARGET_LOGIN_URL'];
+      const missing = required.filter(key => !process.env[key]);
+      
+      if (missing.length > 0) {
+        throw new Error(
+          `❌ Missing required environment variables for single-node mode: ${missing.join(', ')}\n\n` +
+          '📝 Please create a .env file with:\n' +
+          '   TELEGRAM_BOT_TOKEN=your_token_here\n' +
+          '   TARGET_LOGIN_URL=https://login.account.rakuten.com/...\n\n' +
+          '💡 Copy .env.example to .env and fill in your values.'
+        );
+      }
+    }
+    
+    log.success('Environment variables validated.');
+    return { config, mode };
+    
+  } catch (error) {
+    throw new Error(`Environment validation failed: ${error.message}`);
   }
-
-  log.success('Environment variables validated.');
 }
 
 /**
@@ -79,13 +99,34 @@ async function main() {
     displayBanner();
     log.info('Starting bot initialization...');
 
-    // Validate environment
-    validateEnvironment();
+    // Validate environment and detect mode
+    const { config, mode } = validateEnvironment();
 
     // Ensure directories
     ensureDirectories();
 
-    // Initialize Telegram handler
+    // Initialize compatibility layer
+    log.info('Initializing compatibility layer...');
+    const compatibility = await createCompatibilityLayer();
+    
+    log.info(`Running in ${compatibility.getMode()} mode`);
+    
+    // Log mode-specific information
+    if (compatibility.isSingleNode()) {
+      log.info('Single-node mode features:');
+      log.info('  - In-memory job queue');
+      log.info('  - JSONL-based deduplication');
+      log.info('  - Existing Telegram functionality');
+      log.info('  - Graceful degradation support');
+    } else {
+      log.info('Distributed mode features:');
+      log.info('  - Redis-based coordination');
+      log.info('  - Horizontal scaling');
+      log.info('  - Service health monitoring');
+      log.info('  - Automatic fallbacks');
+    }
+
+    // Initialize Telegram handler with compatibility layer
     const botToken = process.env.TELEGRAM_BOT_TOKEN;
     const batchConcurrency = parseInt(process.env.BATCH_CONCURRENCY, 10) || 1;
 
@@ -93,9 +134,11 @@ async function main() {
       timeoutMs: parseInt(process.env.TIMEOUT_MS, 10) || 60000,
       proxy: process.env.PROXY_SERVER || null,
       targetUrl: process.env.TARGET_LOGIN_URL,
+      compatibility // Pass compatibility layer to handler
     };
 
     log.info('Configuration:');
+    log.info(`Mode: ${compatibility.getMode()}`);
     log.info(`Timeout: ${handlerOptions.timeoutMs}ms`);
     log.info(`Batch Concurrency: ${batchConcurrency}`);
     if (handlerOptions.proxy) {
@@ -173,6 +216,15 @@ async function main() {
         log.info('No active batches.');
       }
       
+      // Shutdown compatibility layer
+      log.info('🔧 Shutting down compatibility layer...');
+      try {
+        await compatibility.shutdown();
+        log.success('Compatibility layer shutdown complete.');
+      } catch (err) {
+        log.warn(`Compatibility layer shutdown error: ${err.message}`);
+      }
+      
       // Flush any buffered Redis writes
       log.info('💾 Flushing buffered writes...');
       try {
@@ -226,6 +278,7 @@ async function main() {
     log.error('2. Verify your bot token is valid');
     log.error('3. Ensure all dependencies are installed (npm install)');
     log.error('4. Check file permissions');
+    log.error('5. For distributed mode, verify Redis connectivity');
     process.exit(1);
   }
 }

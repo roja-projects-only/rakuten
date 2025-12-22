@@ -224,7 +224,7 @@ const ENV_DEFINITIONS = {
 
   // Existing Telegram Bot Configuration (preserved for compatibility)
   TELEGRAM_BOT_TOKEN: {
-    required: false, // Only required in coordinator mode
+    required: false, // Only required in coordinator mode or single-node mode
     description: 'Telegram bot token from @BotFather',
     sensitive: true,
     validate: (value) => {
@@ -236,7 +236,7 @@ const ENV_DEFINITIONS = {
   },
 
   TARGET_LOGIN_URL: {
-    required: false, // Only required in coordinator mode
+    required: false, // Only required in coordinator mode or single-node mode
     description: 'Target OAuth login URL',
     validate: (value) => {
       if (value && !value.startsWith('http')) {
@@ -300,6 +300,96 @@ const ENV_DEFINITIONS = {
     }
   },
 
+  // Existing Environment Variables (preserved for backward compatibility)
+  TIMEOUT_MS: {
+    required: false,
+    default: 60000,
+    description: 'HTTP timeout for credential checks (milliseconds)',
+    validate: (value) => {
+      const timeout = parseInt(value, 10);
+      if (isNaN(timeout) || timeout < 1000 || timeout > 300000) {
+        throw new Error('TIMEOUT_MS must be between 1000-300000ms');
+      }
+      return timeout;
+    }
+  },
+
+  PROXY_SERVER: {
+    required: false,
+    description: 'Single proxy URL for credential checks (legacy)',
+    validate: (value) => {
+      if (value && !value.startsWith('http://') && !value.startsWith('https://') && !value.startsWith('socks://')) {
+        throw new Error('PROXY_SERVER must start with http://, https://, or socks://');
+      }
+      return value;
+    }
+  },
+
+  BATCH_CONCURRENCY: {
+    required: false,
+    default: 1,
+    description: 'Number of parallel credential checks in single-node mode',
+    validate: (value) => {
+      const concurrency = parseInt(value, 10);
+      if (isNaN(concurrency) || concurrency < 1 || concurrency > 20) {
+        throw new Error('BATCH_CONCURRENCY must be between 1-20');
+      }
+      return concurrency;
+    }
+  },
+
+  BATCH_DELAY_MS: {
+    required: false,
+    default: 50,
+    description: 'Delay between request chunks in batch mode (milliseconds)',
+    validate: (value) => {
+      const delay = parseInt(value, 10);
+      if (isNaN(delay) || delay < 0 || delay > 10000) {
+        throw new Error('BATCH_DELAY_MS must be between 0-10000ms');
+      }
+      return delay;
+    }
+  },
+
+  BATCH_HUMAN_DELAY_MS: {
+    required: false,
+    default: 0,
+    description: 'Human delay multiplier in batch mode (0=disabled, 0.1=10%)',
+    validate: (value) => {
+      const delay = parseFloat(value);
+      if (isNaN(delay) || delay < 0 || delay > 1) {
+        throw new Error('BATCH_HUMAN_DELAY_MS must be between 0-1');
+      }
+      return delay;
+    }
+  },
+
+  PROCESSED_TTL_MS: {
+    required: false,
+    default: 30 * 24 * 60 * 60 * 1000, // 30 days
+    description: 'TTL for processed credentials cache (milliseconds)',
+    validate: (value) => {
+      const ttl = parseInt(value, 10);
+      if (isNaN(ttl) || ttl < 60000 || ttl > 365 * 24 * 60 * 60 * 1000) {
+        throw new Error('PROCESSED_TTL_MS must be between 1 minute and 1 year');
+      }
+      return ttl;
+    }
+  },
+
+  FORWARD_TTL_MS: {
+    required: false,
+    default: 30 * 24 * 60 * 60 * 1000, // 30 days
+    description: 'TTL for forwarded message tracking (milliseconds)',
+    validate: (value) => {
+      const ttl = parseInt(value, 10);
+      if (isNaN(ttl) || ttl < 60000 || ttl > 365 * 24 * 60 * 60 * 1000) {
+        throw new Error('FORWARD_TTL_MS must be between 1 minute and 1 year');
+      }
+      return ttl;
+    }
+  },
+
   // Deployment Configuration
   NODE_ENV: {
     required: false,
@@ -345,7 +435,7 @@ function validateEnvironment(mode = 'auto') {
     coordinator: ['REDIS_URL', 'TELEGRAM_BOT_TOKEN', 'TARGET_LOGIN_URL'],
     worker: ['REDIS_URL'],
     'pow-service': [], // Redis is optional for POW service (runs without cache)
-    single: [] // Single-node mode (existing behavior)
+    single: ['TELEGRAM_BOT_TOKEN', 'TARGET_LOGIN_URL'] // Single-node mode (existing behavior)
   };
 
   const requiredForMode = modeRequirements[mode] || [];

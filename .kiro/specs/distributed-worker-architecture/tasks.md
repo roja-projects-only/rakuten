@@ -356,22 +356,22 @@ This implementation plan transforms the Rakuten credential checker from a single
     - Include cost estimates for different deployment models
     - _Requirements: 10.6_
 
-- [ ] 16. Implement backward compatibility and fallback modes
-  - [ ] 16.1 Add single-node mode detection
+- [-] 16. Implement backward compatibility and fallback modes
+  - [x] 16.1 Add single-node mode detection
     - Detect if REDIS_URL is not set
     - Fall back to in-memory job queue
     - Use existing processedStore.js for deduplication
     - Log warning about single-node mode
     - _Requirements: 9.2, 9.3_
 
-  - [ ] 16.2 Add graceful degradation for service unavailability
+  - [x] 16.2 Add graceful degradation for service unavailability
     - Handle Redis unavailable: fall back to in-memory
     - Handle POW service unavailable: use local computation
     - Handle Telegram API unavailable: retry with backoff
     - Log warnings for all degradation scenarios
     - _Requirements: 9.4, 3.7_
 
-  - [ ] 16.3 Maintain existing environment variable compatibility
+  - [x] 16.3 Maintain existing environment variable compatibility
     - Support all existing env vars (TELEGRAM_BOT_TOKEN, TARGET_LOGIN_URL, etc.)
     - Add new env vars with sensible defaults
     - Document all environment variables
