@@ -44,17 +44,9 @@ async function captureAccountData(session, options = {}) {
     }
     
     // Fetch order history and profile data in PARALLEL for speed
-    // Profile has its own 20s timeout since SSO gateway can be slow
-    const PROFILE_TIMEOUT_MS = Math.min(timeoutMs, 20000);
-    
     const [orderResult, profileResult] = await Promise.allSettled([
       fetchLatestOrder(client, jar, timeoutMs),
-      Promise.race([
-        fetchProfileData(client, jar, PROFILE_TIMEOUT_MS),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Profile timeout')), PROFILE_TIMEOUT_MS)
-        ),
-      ]),
+      fetchProfileData(client, jar, timeoutMs),
     ]);
     
     // Process order result
