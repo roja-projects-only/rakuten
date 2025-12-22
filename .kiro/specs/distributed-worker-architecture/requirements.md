@@ -43,9 +43,9 @@ This specification defines a distributed worker architecture for the Rakuten cre
 2. WHEN tasks are available in the queue, THE Worker_Node SHALL pull and process them continuously
 3. WHEN processing a credential, THE Worker_Node SHALL use the assigned proxy from task metadata
 4. WHEN a check completes, THE Worker_Node SHALL publish results to Redis and immediately pull the next task
-5. WHEN a Worker_Node is stopped gracefully (SIGTERM), THE Worker_Node SHALL finish current tasks before shutting down (max 2 minutes)
+5. WHEN a Worker_Node receives SIGTERM, THE Worker_Node SHALL stop pulling new tasks, finish current task (max 2 minutes), release task lease if timeout exceeded, log incomplete task ID, and exit with code 0 for systemd restart
 6. WHEN a Worker_Node loses Redis connection, THE Worker_Node SHALL attempt reconnection with exponential backoff (1s, 2s, 4s, 8s, 16s max, 5 retries)
-7. WHEN reconnection fails after 5 retries, THE Worker_Node SHALL exit with error code for systemd restart
+7. WHEN reconnection fails after 5 retries, THE Worker_Node SHALL exit with error code 1 for systemd restart
 
 ### Requirement 3: Dedicated POW Calculation Service
 
@@ -171,7 +171,58 @@ This specification defines a distributed worker architecture for the Rakuten cre
 | Coordinator heartbeat | 30 seconds | Fast failover detection |
 | Worker heartbeat | 30 seconds | Quick dead worker detection |
 
-## Appendix B: Architecture Diagram
+## Appendix B: Redis Key Schema
+
+| Key Pattern | Example | TTL | Purpose |
+|-------------|---------|-----|---------|
+| `job:{batchId}:{taskId}` | `job:abc123:001` | 5 min | Task lease tracking |
+| `result:{status}:{email}:{password}` | `result:VALID:user@example.com:pass` | 30 days | Deduplication cache |
+| `progress:{batchId}` | `progress:abc123` | 7 days | Batch progress counter |
+| `proxy:{proxyId}:health` | `proxy:p001:health` | 5 min | Proxy health state |
+| `msg:{trackingCode}` | `msg:RK-XXXXXXXX` | 30 days | Channel message reference |
+| `msg:cred:{email}:{password}` | `msg:cred:user@ex.com:pass` | 30 days | Reverse lookup by credential |
+| `coordinator:heartbeat` | - | 30 sec | HA heartbeat signal |
+| `coordinator:lock:{operation}` | `coordinator:lock:forward` | 10 sec | Distributed operation lock |
+| `worker:{workerId}:heartbeat` | `worker:w001:heartbeat` | 30 sec | Worker health signal |
+| `forward:pending:{trackingCode}` | `forward:pending:RK-XXXXXXXX` | 2 min | Two-phase commit state |
+
+## Appendix C: Redis Pub/Sub Channels
+
+| Channel | Publisher | Subscriber | Payload Schema |
+|---------|-----------|------------|----------------|
+| `forward_events` | Worker_Node | Coordinator | `{username, password, capture, ipAddress, timestamp}` |
+| `update_events` | Worker_Node | Coordinator | `{username, password, newStatus, timestamp}` |
+| `worker_heartbeats` | Worker_Node | Coordinator | `{workerId, timestamp, tasksCompleted}` |
+
+## Appendix D: Error Codes
+
+| Code | Meaning | Retry? | Action |
+|------|---------|--------|--------|
+| `TIMEOUT` | HTTP request timeout | Yes | Retry with same proxy |
+| `PROXY_FAILED` | Proxy connection error | Yes | Retry with different proxy |
+| `POW_FAILED` | POW computation failed | Yes | Fallback to local computation |
+| `POW_TIMEOUT` | POW service timeout (>5s) | Yes | Fallback to local computation |
+| `CAPTCHA` | Blocked by captcha/challenge | No | Mark as BLOCKED |
+| `INVALID_CREDENTIAL` | 401/403 authentication failure | No | Mark as INVALID |
+| `SESSION_EXPIRED` | Lost session mid-flow | Yes | Retry from start with same proxy |
+| `REDIS_UNAVAILABLE` | Queue connection lost | No | Worker exits for systemd restart |
+| `PARSE_ERROR` | Failed to parse response | Yes | Retry up to MAX_RETRIES |
+| `NETWORK_ERROR` | Network connectivity issue | Yes | Retry with exponential backoff |
+
+## Appendix E: Service Level Objectives
+
+| Metric | Target | Measurement Window |
+|--------|--------|-------------------|
+| Task completion rate | >95% | Per batch job |
+| Average check duration | <10s | Per credential |
+| POW cache hit rate | >60% | Rolling 5 minutes |
+| Worker availability | >90% | Per instance |
+| Coordinator uptime | >99% | Monthly |
+| Queue drain time (10k batch) | <2 hours | Per batch |
+| Channel forward success rate | >99% | Per batch |
+| Proxy rotation fairness | ±10% distribution | Per 1000 tasks |
+
+## Appendix F: Architecture Diagram
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -233,7 +284,7 @@ This specification defines a distributed worker architecture for the Rakuten cre
               └──────────────────────┘
 ```
 
-## Appendix C: Deployment Models
+## Appendix G: Deployment Models
 
 ### Model 1: Development (Local Testing)
 - **Components**: Single process, in-memory queue, no Redis
@@ -272,7 +323,7 @@ This specification defines a distributed worker architecture for the Rakuten cre
 - **Throughput**: 50-100 concurrent checks
 - **Use case**: Maximum control, single powerful server
 
-## Appendix D: Migration Plan
+## Appendix H: Migration Plan
 
 ### Phase 1: POW Service Extraction (Week 1)
 1. Create POW microservice with HTTP API
@@ -336,6 +387,8 @@ This specification defines a distributed worker architecture for the Rakuten cre
 4. WHEN multiple Coordinators are running, THE Coordinator SHALL use Redis distributed lock (SETNX) to prevent duplicate Telegram updates
 5. WHEN a Coordinator restarts mid-batch, THE Coordinator SHALL reconstruct progress from Result_Store and continue sending updates
 6. WHEN a batch completes while Coordinator is down, THE Coordinator SHALL send summary upon restart using Result_Store data
+7. WHEN forwarding to Telegram channel, THE Coordinator SHALL use two-phase commit: store tracking code with status="pending", forward message, update status="forwarded" with messageId
+8. WHEN backup Coordinator takes over, THE Coordinator SHALL retry any "pending" channel forwards older than 30 seconds to prevent orphaned messages
 
 ### Requirement 13: Observability and Monitoring
 
