@@ -4,6 +4,19 @@
 echo "🚀 Complete worker timeout fix starting..."
 echo ""
 
+# Step 0: Test current Redis connectivity
+echo "🔍 Step 0: Testing current Redis connectivity..."
+if command -v node &> /dev/null; then
+    node scripts/test-redis-timeouts.js
+    if [ $? -ne 0 ]; then
+        echo "⚠️  Redis connectivity issues detected, but continuing with fix..."
+    fi
+else
+    echo "⚠️  Node.js not found, skipping Redis test"
+fi
+
+echo ""
+
 # Step 1: Update environment file
 echo "📝 Step 1: Updating .env.worker with timeout configurations..."
 
@@ -75,14 +88,15 @@ docker run -d \
 if [ $? -eq 0 ]; then
     echo "✅ Worker started successfully"
     echo ""
-    echo "📋 Checking worker logs (waiting 5 seconds)..."
-    sleep 5
+    echo "📋 Checking worker logs (waiting 10 seconds)..."
+    sleep 10
     docker logs --tail 30 rakuten-worker
     echo ""
     echo "🎉 Fix complete! Worker should no longer have timeout errors."
     echo ""
     echo "🔍 Monitor logs with: docker logs -f rakuten-worker"
     echo "📊 Check status with: docker ps | grep rakuten-worker"
+    echo "🧪 Test Redis connectivity: docker exec rakuten-worker node scripts/test-redis-timeouts.js"
 else
     echo "❌ Failed to start worker"
     exit 1

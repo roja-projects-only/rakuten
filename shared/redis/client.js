@@ -70,7 +70,14 @@ class RedisClient {
     // Parse Redis URL if provided
     const redisUrl = process.env.REDIS_URL;
     if (redisUrl) {
-      this.client = new Redis(redisUrl, this.options);
+      // When using Redis URL, ensure options are properly merged
+      this.client = new Redis(redisUrl, {
+        ...this.options,
+        // Explicitly set critical timeout options
+        commandTimeout: this.options.commandTimeout,
+        connectTimeout: this.options.connectTimeout,
+        lazyConnect: this.options.lazyConnect
+      });
     } else {
       this.client = new Redis(this.options);
     }
@@ -89,7 +96,9 @@ class RedisClient {
       log.info('Redis connected successfully', {
         host: this.options.host,
         port: this.options.port,
-        db: this.options.db
+        db: this.options.db,
+        commandTimeout: this.options.commandTimeout,
+        connectTimeout: this.options.connectTimeout
       });
       
       return this.client;
@@ -232,7 +241,15 @@ class RedisClient {
         return false;
       }
       
-      const result = await this.client.ping();
+      // Use a shorter timeout for health checks
+      const healthTimeout = 5000;
+      const result = await Promise.race([
+        this.client.ping(),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Health check timeout')), healthTimeout)
+        )
+      ]);
+      
       return result === 'PONG';
     } catch (error) {
       log.debug('Redis health check failed', { error: error.message });

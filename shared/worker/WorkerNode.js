@@ -699,20 +699,15 @@ class WorkerNode {
         memoryUsage: process.memoryUsage()
       };
       
-      // SET worker heartbeat with TTL
-      await this.redis.executeCommand(
-        'setex',
-        WORKER_HEARTBEAT.generate(this.workerId),
-        WORKER_HEARTBEAT.ttl,
-        JSON.stringify(heartbeatData)
-      );
+      // Use Promise.race to add additional timeout protection for heartbeat
+      const heartbeatTimeout = 30000; // 30 second timeout for heartbeat operations
       
-      // PUBLISH to worker_heartbeats channel
-      await this.redis.executeCommand(
-        'publish',
-        PUBSUB_CHANNELS.workerHeartbeats,
-        JSON.stringify(heartbeatData)
-      );
+      await Promise.race([
+        this.sendHeartbeatCommands(heartbeatData),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Heartbeat timeout')), heartbeatTimeout)
+        )
+      ]);
       
       // Log structured heartbeat
       structuredLog.logWorkerHeartbeat(heartbeatData);
@@ -733,14 +728,35 @@ class WorkerNode {
         error: error.message
       });
       
-      // Heartbeat failure might indicate Redis issues
-      if (this.isFatalError(error)) {
+      // Don't treat heartbeat timeouts as fatal - they're expected under load
+      if (!error.message.includes('timeout') && this.isFatalError(error)) {
         log.error('Heartbeat failure indicates fatal error, initiating shutdown', {
           workerId: this.workerId
         });
         this.shutdown = true;
       }
     }
+  }
+
+  /**
+   * Execute heartbeat Redis commands
+   * @param {Object} heartbeatData - Heartbeat data to send
+   */
+  async sendHeartbeatCommands(heartbeatData) {
+    // SET worker heartbeat with TTL
+    await this.redis.executeCommand(
+      'setex',
+      WORKER_HEARTBEAT.generate(this.workerId),
+      WORKER_HEARTBEAT.ttl,
+      JSON.stringify(heartbeatData)
+    );
+    
+    // PUBLISH to worker_heartbeats channel
+    await this.redis.executeCommand(
+      'publish',
+      PUBSUB_CHANNELS.workerHeartbeats,
+      JSON.stringify(heartbeatData)
+    );
   }
 
   /**
