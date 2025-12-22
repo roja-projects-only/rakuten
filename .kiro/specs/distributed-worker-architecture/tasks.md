@@ -356,7 +356,7 @@ This implementation plan transforms the Rakuten credential checker from a single
     - Include cost estimates for different deployment models
     - _Requirements: 10.6_
 
-- [-] 16. Implement backward compatibility and fallback modes
+- [x] 16. Implement backward compatibility and fallback modes
   - [x] 16.1 Add single-node mode detection
     - Detect if REDIS_URL is not set
     - Fall back to in-memory job queue
@@ -377,8 +377,8 @@ This implementation plan transforms the Rakuten credential checker from a single
     - Document all environment variables
     - _Requirements: 9.6_
 
-- [ ] 17. Integration testing and validation
-  - [ ] 17.1 Test end-to-end batch processing
+- [x] 17. Integration testing and validation
+  - [x] 17.1 Test end-to-end batch processing
     - Submit 100-credential batch via Telegram
     - Verify tasks enqueued correctly
     - Verify workers process tasks
@@ -386,7 +386,7 @@ This implementation plan transforms the Rakuten credential checker from a single
     - Verify final summary with correct counts
     - _Requirements: 1.1, 2.2, 5.3, 5.4_
 
-  - [ ] 17.2 Test coordinator failover
+  - [x] 17.2 Test coordinator failover
     - Start primary coordinator with batch processing
     - Kill primary coordinator mid-batch
     - Verify backup coordinator takes over
@@ -394,7 +394,7 @@ This implementation plan transforms the Rakuten credential checker from a single
     - Verify pending forwards are retried
     - _Requirements: 12.3, 12.5, 12.8_
 
-  - [ ] 17.3 Test worker crash recovery
+  - [x] 17.3 Test worker crash recovery
     - Start worker processing task
     - Kill worker mid-task
     - Verify lease expires after 5 minutes
@@ -402,7 +402,7 @@ This implementation plan transforms the Rakuten credential checker from a single
     - Verify task completes on retry
     - _Requirements: 1.7, 2.5_
 
-  - [ ] 17.4 Test proxy rotation and health tracking
+  - [x] 17.4 Test proxy rotation and health tracking
     - Submit batch with multiple proxies
     - Verify round-robin assignment
     - Simulate proxy failures
@@ -410,7 +410,7 @@ This implementation plan transforms the Rakuten credential checker from a single
     - Verify successful proxies restored
     - _Requirements: 4.2, 4.4, 4.5_
 
-  - [ ] 17.5 Test POW service degradation
+  - [x] 17.5 Test POW service degradation
     - Start batch with POW service running
     - Stop POW service mid-batch
     - Verify workers fall back to local computation
@@ -418,7 +418,7 @@ This implementation plan transforms the Rakuten credential checker from a single
     - Restart POW service and verify workers reconnect
     - _Requirements: 3.5, 3.6, 3.7_
 
-  - [ ] 17.6 Test deduplication across batches
+  - [x] 17.6 Test deduplication across batches
     - Submit batch A with 100 credentials
     - Wait for completion
     - Submit batch B with 50 same + 50 new credentials
