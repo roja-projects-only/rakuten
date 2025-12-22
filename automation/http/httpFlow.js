@@ -19,7 +19,8 @@
 const { extractFormFields, isRedirect, getRedirectUrl } = require('./htmlAnalyzer');
 const { generateCorrelationId, generateFingerprint } = require('./fingerprinting/ratGenerator');
 const { humanDelay } = require('./fingerprinting/bioGenerator');
-const { generateChallengeToken, generateSessionToken, computeCresFromMdataAsync } = require('./fingerprinting/challengeGenerator');
+const { generateChallengeToken, generateSessionToken } = require('./fingerprinting/challengeGenerator');
+const powServiceClient = require('./fingerprinting/powServiceClient');
 const { touchSession } = require('./sessionManager');
 const { createLogger } = require('../../logger');
 
@@ -28,11 +29,65 @@ const { buildAuthorizeRequest, generateFullRatData, generateRealBioData } = requ
 
 const log = createLogger('http-flow');
 
+// Check POW service availability on module load
+let powServiceAvailable = false;
+(async () => {
+  try {
+    powServiceAvailable = await powServiceClient.testConnection();
+    if (!powServiceAvailable) {
+      log.warn('POW service unavailable - will use local fallback computation for slower processing');
+    } else {
+      log.info('POW service connection verified');
+    }
+  } catch (error) {
+    log.warn('POW service connection test failed - will use local fallback computation', { error: error.message });
+  }
+})();
+
 // Rakuten login endpoints
 const LOGIN_BASE = 'https://login.account.rakuten.com';
 const LOGIN_INIT_PATH = '/v2/login';
 const LOGIN_START_PATH = '/v2/login/start';
 const LOGIN_COMPLETE_PATH = '/v2/login/complete';
+
+/**
+ * Compute cres using POW service with enhanced error handling
+ * @param {Object} mdata - Mdata from /util/gc response
+ * @param {string} step - Step name for logging (e.g., 'email-step', 'password-step')
+ * @returns {Promise<string>} Computed cres value
+ */
+async function computeCresWithService(mdata, step) {
+  try {
+    const mdataObj = typeof mdata === 'string' ? JSON.parse(mdata) : mdata;
+    const body = mdataObj?.body;
+    
+    if (!body || !body.mask || !body.key || body.seed === undefined) {
+      log.warn(`[${step}] Invalid mdata structure, using fallback cres`);
+      return generateChallengeToken({ type: 'cres' });
+    }
+    
+    const cres = await powServiceClient.computeCres({
+      mask: body.mask,
+      key: body.key,
+      seed: body.seed
+    });
+    
+    log.debug(`[${step}] Computed cres via POW service: ${cres}`);
+    return cres;
+    
+  } catch (powErr) {
+    // Check if this is a service unavailability error
+    if (powErr.code === 'ECONNREFUSED' || powErr.code === 'ENOTFOUND') {
+      log.warn(`[${step}] POW service unavailable - using local fallback (processing will be slower)`);
+    } else if (powErr.message.includes('timeout')) {
+      log.warn(`[${step}] POW service timeout - using local fallback`);
+    } else {
+      log.warn(`[${step}] POW service error: ${powErr.message} - using local fallback`);
+    }
+    
+    return generateChallengeToken({ type: 'cres' });
+  }
+}
 
 /**
  * Navigates to login page and establishes session.
@@ -162,15 +217,9 @@ async function submitEmailStep(session, email, context, timeoutMs) {
       challengeToken = gcResponse.data.token;
       log.debug(`[email-step] Got challenge token from /util/gc: ${challengeToken.substring(0, 50)}...`);
       
-      // Compute cres from mdata using async worker pool
+      // Compute cres from mdata using POW service client
       if (gcResponse.data?.mdata) {
-        try {
-          cres = await computeCresFromMdataAsync(gcResponse.data.mdata);
-          log.debug(`[email-step] Computed cres from mdata: ${cres}`);
-        } catch (powErr) {
-          log.warn(`[email-step] Async POW failed: ${powErr.message}, using fallback`);
-          cres = generateChallengeToken({ type: 'cres' });
-        }
+        cres = await computeCresWithService(gcResponse.data.mdata, 'email-step');
       }
     } else {
       log.warn('[email-step] /util/gc did not return a token, using generated token');
@@ -321,15 +370,9 @@ async function submitPasswordStep(session, password, emailStepResult, username, 
       challengeToken = gcResponse.data.token;
       log.debug(`[password-step] Got challenge token from /util/gc: ${challengeToken.substring(0, 50)}...`);
       
-      // Compute cres from mdata
+      // Compute cres from mdata using POW service client
       if (gcResponse.data?.mdata) {
-        try {
-          cres = await computeCresFromMdataAsync(gcResponse.data.mdata);
-          log.debug(`[password-step] Computed cres from mdata: ${cres}`);
-        } catch (powErr) {
-          log.warn(`[password-step] Async POW failed: ${powErr.message}, using fallback`);
-          cres = generateChallengeToken({ type: 'cres' });
-        }
+        cres = await computeCresWithService(gcResponse.data.mdata, 'password-step');
       }
     } else {
       log.warn('[password-step] /util/gc did not return a token, using generated token');
@@ -490,15 +533,9 @@ async function skipEmailVerificationStep(session, verifyToken, correlationId, ti
       challengeToken = gcResponse.data.token;
       log.debug(`[verify-skip] Got challenge token: ${challengeToken.substring(0, 50)}...`);
       
-      // Compute cres from mdata
+      // Compute cres from mdata using POW service client
       if (gcResponse.data?.mdata) {
-        try {
-          cres = await computeCresFromMdataAsync(gcResponse.data.mdata);
-          log.debug(`[verify-skip] Computed cres: ${cres}`);
-        } catch (powErr) {
-          log.warn(`[verify-skip] POW failed: ${powErr.message}, using fallback`);
-          cres = generateChallengeToken({ type: 'cres' });
-        }
+        cres = await computeCresWithService(gcResponse.data.mdata, 'verify-skip');
       }
     } else {
       log.warn('[verify-skip] /util/gc did not return token, using generated token');

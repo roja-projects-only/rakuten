@@ -52,8 +52,8 @@ This implementation plan transforms the Rakuten credential checker from a single
 - [x] 3. Checkpoint - Ensure POW service is operational
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 4. Refactor existing code to support POW service client
-  - [ ] 4.1 Create POW service HTTP client with timeout and fallback
+- [x] 4. Refactor existing code to support POW service client
+  - [x] 4.1 Create POW service HTTP client with timeout and fallback
     - Implement HTTP client with 5-second timeout
     - Add fallback to local POW computation on timeout/error
     - Cache fallback results in local memory only (not Redis)
@@ -64,13 +64,13 @@ This implementation plan transforms the Rakuten credential checker from a single
     - **Property 17: Local POW fallback isolation**
     - **Validates: Requirements 3.5, 3.6**
 
-  - [ ] 4.3 Update existing httpFlow.js to use POW service client
+  - [x] 4.3 Update existing httpFlow.js to use POW service client
     - Replace direct POW computation with POW service client calls
     - Add error handling for POW service unavailability
     - Log warnings when falling back to local computation
     - _Requirements: 3.7_
 
-  - [ ] 4.4 Test POW service integration with existing Railway deployment
+  - [x] 4.4 Test POW service integration with existing Railway deployment
     - Deploy updated code to Railway
     - Verify POW service is called for credential checks
     - Verify fallback works when POW service is stopped
