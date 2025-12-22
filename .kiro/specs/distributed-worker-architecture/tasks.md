@@ -293,20 +293,20 @@ This implementation plan transforms the Rakuten credential checker from a single
   - **Property 4: Zombie task recovery**
   - **Validates: Requirements 1.7**
 
-- [ ] 13. Implement observability and metrics
-  - [ ] 13.1 Add structured JSON logging to all components
+- [x] 13. Implement observability and metrics
+  - [x] 13.1 Add structured JSON logging to all components
     - Log task completions with: status, duration, proxyId, workerId, timestamp
     - Log errors with: errorCode, stack trace, context
     - Use existing logger.js with JSON format
     - _Requirements: 13.1_
 
-  - [ ] 13.2 Implement Prometheus metrics endpoint in Coordinator
+  - [x] 13.2 Implement Prometheus metrics endpoint in Coordinator
     - Expose /metrics endpoint with Prometheus format
     - Track: tasks_processed_total, cache_hit_rate, avg_check_duration_seconds, queue_depth
     - Update metrics on task completion and progress updates
     - _Requirements: 13.2, 13.3_
 
-  - [ ] 13.3 Implement error rate monitoring
+  - [x] 13.3 Implement error rate monitoring
     - Track error rate over rolling 100-task window
     - Log warning when error rate exceeds 5%
     - Include error breakdown by error code

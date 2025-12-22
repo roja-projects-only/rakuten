@@ -16,6 +16,8 @@ const {
   ProgressTracker,
   ChannelForwarder
 } = require('./index');
+const MetricsManager = require('./MetricsManager');
+const MetricsServer = require('./MetricsServer');
 const { 
   COORDINATOR_HEARTBEAT,
   COORDINATOR_LOCK,
@@ -43,6 +45,8 @@ class Coordinator {
     this.jobQueue = new JobQueueManager(redisClient, this.proxyPool);
     this.progressTracker = new ProgressTracker(redisClient, telegram);
     this.channelForwarder = new ChannelForwarder(redisClient, telegram, options.channelId);
+    this.metricsManager = new MetricsManager(redisClient);
+    this.metricsServer = new MetricsServer(this, options.metrics);
     
     // Health monitoring
     this.activeWorkers = new Map(); // workerId -> lastHeartbeat timestamp
@@ -95,6 +99,14 @@ class Coordinator {
       // Start zombie task recovery (every 60 seconds)
       this.zombieRecoveryInterval = setInterval(this.recoverZombieTasks, 60000);
       
+      // Start metrics collection (every 30 seconds)
+      this.metricsManager.startPeriodicCollection(30000);
+      
+      // Start metrics HTTP server
+      if (this.options.enableMetricsServer !== false) {
+        await this.metricsServer.start();
+      }
+      
       // Perform crash recovery
       await this.performCrashRecovery();
       
@@ -142,6 +154,14 @@ class Coordinator {
       
       // Stop components
       await this.channelForwarder.stop();
+      
+      // Stop metrics collection
+      this.metricsManager.stopPeriodicCollection();
+      
+      // Stop metrics server
+      if (this.metricsServer) {
+        await this.metricsServer.stop();
+      }
       
       // Clean up coordinator heartbeat
       await this.redis.executeCommand('del', COORDINATOR_HEARTBEAT.key);
@@ -874,6 +894,61 @@ class Coordinator {
     return await this.withLock(operation, async () => {
       return await this.telegram.editMessageText(chatId, messageId, null, text, options);
     }, 10);
+  }
+
+  /**
+   * Get Prometheus metrics endpoint
+   * Requirements: 13.2, 13.3
+   * @returns {Promise<string>} Prometheus-formatted metrics
+   */
+  async getMetricsEndpoint() {
+    try {
+      // Update metrics before generating output
+      await this.metricsManager.updateAllMetrics();
+      
+      // Generate Prometheus format
+      return this.metricsManager.generatePrometheusMetrics();
+      
+    } catch (error) {
+      this.logger.error('Failed to generate metrics', {
+        error: error.message
+      });
+      
+      // Return basic error metrics
+      return `# Error generating metrics: ${error.message}\n`;
+    }
+  }
+
+  /**
+   * Update task completion metrics
+   * Called when tasks complete to track performance
+   * @param {Object} taskData - Task completion data
+   */
+  updateTaskMetrics(taskData) {
+    try {
+      this.metricsManager.updateTaskMetrics(taskData);
+    } catch (error) {
+      this.logger.error('Failed to update task metrics', {
+        error: error.message,
+        taskData
+      });
+    }
+  }
+
+  /**
+   * Update cache metrics
+   * Called when cache hits/misses occur
+   * @param {boolean} isHit - Whether this was a cache hit
+   */
+  updateCacheMetrics(isHit) {
+    try {
+      this.metricsManager.updateCacheMetrics(isHit);
+    } catch (error) {
+      this.logger.error('Failed to update cache metrics', {
+        error: error.message,
+        isHit
+      });
+    }
   }
 }
 

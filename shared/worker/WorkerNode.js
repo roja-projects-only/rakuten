@@ -8,6 +8,7 @@
  */
 
 const { createLogger } = require('../../logger');
+const { createStructuredLogger } = require('../logger/structured');
 const { checkCredentials } = require('../../httpChecker');
 const { captureAccountData } = require('../../automation/http/httpDataCapture');
 const { fetchIpInfo } = require('../../automation/http/ipFetcher');
@@ -23,6 +24,7 @@ const {
 } = require('../redis/keys');
 
 const log = createLogger('worker-node');
+const structuredLog = createStructuredLogger('worker-node');
 
 class WorkerNode {
   constructor(redisClient, options = {}) {
@@ -359,6 +361,19 @@ class WorkerNode {
       // Publish events for coordinator
       await this.publishResultEvents(result, checkResult);
       
+      // Log structured task completion
+      structuredLog.logTaskCompletion({
+        taskId: result.taskId,
+        batchId: result.batchId,
+        username: result.username,
+        status: result.status,
+        duration: result.checkDurationMs,
+        proxyId: result.proxyId,
+        workerId: result.workerId,
+        errorCode: result.errorCode,
+        ipAddress: result.ipAddress
+      });
+      
       log.info(`Task ${taskId} completed: ${result.status}`, {
         workerId: this.workerId,
         taskId,
@@ -372,6 +387,14 @@ class WorkerNode {
       
     } catch (error) {
       const duration = Date.now() - startTime;
+      
+      // Log structured error
+      structuredLog.logError(`Task ${task.taskId} failed`, error, {
+        workerId: this.workerId,
+        taskId: task.taskId,
+        batchId: task.batchId,
+        duration
+      });
       
       log.error(`Task ${task.taskId} failed`, {
         workerId: this.workerId,
@@ -400,6 +423,18 @@ class WorkerNode {
       
       // Increment progress counter (errors count as completed)
       await this.incrementProgress(task.batchId);
+      
+      // Log structured task completion for error
+      structuredLog.logTaskCompletion({
+        taskId: errorResult.taskId,
+        batchId: errorResult.batchId,
+        username: errorResult.username,
+        status: errorResult.status,
+        duration: errorResult.checkDurationMs,
+        proxyId: errorResult.proxyId,
+        workerId: errorResult.workerId,
+        errorCode: errorResult.errorCode
+      });
       
       throw error;
     }
@@ -634,7 +669,8 @@ class WorkerNode {
           batchId: this.currentTask.batchId,
           startedAt: this.currentTask.startedAt
         } : null,
-        uptime: Date.now() - this.startTime
+        uptime: Date.now() - this.startTime,
+        memoryUsage: process.memoryUsage()
       };
       
       // SET worker heartbeat with TTL
@@ -652,6 +688,9 @@ class WorkerNode {
         JSON.stringify(heartbeatData)
       );
       
+      // Log structured heartbeat
+      structuredLog.logWorkerHeartbeat(heartbeatData);
+      
       log.debug('Heartbeat sent', {
         workerId: this.workerId,
         tasksCompleted: this.tasksCompleted,
@@ -659,6 +698,10 @@ class WorkerNode {
       });
       
     } catch (error) {
+      structuredLog.logError('Failed to send heartbeat', error, {
+        workerId: this.workerId
+      });
+      
       log.error('Failed to send heartbeat', {
         workerId: this.workerId,
         error: error.message

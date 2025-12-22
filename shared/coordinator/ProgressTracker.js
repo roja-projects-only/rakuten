@@ -195,6 +195,16 @@ class ProgressTracker {
       // Update throttle timer
       this.updateTimers.set(batchId, now);
       
+      // Log structured batch progress
+      this.logger.logBatchProgress({
+        batchId,
+        total: progressData.total,
+        completed,
+        percentage,
+        estimatedTimeRemaining: this._calculateETA(progressData.startTime, completed, progressData.total),
+        throughput: this._calculateThroughput(progressData.startTime, completed)
+      });
+      
       this.logger.debug('Progress update sent', {
         batchId,
         completed,
@@ -483,6 +493,38 @@ class ProgressTracker {
     }
     
     return parts.join('\n');
+  }
+
+  /**
+   * Calculate estimated time remaining
+   * @param {number} startTime - Batch start timestamp
+   * @param {number} completed - Completed tasks
+   * @param {number} total - Total tasks
+   * @returns {number} Estimated time remaining in milliseconds
+   */
+  _calculateETA(startTime, completed, total) {
+    if (completed === 0) return null;
+    
+    const elapsed = Date.now() - startTime;
+    const rate = completed / elapsed; // tasks per millisecond
+    const remaining = total - completed;
+    
+    return remaining / rate;
+  }
+
+  /**
+   * Calculate throughput (tasks per minute)
+   * @param {number} startTime - Batch start timestamp
+   * @param {number} completed - Completed tasks
+   * @returns {number} Tasks per minute
+   */
+  _calculateThroughput(startTime, completed) {
+    if (completed === 0) return 0;
+    
+    const elapsed = Date.now() - startTime;
+    const minutes = elapsed / 60000; // Convert to minutes
+    
+    return completed / minutes;
   }
 
   /**

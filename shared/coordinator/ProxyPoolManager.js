@@ -8,9 +8,11 @@
  */
 
 const { createLogger } = require('../../logger');
+const { createStructuredLogger } = require('../logger/structured');
 const { PROXY_HEALTH } = require('../redis/keys');
 
 const log = createLogger('proxy-pool-manager');
+const structuredLog = createStructuredLogger('proxy-pool-manager');
 
 class ProxyPoolManager {
   constructor(redisClient, proxies = []) {
@@ -183,6 +185,17 @@ class ProxyPoolManager {
         if (health.healthy === false) {
           log.info(`Proxy ${proxyId} restored to active rotation after success`);
           health.healthy = true;
+          
+          // Log structured proxy health change
+          structuredLog.logProxyHealth({
+            proxyId,
+            proxyUrl: this.proxies[parseInt(proxyId.substring(1)) - 1],
+            healthy: true,
+            consecutiveFailures: health.consecutiveFailures,
+            successRate: health.successRate,
+            lastSuccess: health.lastSuccess,
+            lastFailure: health.lastFailure
+          });
         }
       } else {
         // Increment consecutive failures
@@ -193,6 +206,17 @@ class ProxyPoolManager {
         if (health.consecutiveFailures >= 3 && health.healthy !== false) {
           log.warn(`Proxy ${proxyId} marked unhealthy after ${health.consecutiveFailures} consecutive failures`);
           health.healthy = false;
+          
+          // Log structured proxy health change
+          structuredLog.logProxyHealth({
+            proxyId,
+            proxyUrl: this.proxies[parseInt(proxyId.substring(1)) - 1],
+            healthy: false,
+            consecutiveFailures: health.consecutiveFailures,
+            successRate: health.successRate,
+            lastSuccess: health.lastSuccess,
+            lastFailure: health.lastFailure
+          });
         }
       }
       
