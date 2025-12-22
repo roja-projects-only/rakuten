@@ -172,6 +172,9 @@ class CompatibilityLayer {
       const { getRedisClient } = require('../redis/client');
       const redisClient = getRedisClient();
       
+      // Ensure Redis client is connected before use
+      await redisClient.connect();
+      
       // Test Redis connectivity
       await this.degradation.checkRedisAvailability(
         () => redisClient.executeCommand('ping')
