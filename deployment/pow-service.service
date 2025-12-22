@@ -1,68 +1,53 @@
-# =============================================================================
-# POW SERVICE SYSTEMD UNIT - Auto-restart configuration for EC2 deployment
-# =============================================================================
-# 
-# Installation:
-# 1. Copy to /etc/systemd/system/pow-service.service
-# 2. sudo systemctl daemon-reload
-# 3. sudo systemctl enable pow-service
-# 4. sudo systemctl start pow-service
-# 
-# Requirements: 6.3, 10.4
-# =============================================================================
-
 [Unit]
-Description=POW Service - Proof-of-Work Computation Microservice
-Documentation=https://github.com/your-org/rakuten-telegram-bot
+Description=Rakuten POW Service
+Documentation=https://github.com/your-org/rakuten-checker
 After=network.target redis.service
 Wants=redis.service
+Requires=network.target
 
 [Service]
 Type=simple
-User=powservice
-Group=powservice
-WorkingDirectory=/opt/pow-service
-ExecStart=/usr/bin/docker run \
-    --rm \
-    --name pow-service \
-    --network host \
-    --env-file /opt/pow-service/.env \
-    --log-driver journald \
-    --log-opt tag="pow-service" \
-    pow-service:latest
+User=pow-service
+Group=pow-service
+WorkingDirectory=/opt/rakuten-checker
+ExecStart=/usr/bin/docker run --rm --name pow-service \
+  --network host \
+  --env-file /opt/rakuten-checker/.env.pow-service \
+  --volume /opt/rakuten-checker/logs:/app/logs \
+  rakuten-pow-service:latest
 
-# Restart configuration
+# Restart policy
 Restart=always
 RestartSec=10
 StartLimitInterval=60
 StartLimitBurst=3
 
-# Resource limits (c6i.large has 2 vCPU, 4GB RAM)
-CPUQuota=150%
-MemoryLimit=2G
-MemoryHigh=1.5G
+# Resource limits (POW service is CPU intensive)
+LimitNOFILE=65536
+LimitNPROC=8192
+CPUQuota=800%  # Allow up to 8 CPU cores
 
 # Security settings
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/pow-service/logs
+ReadWritePaths=/opt/rakuten-checker/logs
 
 # Logging
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=pow-service
 
+# Graceful shutdown
+TimeoutStopSec=60
+KillMode=mixed
+KillSignal=SIGTERM
+
 # Environment
 Environment=NODE_ENV=production
 Environment=LOG_LEVEL=info
-Environment=JSON_LOGGING=true
-
-# Graceful shutdown
-TimeoutStopSec=30
-KillMode=mixed
-KillSignal=SIGTERM
+Environment=PORT=8080
 
 [Install]
 WantedBy=multi-user.target

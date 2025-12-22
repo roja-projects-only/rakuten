@@ -1,0 +1,70 @@
+# Multi-stage build for Coordinator
+FROM node:18-alpine AS builder
+
+# Set working directory
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies (including dev dependencies for build)
+RUN npm ci --only=production
+
+# Production stage
+FROM node:18-alpine AS production
+
+# Create app user for security
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S coordinator -u 1001
+
+# Set working directory
+WORKDIR /app
+
+# Copy production dependencies from builder
+COPY --from=builder /app/node_modules ./node_modules
+
+# Copy application files (exclude tests and development files)
+COPY main.js ./
+COPY telegramHandler.js ./
+COPY httpChecker.js ./
+COPY logger.js ./
+COPY package*.json ./
+
+# Copy shared modules
+COPY shared/ ./shared/
+COPY telegram/ ./telegram/
+COPY automation/ ./automation/
+COPY utils/ ./utils/
+
+# Copy deployment scripts
+COPY deployment/ ./deployment/
+
+# Set ownership to app user
+RUN chown -R coordinator:nodejs /app
+
+# Switch to non-root user
+USER coordinator
+
+# Set environment variables
+ENV NODE_ENV=production
+ENV LOG_LEVEL=info
+ENV BATCH_CONCURRENCY=1
+ENV BATCH_MAX_RETRIES=2
+ENV BATCH_DELAY_MS=50
+ENV TIMEOUT_MS=60000
+
+# Expose ports
+# Port 3000 for Telegram webhook (if using webhook mode)
+# Port 9090 for Prometheus metrics endpoint
+EXPOSE 3000 9090
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD node -e "const http = require('http'); \
+    const options = { hostname: 'localhost', port: 9090, path: '/health', timeout: 5000 }; \
+    const req = http.request(options, (res) => process.exit(res.statusCode === 200 ? 0 : 1)); \
+    req.on('error', () => process.exit(1)); \
+    req.end();"
+
+# Start the coordinator
+CMD ["node", "main.js"]

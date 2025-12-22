@@ -1,46 +1,46 @@
 [Unit]
-Description=Rakuten Worker Service
+Description=Rakuten Coordinator Service
 Documentation=https://github.com/your-org/rakuten-checker
-After=network.target redis.service coordinator.service
-Wants=redis.service coordinator.service
+After=network.target redis.service
+Wants=redis.service
 Requires=network.target
 
 [Service]
 Type=simple
-User=worker
-Group=worker
+User=coordinator
+Group=coordinator
 WorkingDirectory=/opt/rakuten-checker
-ExecStart=/usr/bin/docker run --rm --name worker-%i \
+ExecStart=/usr/bin/docker run --rm --name coordinator \
   --network host \
-  --env-file /opt/rakuten-checker/.env.worker \
-  --env WORKER_ID=worker-%i \
+  --env-file /opt/rakuten-checker/.env.coordinator \
   --volume /opt/rakuten-checker/logs:/app/logs \
-  rakuten-worker:latest
+  --volume /opt/rakuten-checker/data:/app/data \
+  rakuten-coordinator:latest
 
 # Restart policy
 Restart=always
-RestartSec=5
+RestartSec=10
 StartLimitInterval=60
-StartLimitBurst=5
+StartLimitBurst=3
 
 # Resource limits
-LimitNOFILE=32768
-LimitNPROC=2048
+LimitNOFILE=65536
+LimitNPROC=4096
 
 # Security settings
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/rakuten-checker/logs
+ReadWritePaths=/opt/rakuten-checker/logs /opt/rakuten-checker/data
 
 # Logging
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=worker-%i
+SyslogIdentifier=coordinator
 
 # Graceful shutdown
-TimeoutStopSec=120
+TimeoutStopSec=300
 KillMode=mixed
 KillSignal=SIGTERM
 

@@ -318,37 +318,37 @@ This implementation plan transforms the Rakuten credential checker from a single
     - **Property 44: Error rate warning**
     - **Validates: Requirements 13.1, 13.3, 13.4**
 
-- [-] 14. Checkpoint - Ensure all components integrate correctly
+- [x] 14. Checkpoint - Ensure all components integrate correctly
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 15. Create deployment configurations
-  - [ ] 15.1 Create Dockerfile for Coordinator
+- [x] 15. Create deployment configurations
+  - [x] 15.1 Create Dockerfile for Coordinator
     - Multi-stage build with Node.js 18
     - Copy only necessary files (exclude tests)
     - Set environment variables
     - Expose ports for Telegram bot and metrics
     - _Requirements: 10.5_
 
-  - [ ] 15.2 Create Dockerfile for Worker Node
+  - [x] 15.2 Create Dockerfile for Worker Node
     - Multi-stage build with Node.js 18
     - Include murmurhash-native for local POW fallback
     - Set environment variables (REDIS_URL, POW_SERVICE_URL)
     - _Requirements: 10.5_
 
-  - [ ] 15.3 Create systemd service files for EC2 deployment
+  - [x] 15.3 Create systemd service files for EC2 deployment
     - Create coordinator.service with auto-restart
     - Create worker.service with auto-restart
     - Create pow-service.service with auto-restart
     - Configure restart policies and logging
     - _Requirements: 10.4_
 
-  - [ ] 15.4 Create Docker Compose for local testing
+  - [x] 15.4 Create Docker Compose for local testing
     - Define services: coordinator, worker (×3), pow-service, redis
     - Configure networking and environment variables
     - Add health checks for all services
     - _Requirements: 10.5_
 
-  - [ ] 15.5 Write deployment documentation
+  - [x] 15.5 Write deployment documentation
     - Document AWS EC2 setup (instance types, security groups)
     - Document environment variable configuration
     - Document scaling procedures (adding workers)

@@ -1,0 +1,72 @@
+# Multi-stage build for Worker Node
+FROM node:18-alpine AS builder
+
+# Install build dependencies for native modules
+RUN apk add --no-cache python3 make g++ git
+
+# Set working directory
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install all dependencies (including native modules)
+RUN npm ci
+
+# Production stage
+FROM node:18-alpine AS production
+
+# Install runtime dependencies for native modules
+RUN apk add --no-cache python3 make g++
+
+# Create app user for security
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S worker -u 1001
+
+# Set working directory
+WORKDIR /app
+
+# Copy dependencies from builder (includes compiled native modules)
+COPY --from=builder /app/node_modules ./node_modules
+
+# Copy application files (exclude tests and development files)
+COPY worker.js ./
+COPY httpChecker.js ./
+COPY logger.js ./
+COPY package*.json ./
+
+# Copy shared modules
+COPY shared/ ./shared/
+COPY automation/ ./automation/
+COPY utils/ ./utils/
+
+# Set ownership to app user
+RUN chown -R worker:nodejs /app
+
+# Switch to non-root user
+USER worker
+
+# Set environment variables
+ENV NODE_ENV=production
+ENV LOG_LEVEL=info
+ENV WORKER_ID=""
+ENV REDIS_URL=""
+ENV POW_SERVICE_URL=""
+ENV TIMEOUT_MS=60000
+ENV BATCH_MAX_RETRIES=2
+
+# No exposed ports (worker connects outbound only)
+
+# Health check - verify worker can connect to Redis
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+  CMD node -e "const redis = require('./shared/redis/client'); \
+    redis.ping().then(() => { \
+      console.log('Redis connection healthy'); \
+      process.exit(0); \
+    }).catch((err) => { \
+      console.error('Redis connection failed:', err.message); \
+      process.exit(1); \
+    });"
+
+# Start the worker
+CMD ["node", "worker.js"]

@@ -1,0 +1,203 @@
+version: '3.8'
+
+services:
+  # Redis - Central coordination and caching
+  redis:
+    image: redis:7-alpine
+    container_name: rakuten-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+      - ./deployment/redis.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - rakuten-network
+
+  # POW Service - Proof-of-work computation
+  pow-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.pow-service
+    container_name: rakuten-pow-service
+    ports:
+      - "8080:8080"
+    environment:
+      - NODE_ENV=production
+      - LOG_LEVEL=info
+      - PORT=8080
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - rakuten-network
+
+  # Coordinator - Telegram bot and job orchestration
+  coordinator:
+    build:
+      context: .
+      dockerfile: Dockerfile.coordinator
+    container_name: rakuten-coordinator
+    ports:
+      - "3000:3000"  # Telegram webhook (if used)
+      - "9090:9090"  # Metrics endpoint
+    environment:
+      - NODE_ENV=production
+      - LOG_LEVEL=info
+      - REDIS_URL=redis://redis:6379
+      - POW_SERVICE_URL=http://pow-service:8080
+      - METRICS_PORT=9090
+      # Add your Telegram bot token and other config here
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TARGET_LOGIN_URL=${TARGET_LOGIN_URL}
+      - FORWARD_CHANNEL_ID=${FORWARD_CHANNEL_ID:-}
+      - ALLOWED_USER_IDS=${ALLOWED_USER_IDS:-}
+      - BATCH_CONCURRENCY=${BATCH_CONCURRENCY:-1}
+      - BATCH_MAX_RETRIES=${BATCH_MAX_RETRIES:-2}
+      - TIMEOUT_MS=${TIMEOUT_MS:-60000}
+      - PROXY_POOL=${PROXY_POOL:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+      pow-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+    networks:
+      - rakuten-network
+
+  # Worker 1
+  worker1:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: rakuten-worker1
+    environment:
+      - NODE_ENV=production
+      - LOG_LEVEL=info
+      - WORKER_ID=worker1
+      - REDIS_URL=redis://redis:6379
+      - POW_SERVICE_URL=http://pow-service:8080
+      - TARGET_LOGIN_URL=${TARGET_LOGIN_URL}
+      - TIMEOUT_MS=${TIMEOUT_MS:-60000}
+      - BATCH_MAX_RETRIES=${BATCH_MAX_RETRIES:-2}
+    depends_on:
+      redis:
+        condition: service_healthy
+      pow-service:
+        condition: service_healthy
+      coordinator:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "const redis = require('./shared/redis/client'); redis.ping().then(() => process.exit(0)).catch(() => process.exit(1));"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - rakuten-network
+
+  # Worker 2
+  worker2:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: rakuten-worker2
+    environment:
+      - NODE_ENV=production
+      - LOG_LEVEL=info
+      - WORKER_ID=worker2
+      - REDIS_URL=redis://redis:6379
+      - POW_SERVICE_URL=http://pow-service:8080
+      - TARGET_LOGIN_URL=${TARGET_LOGIN_URL}
+      - TIMEOUT_MS=${TIMEOUT_MS:-60000}
+      - BATCH_MAX_RETRIES=${BATCH_MAX_RETRIES:-2}
+    depends_on:
+      redis:
+        condition: service_healthy
+      pow-service:
+        condition: service_healthy
+      coordinator:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "const redis = require('./shared/redis/client'); redis.ping().then(() => process.exit(0)).catch(() => process.exit(1));"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - rakuten-network
+
+  # Worker 3
+  worker3:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: rakuten-worker3
+    environment:
+      - NODE_ENV=production
+      - LOG_LEVEL=info
+      - WORKER_ID=worker3
+      - REDIS_URL=redis://redis:6379
+      - POW_SERVICE_URL=http://pow-service:8080
+      - TARGET_LOGIN_URL=${TARGET_LOGIN_URL}
+      - TIMEOUT_MS=${TIMEOUT_MS:-60000}
+      - BATCH_MAX_RETRIES=${BATCH_MAX_RETRIES:-2}
+    depends_on:
+      redis:
+        condition: service_healthy
+      pow-service:
+        condition: service_healthy
+      coordinator:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "const redis = require('./shared/redis/client'); redis.ping().then(() => process.exit(0)).catch(() => process.exit(1));"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - rakuten-network
+
+volumes:
+  redis_data:
+    driver: local
+
+networks:
+  rakuten-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
