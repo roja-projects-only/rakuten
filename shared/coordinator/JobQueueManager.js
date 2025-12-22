@@ -26,7 +26,7 @@ class JobQueueManager {
   }
 
   /**
-   * Enqueue a batch of credentials for processing
+   * Enqueue a batch of credentials for processing (optimized for large batches)
    * @param {string} batchId - Unique batch identifier
    * @param {Array<{username, password}>} credentials - Credentials to check
    * @param {Object} options - Batch options (type, retries, etc.)
@@ -54,7 +54,6 @@ class JobQueueManager {
       
       if (cachedStatus) {
         cachedCredentials.push({ ...credential, cachedStatus });
-        log.debug(`Credential ${credential.username} already processed with status: ${cachedStatus}`);
       } else {
         newCredentials.push(credential);
       }
@@ -66,42 +65,17 @@ class JobQueueManager {
       cachedCount: cachedCredentials.length
     });
 
-    // 3. Create task objects with proxy assignments
-    const tasks = [];
-    for (let i = 0; i < newCredentials.length; i++) {
-      const credential = newCredentials[i];
-      const taskId = generateTaskId(batchId, i);
+    // 3. Bulk enqueue tasks in chunks for large batches
+    if (newCredentials.length > 0) {
+      await this.bulkEnqueueTasks(batchId, newCredentials, options);
       
-      // 4. Assign proxy using round-robin from ProxyPoolManager
-      const proxyAssignment = await this.proxyPool.assignProxy(taskId);
-      
-      const task = {
-        taskId,
+      log.info(`Enqueued ${newCredentials.length} tasks to Redis queue`, {
         batchId,
-        username: credential.username,
-        password: credential.password,
-        proxyId: proxyAssignment?.proxyId || null,
-        proxyUrl: proxyAssignment?.proxyUrl || null,
-        retryCount: 0,
-        createdAt: Date.now(),
-        batchType: options.batchType || 'UNKNOWN'
-      };
-      
-      tasks.push(task);
-    }
-
-    // 5. RPUSH tasks to Redis list: `queue:tasks`
-    if (tasks.length > 0) {
-      const taskJsons = tasks.map(task => JSON.stringify(task));
-      await this.redis.executeCommand('rpush', JOB_QUEUE.tasks, ...taskJsons);
-      
-      log.info(`Enqueued ${tasks.length} tasks to Redis queue`, {
-        batchId,
-        queuedCount: tasks.length
+        queuedCount: newCredentials.length
       });
     }
 
-    // 6. Initialize progress tracker in Redis
+    // 4. Initialize progress tracker in Redis
     await this.initializeProgressTracker(batchId, newCredentials.length, options);
 
     return {
@@ -109,6 +83,118 @@ class JobQueueManager {
       cached: cachedCredentials.length,
       cachedCredentials: cachedCredentials
     };
+  }
+
+  /**
+   * Bulk enqueue tasks in optimized chunks for large batches
+   * @param {string} batchId - Batch identifier
+   * @param {Array<{username, password}>} credentials - Credentials to enqueue
+   * @param {Object} options - Batch options
+   */
+  async bulkEnqueueTasks(batchId, credentials, options) {
+    const CHUNK_SIZE = 1000; // Process 1000 tasks per chunk
+    const totalChunks = Math.ceil(credentials.length / CHUNK_SIZE);
+    
+    log.info(`Bulk enqueuing ${credentials.length} tasks in ${totalChunks} chunks`, {
+      batchId,
+      totalTasks: credentials.length,
+      chunkSize: CHUNK_SIZE,
+      totalChunks
+    });
+
+    // Pre-generate proxy assignments for better performance
+    const proxyAssignments = await this.bulkAssignProxies(credentials.length);
+
+    for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+      const startIdx = chunkIndex * CHUNK_SIZE;
+      const endIdx = Math.min(startIdx + CHUNK_SIZE, credentials.length);
+      const chunk = credentials.slice(startIdx, endIdx);
+      
+      // Create tasks for this chunk
+      const tasks = [];
+      for (let i = 0; i < chunk.length; i++) {
+        const credential = chunk[i];
+        const globalIndex = startIdx + i;
+        const taskId = generateTaskId(batchId, globalIndex);
+        const proxyAssignment = proxyAssignments[globalIndex];
+        
+        const task = {
+          taskId,
+          batchId,
+          username: credential.username,
+          password: credential.password,
+          proxyId: proxyAssignment?.proxyId || null,
+          proxyUrl: proxyAssignment?.proxyUrl || null,
+          retryCount: 0,
+          createdAt: Date.now(),
+          batchType: options.batchType || 'UNKNOWN'
+        };
+        
+        tasks.push(task);
+      }
+
+      // Bulk serialize and enqueue this chunk
+      const taskJsons = tasks.map(task => JSON.stringify(task));
+      
+      // Use pipeline for better performance
+      const pipeline = this.redis.pipeline();
+      
+      // Split into smaller Redis commands to avoid command size limits
+      const REDIS_BATCH_SIZE = 100; // 100 tasks per Redis command
+      for (let i = 0; i < taskJsons.length; i += REDIS_BATCH_SIZE) {
+        const redisBatch = taskJsons.slice(i, i + REDIS_BATCH_SIZE);
+        pipeline.rpush(JOB_QUEUE.tasks, ...redisBatch);
+      }
+      
+      await pipeline.exec();
+      
+      // Log progress for large batches
+      if (totalChunks > 10 && chunkIndex % 10 === 0) {
+        log.info(`Enqueue progress: ${chunkIndex + 1}/${totalChunks} chunks (${endIdx}/${credentials.length} tasks)`, {
+          batchId,
+          chunkIndex: chunkIndex + 1,
+          totalChunks,
+          tasksEnqueued: endIdx
+        });
+      }
+    }
+
+    log.info(`Bulk enqueue completed for batch ${batchId}`, {
+      batchId,
+      totalTasks: credentials.length,
+      chunksProcessed: totalChunks
+    });
+  }
+
+  /**
+   * Pre-generate proxy assignments in bulk for better performance
+   * @param {number} taskCount - Number of tasks to assign proxies for
+   * @returns {Promise<Array<{proxyId, proxyUrl}|null>>}
+   */
+  async bulkAssignProxies(taskCount) {
+    // For single proxy setups, we can optimize this
+    if (!this.proxyPool || this.proxyPool.proxies?.length <= 1) {
+      // Single proxy or no proxy - return same assignment for all
+      const singleAssignment = await this.proxyPool?.assignProxy('bulk-assign') || null;
+      return new Array(taskCount).fill(singleAssignment);
+    }
+
+    // Multiple proxies - use round-robin without individual Redis calls
+    const assignments = [];
+    for (let i = 0; i < taskCount; i++) {
+      // Simple round-robin without health checks for bulk operations
+      // Health checks will happen during actual task processing
+      const proxyIndex = i % this.proxyPool.proxies.length;
+      const proxyUrl = this.proxyPool.proxies[proxyIndex];
+      const proxyId = this.proxyPool._generateProxyId(proxyIndex);
+      
+      assignments.push({
+        proxyId,
+        proxyUrl
+      });
+    }
+    
+    return assignments;
   }
 
   /**
