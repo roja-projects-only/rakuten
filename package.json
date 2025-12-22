@@ -41,6 +41,7 @@
     "ioredis": "^5.4.2",
     "jest": "^30.2.0",
     "murmurhash3js-revisited": "^3.0.0",
+    "redis": "^5.10.0",
     "telegraf": "^4.16.3",
     "test": "^3.3.0",
     "tough-cookie": "^5.1.2",
