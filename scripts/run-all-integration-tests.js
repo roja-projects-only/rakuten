@@ -52,6 +52,30 @@ class MasterIntegrationTestRunner {
         script: 'test-deduplication-across-batches.js',
         description: 'Tests cross-batch credential deduplication',
         requirements: ['7.1', '7.2', '7.5']
+      },
+      {
+        name: 'Load Test 10k Batch',
+        script: 'test-load-10k-batch.js',
+        description: 'Tests system performance with 10k credential batch',
+        requirements: ['6.5']
+      },
+      {
+        name: 'Concurrent Batch Processing',
+        script: 'test-concurrent-batch-processing.js',
+        description: 'Tests concurrent processing of multiple batches',
+        requirements: ['1.3', '5.1', '5.2']
+      },
+      {
+        name: 'POW Cache Hit Rate',
+        script: 'test-pow-cache-hit-rate.js',
+        description: 'Tests POW service cache effectiveness',
+        requirements: ['3.3', '3.8']
+      },
+      {
+        name: 'Proxy Fairness',
+        script: 'test-proxy-fairness.js',
+        description: 'Tests fair proxy distribution across tasks',
+        requirements: ['4.2']
       }
     ];
   }

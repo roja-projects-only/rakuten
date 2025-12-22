@@ -22,6 +22,10 @@ class IntegrationTestValidator {
       'test-proxy-rotation-health.js',
       'test-pow-service-degradation.js',
       'test-deduplication-across-batches.js',
+      'test-load-10k-batch.js',
+      'test-concurrent-batch-processing.js',
+      'test-pow-cache-hit-rate.js',
+      'test-proxy-fairness.js',
       'run-all-integration-tests.js'
     ];
     

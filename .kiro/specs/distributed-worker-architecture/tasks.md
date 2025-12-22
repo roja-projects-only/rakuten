@@ -426,8 +426,8 @@ This implementation plan transforms the Rakuten credential checker from a single
     - Verify summary shows cache skip count
     - _Requirements: 7.1, 7.2, 7.5_
 
-- [ ] 18. Performance testing and optimization
-  - [ ] 18.1 Load test with 10k credential batch
+- [x] 18. Performance testing and optimization
+  - [x] 18.1 Load test with 10k credential batch
     - Deploy 20 worker instances (t3.micro spot)
     - Submit 10k credential batch
     - Monitor queue depth, worker CPU, Redis memory
@@ -435,21 +435,21 @@ This implementation plan transforms the Rakuten credential checker from a single
     - Measure actual throughput (credentials/minute)
     - _Requirements: 6.5_
 
-  - [ ] 18.2 Test concurrent batch processing
+  - [x] 18.2 Test concurrent batch processing
     - Submit 3 batches simultaneously (1k each)
     - Verify fair task distribution across batches
     - Verify progress tracking per batch
     - Verify no cross-batch contamination
     - _Requirements: 1.3, 5.1, 5.2_
 
-  - [ ] 18.3 Measure POW cache hit rate
+  - [x] 18.3 Measure POW cache hit rate
     - Submit batch with repeated mask/key/seed patterns
     - Monitor POW service cache hit rate
     - Verify >60% cache hit rate (target SLO)
     - Verify cache TTL behavior (5 minutes)
     - _Requirements: 3.3, 3.8_
 
-  - [ ] 18.4 Validate proxy fairness
+  - [x] 18.4 Validate proxy fairness
     - Process 1000 tasks with 10 proxies
     - Measure tasks per proxy
     - Verify each proxy gets 100 ±10 tasks (target SLO)
