@@ -8,7 +8,7 @@ const { registerBatchHandlers, abortActiveBatch, hasActiveBatch } = require('./t
 const { registerCombineHandlers, hasSession: hasCombineSession, addFileToSession, TELEGRAM_FILE_LIMIT_BYTES } = require('./telegram/combineHandler');
 const { abortCombineBatch, hasCombineBatch, getActiveCombineBatch } = require('./telegram/combineBatchRunner');
 const { registerExportHandler } = require('./telegram/exportHandler');
-const { forwardValidToChannel } = require('./telegram/channelForwarder');
+const { forwardValidToChannel, handleCredentialStatusChange } = require('./telegram/channelForwarder');
 const { getRedisClient, initProcessedStore } = require('./automation/batch/processedStore');
 const {
   buildStartMessage,

