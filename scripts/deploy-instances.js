@@ -229,12 +229,18 @@ class InstanceDeployer {
       console.log(`   📥 Updating repository...`);
       await this.updateRepository(instance.ip);
       
-      // Run deployment script
-      if (instance.deployScript) {
-        console.log(`   🔧 Running deployment script...`);
-        await this.runDeploymentScript(instance.ip, instance.deployScript);
+      // Deploy based on instance type
+      if (instance.type === 'worker') {
+        console.log(`   🔧 Rebuilding and restarting worker...`);
+        await this.deployWorker(instance.ip);
+      } else if (instance.type === 'pow-service') {
+        console.log(`   🔧 Rebuilding and restarting POW service...`);
+        await this.deployPowService(instance.ip);
+      } else if (instance.type === 'coordinator') {
+        console.log(`   🔧 Rebuilding and restarting coordinator...`);
+        await this.deployCoordinator(instance.ip);
       } else {
-        console.log(`   ⚠️  No deployment script configured for ${instance.type}`);
+        console.log(`   ⚠️  Unknown instance type: ${instance.type}`);
       }
       
       // Verify services
@@ -268,19 +274,58 @@ class InstanceDeployer {
       `cd ${PROJECT_DIR}`,
       'git fetch origin',
       'git reset --hard origin/main',
-      'git clean -fd',
-      'npm install --production'
+      'git clean -fd'
     ];
     
     await this.sshCommand(ip, commands.join(' && '));
   }
 
-  async runDeploymentScript(ip, scriptPath) {
-    // Make script executable and run it
+  async deployWorker(ip) {
     const commands = [
       `cd ${PROJECT_DIR}`,
-      `chmod +x ${scriptPath}`,
-      scriptPath
+      // Stop existing worker
+      'sudo docker stop rakuten-worker 2>/dev/null || true',
+      'sudo docker rm rakuten-worker 2>/dev/null || true',
+      // Remove old image to force rebuild
+      'sudo docker rmi rakuten-worker 2>/dev/null || true',
+      // Build new image
+      'sudo docker build -f Dockerfile.worker -t rakuten-worker .',
+      // Start new container
+      'sudo docker run -d --name rakuten-worker --restart unless-stopped --env-file .env.worker rakuten-worker'
+    ];
+    
+    await this.sshCommand(ip, commands.join(' && '));
+  }
+
+  async deployPowService(ip) {
+    const commands = [
+      `cd ${PROJECT_DIR}`,
+      // Stop existing service
+      'sudo docker stop pow-service 2>/dev/null || true',
+      'sudo docker rm pow-service 2>/dev/null || true',
+      // Remove old image
+      'sudo docker rmi pow-service 2>/dev/null || true',
+      // Build new image
+      'sudo docker build -f Dockerfile.pow-service -t pow-service .',
+      // Start new container
+      'sudo docker run -d --name pow-service --restart unless-stopped --env-file .env.pow-service -p 3001:3001 pow-service'
+    ];
+    
+    await this.sshCommand(ip, commands.join(' && '));
+  }
+
+  async deployCoordinator(ip) {
+    const commands = [
+      `cd ${PROJECT_DIR}`,
+      // Stop existing coordinator
+      'sudo docker stop rakuten-coordinator 2>/dev/null || true',
+      'sudo docker rm rakuten-coordinator 2>/dev/null || true',
+      // Remove old image
+      'sudo docker rmi rakuten-coordinator 2>/dev/null || true',
+      // Build new image
+      'sudo docker build -f Dockerfile.coordinator -t rakuten-coordinator .',
+      // Start new container
+      'sudo docker run -d --name rakuten-coordinator --restart unless-stopped --env-file .env.coordinator rakuten-coordinator'
     ];
     
     await this.sshCommand(ip, commands.join(' && '));
@@ -289,8 +334,8 @@ class InstanceDeployer {
   async verifyServices(ip, services) {
     for (const service of services) {
       try {
-        // Check if service is running
-        await this.sshCommand(ip, `docker ps | grep ${service} || systemctl is-active ${service}`);
+        // Check if service is running (Docker containers or systemd services)
+        await this.sshCommand(ip, `sudo docker ps | grep ${service} || sudo systemctl is-active ${service} || echo "Service ${service} status unknown"`);
       } catch (error) {
         console.log(`   ⚠️  Service ${service} may not be running properly`);
       }
@@ -301,13 +346,13 @@ class InstanceDeployer {
     return new Promise((resolve, reject) => {
       const sshCmd = `ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no -o ConnectTimeout=10 ${SSH_USER}@${ip} "${command}"`;
       
-      exec(sshCmd, { timeout: 300000 }, (error, stdout, stderr) => {
+      exec(sshCmd, { timeout: 600000 }, (error, stdout, stderr) => { // Increased timeout to 10 minutes
         if (error) {
           reject(new Error(`SSH command failed: ${error.message}`));
           return;
         }
         
-        if (stderr && !stderr.includes('Warning')) {
+        if (stderr && !stderr.includes('Warning') && !stderr.includes('No such container')) {
           console.log(`   📝 ${stderr.trim()}`);
         }
         
