@@ -233,7 +233,7 @@ async function getProcessedStatus(key, ttlMs = DEFAULT_TTL_MS) {
 
 /**
  * Batch lookup for multiple keys - much faster than individual lookups.
- * Uses Redis MGET for batch operations.
+ * Uses Redis MGET for batch operations with optimized key checking.
  * New format checks: proc:{STATUS}:{email}:{password} for all statuses
  * Also checks old format: proc:{email}:{password} for migration
  * @param {string[]} keys - Array of keys to lookup
@@ -249,7 +249,7 @@ async function getProcessedStatusBatch(keys, ttlMs = DEFAULT_TTL_MS) {
   
   if (backend === 'redis') {
     try {
-      const BATCH_SIZE = 250; // Smaller batches since we query 4 keys per credential
+      const BATCH_SIZE = 1000; // Increased from 250 to 1000 for better performance
       const totalBatches = Math.ceil(keys.length / BATCH_SIZE);
       
       log.info(`Checking ${keys.length} keys against Redis (${totalBatches} batches)...`);
@@ -268,7 +268,16 @@ async function getProcessedStatusBatch(keys, ttlMs = DEFAULT_TTL_MS) {
           }
         }
         
-        const values = await redisClient.mget(...redisKeys);
+        // Use pipeline for even better performance on large batches
+        let values;
+        if (redisKeys.length > 2000) {
+          const pipeline = redisClient.pipeline();
+          pipeline.mget(...redisKeys);
+          const results = await pipeline.exec();
+          values = results[0][1]; // Get the mget result from pipeline
+        } else {
+          values = await redisClient.mget(...redisKeys);
+        }
         
         // Process results - find first matching status for each credential
         const foundStatus = new Map();
@@ -282,7 +291,16 @@ async function getProcessedStatusBatch(keys, ttlMs = DEFAULT_TTL_MS) {
         const notFound = batch.filter(k => !foundStatus.has(k));
         if (notFound.length > 0) {
           const oldKeys = notFound.map(k => `${REDIS_PREFIX}${k}`);
-          const oldValues = await redisClient.mget(...oldKeys);
+          let oldValues;
+          
+          if (oldKeys.length > 500) {
+            const pipeline = redisClient.pipeline();
+            pipeline.mget(...oldKeys);
+            const results = await pipeline.exec();
+            oldValues = results[0][1];
+          } else {
+            oldValues = await redisClient.mget(...oldKeys);
+          }
           
           for (let j = 0; j < notFound.length; j++) {
             if (oldValues[j]) {
@@ -302,7 +320,7 @@ async function getProcessedStatusBatch(keys, ttlMs = DEFAULT_TTL_MS) {
         }
         
         // Log progress for large batches
-        if (totalBatches > 10 && (i / BATCH_SIZE) % 10 === 0) {
+        if (totalBatches > 5 && (i / BATCH_SIZE) % 5 === 0) {
           log.debug(`Redis MGET progress: ${Math.floor(i / BATCH_SIZE) + 1}/${totalBatches} batches`);
         }
       }

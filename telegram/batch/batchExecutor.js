@@ -51,6 +51,14 @@ const PROCESSED_TTL_MS = parseInt(process.env.PROCESSED_TTL_MS, 10) || 7 * 24 * 
 function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, checkCredentials) {
   const chatId = ctx.chat.id;
   
+  // Debug logging to see what we have
+  log.info('Batch execution options:', {
+    hasCompatibility: !!options.compatibility,
+    compatibilityKeys: options.compatibility ? Object.keys(options.compatibility) : [],
+    isDistributed: options.compatibility?.isDistributed ? options.compatibility.isDistributed() : 'N/A',
+    mode: options.compatibility?.getMode ? options.compatibility.getMode() : 'N/A'
+  });
+  
   // Check if we're in coordinator mode - if so, queue to Redis instead of processing directly
   if (options.compatibility && options.compatibility.isDistributed && options.compatibility.isDistributed()) {
     log.info(`Coordinator mode detected - queuing ${batch.count} tasks to Redis instead of direct processing`);
