@@ -379,13 +379,29 @@ async function submitPasswordStep(session, password, emailStepResult, username, 
     
     log.debug(`Password step: ${response.status}`);
     
-    const result = {
+    let result = {
       status: response.status,
       statusText: response.statusText,
       data: response.data,
       headers: response.headers,
       url: response.request?.res?.responseUrl || url,
     };
+    
+    // Check if email verification is required (action field present)
+    if (response.status === 200 && response.data?.action && response.data?.token) {
+      log.info('[password-step] Email verification required, attempting to skip...');
+      try {
+        const skipResult = await skipEmailVerificationStep(session, response.data.token, correlationId, timeoutMs);
+        if (skipResult) {
+          result = {
+            ...result,
+            ...skipResult,
+          };
+        }
+      } catch (skipErr) {
+        log.warn('[password-step] Email verification skip failed:', skipErr.message);
+      }
+    }
     
     // If redirect, follow it
     if (isRedirect(response)) {
@@ -420,6 +436,133 @@ async function submitPasswordStep(session, password, emailStepResult, username, 
     }
     throw new Error(`Password submission failed: ${error.message}`);
   }
+}
+
+/**
+ * Skips email verification step by POSTing to /v2/verify/email with empty code.
+ * Called when /v2/login/complete returns an action requiring verification.
+ * 
+ * @param {Object} session - HTTP session
+ * @param {string} verifyToken - Token from login/complete response
+ * @param {string} correlationId - Correlation ID for request
+ * @param {number} timeoutMs - Request timeout
+ * @returns {Promise<Object|null>} Updated result or null if failed
+ */
+async function skipEmailVerificationStep(session, verifyToken, correlationId, timeoutMs) {
+  const { client } = session;
+  
+  touchSession(session);
+  
+  // Generate fingerprint data for /util/gc call
+  const fingerprint = generateFingerprint();
+  const ratData = generateFullRatData(correlationId, fingerprint);
+  
+  // Call /util/gc to get challenge token
+  let challengeToken = null;
+  let cres = null;
+  
+  try {
+    log.debug('[verify-skip] Calling /util/gc to get challenge token');
+    const gcUrl = `${LOGIN_BASE}/util/gc?client_id=rakuten_ichiba_top_web&tracking_id=${correlationId}`;
+    const gcPayload = {
+      page_type: 'LOGIN_START',  // Same page_type as login flow
+      lang: 'en-US',
+      rat: ratData,
+    };
+    
+    const gcResponse = await client.post(gcUrl, gcPayload, {
+      timeout: timeoutMs,
+      headers: {
+        'Accept': '*/*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Content-Type': 'application/json',
+        'Origin': LOGIN_BASE,
+        'Referer': `${LOGIN_BASE}/`,
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'same-origin',
+      },
+    });
+    
+    log.debug(`[verify-skip] /util/gc response: ${gcResponse.status}`);
+    
+    if (gcResponse.status === 200 && gcResponse.data?.token) {
+      challengeToken = gcResponse.data.token;
+      log.debug(`[verify-skip] Got challenge token: ${challengeToken.substring(0, 50)}...`);
+      
+      // Compute cres from mdata
+      if (gcResponse.data?.mdata) {
+        try {
+          cres = await computeCresFromMdataAsync(gcResponse.data.mdata);
+          log.debug(`[verify-skip] Computed cres: ${cres}`);
+        } catch (powErr) {
+          log.warn(`[verify-skip] POW failed: ${powErr.message}, using fallback`);
+          cres = generateChallengeToken({ type: 'cres' });
+        }
+      }
+    } else {
+      log.warn('[verify-skip] /util/gc did not return token, using generated token');
+      challengeToken = generateSessionToken('St.ott-v2');
+    }
+  } catch (err) {
+    log.warn('[verify-skip] /util/gc call failed:', err.message);
+    challengeToken = generateSessionToken('St.ott-v2');
+  }
+  
+  if (!cres) {
+    cres = generateChallengeToken({ type: 'cres' });
+  }
+  
+  // POST to /v2/verify/email with empty code to skip
+  const skipUrl = `${LOGIN_BASE}/v2/verify/email`;
+  const skipPayload = {
+    token: verifyToken,
+    code: '',  // Empty code = skip verification
+    challenge: {
+      cres: cres,
+      token: challengeToken,
+    },
+  };
+  
+  log.debug(`[verify-skip] POSTing to ${skipUrl}`);
+  
+  const skipResponse = await client.post(skipUrl, skipPayload, {
+    timeout: timeoutMs,
+    maxRedirects: 0,
+    validateStatus: (status) => status < 600,
+    headers: {
+      'Accept': '*/*',
+      'Accept-Language': 'en-US',
+      'Content-Type': 'application/json',
+      'Origin': LOGIN_BASE,
+      'Referer': `${LOGIN_BASE}/`,
+      'Sec-Fetch-Dest': 'empty',
+      'Sec-Fetch-Mode': 'cors',
+      'Sec-Fetch-Site': 'same-origin',
+      'X-Correlation-Id': correlationId,
+    },
+  });
+  
+  log.debug(`[verify-skip] Response status: ${skipResponse.status}`);
+  
+  if (skipResponse.status !== 200) {
+    log.warn(`[verify-skip] Skip failed with status: ${skipResponse.status}`);
+    if (skipResponse.data) {
+      log.debug(`[verify-skip] Response: ${JSON.stringify(skipResponse.data).substring(0, 300)}`);
+    }
+    return null;
+  }
+  
+  log.info('[verify-skip] Email verification skipped successfully');
+  
+  return {
+    status: skipResponse.status,
+    statusText: skipResponse.statusText,
+    data: skipResponse.data,
+    headers: skipResponse.headers,
+    url: skipUrl,
+    verificationSkipped: true,
+  };
 }
 
 /**

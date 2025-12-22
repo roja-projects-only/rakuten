@@ -59,6 +59,18 @@ function detectOutcome(response, finalUrl = null) {
             alignToken: data.payload.align_token,
           };
         }
+        
+        // Session alignment without align_token (e.g., after email verification skip)
+        if (data.redirect_uri.includes('member.id.rakuten.co.jp') || data.redirect_uri.includes('sessionAlign')) {
+          log.debug('[detect] Session alignment redirect (no align_token) - credentials are VALID');
+          return {
+            status: 'VALID',
+            message: 'Login successful - Valid credentials (session alignment)',
+            url: data.redirect_uri,
+            needsSessionAlign: true,
+            alignToken: data.payload?.align_token || null,
+          };
+        }
       }
       
       // Check final URL pattern
@@ -68,6 +80,13 @@ function detectOutcome(response, finalUrl = null) {
           message: 'Login successful - Valid credentials',
           url,
         };
+      }
+      
+      // Check for verificationSkipped flag (set by httpFlow after email skip)
+      if (response?.verificationSkipped) {
+        log.debug('[detect] Email verification was skipped - checking response');
+        // After skip, data should contain redirect_uri (already checked above)
+        // If we get here, it might be a different response format
       }
     }
 
