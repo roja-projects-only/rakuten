@@ -40,6 +40,10 @@ const PROGRESS_TRACKER = {
   generate: (batchId) => `progress:${batchId}`,
   counterPattern: 'progress:{batchId}:count',
   generateCounter: (batchId) => `progress:${batchId}:count`,
+  countsPattern: 'progress:{batchId}:counts',
+  generateCounts: (batchId) => `progress:${batchId}:counts`,
+  validCredsPattern: 'progress:{batchId}:valid',
+  generateValidCreds: (batchId) => `progress:${batchId}:valid`,
   ttl: 7 * 24 * 60 * 60 // 7 days in seconds
 };
 

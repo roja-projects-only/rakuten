@@ -618,7 +618,7 @@ class WorkerNode {
   }
 
   /**
-   * Store result in Redis Result_Store
+   * Store result in Redis Result_Store and update progress tracking
    * @param {Object} result - Result object to store
    */
   async storeResult(result) {
@@ -633,6 +633,14 @@ class WorkerNode {
         resultData
       );
       
+      // Update result counts for real-time progress tracking
+      await this.updateResultCounts(result);
+      
+      // If VALID, add to valid credentials list
+      if (result.status === 'VALID') {
+        await this.addValidCredential(result);
+      }
+      
       log.debug(`Stored result in cache`, {
         workerId: this.workerId,
         resultKey,
@@ -646,6 +654,65 @@ class WorkerNode {
         error: error.message
       });
       // Don't throw - result storage failure shouldn't fail the task
+    }
+  }
+
+  /**
+   * Update result counts for batch progress tracking
+   * @param {Object} result - Result object
+   */
+  async updateResultCounts(result) {
+    try {
+      const countsKey = PROGRESS_TRACKER.generateCounts(result.batchId);
+      await this.redis.executeCommand('hincrby', countsKey, result.status, 1);
+      
+      log.debug(`Updated ${result.status} count for batch ${result.batchId}`, {
+        workerId: this.workerId,
+        batchId: result.batchId,
+        status: result.status
+      });
+      
+    } catch (error) {
+      log.error('Failed to update result counts', {
+        workerId: this.workerId,
+        batchId: result.batchId,
+        status: result.status,
+        error: error.message
+      });
+      // Don't throw - count tracking failure shouldn't fail the task
+    }
+  }
+
+  /**
+   * Add valid credential to the list for progress display
+   * @param {Object} result - Result object with VALID status
+   */
+  async addValidCredential(result) {
+    try {
+      const validCredsKey = PROGRESS_TRACKER.generateValidCreds(result.batchId);
+      const credData = JSON.stringify({
+        username: result.username,
+        password: result.password,
+        ipAddress: result.ipAddress || 'Unknown'
+      });
+      
+      await this.redis.executeCommand('lpush', validCredsKey, credData);
+      await this.redis.executeCommand('expire', validCredsKey, PROGRESS_TRACKER.ttl);
+      
+      log.debug(`Added valid credential to list for batch ${result.batchId}`, {
+        workerId: this.workerId,
+        batchId: result.batchId,
+        username: result.username
+      });
+      
+    } catch (error) {
+      log.error('Failed to add valid credential to list', {
+        workerId: this.workerId,
+        batchId: result.batchId,
+        username: result.username,
+        error: error.message
+      });
+      // Don't throw - valid creds tracking failure shouldn't fail the task
     }
   }
 

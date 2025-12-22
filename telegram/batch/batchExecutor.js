@@ -117,7 +117,8 @@ async function runDistributedBatch(ctx, batch, msgId, statusMsg, options, helper
       batchId,
       result.queued,
       chatId,
-      statusMsg.message_id
+      statusMsg.message_id,
+      batch.filename
     );
     
     // Subscribe to progress updates for this batch

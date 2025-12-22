@@ -20,8 +20,8 @@ class ProgressTracker {
     // Track active progress trackers for coordinator restart recovery
     this.activeTrackers = new Map(); // batchId -> progress data
     
-    // Throttle interval (3 seconds per batch)
-    this.throttleMs = 3000;
+    // Throttle interval (2 seconds per batch for more responsive updates)
+    this.throttleMs = 2000;
   }
 
   /**
@@ -30,27 +30,37 @@ class ProgressTracker {
    * @param {number} totalTasks - Total number of tasks
    * @param {number} chatId - Telegram chat ID
    * @param {number} messageId - Telegram message ID to edit
+   * @param {string} filename - Batch filename for display
    * @returns {Promise<void>}
    */
-  async initBatch(batchId, totalTasks, chatId, messageId) {
+  async initBatch(batchId, totalTasks, chatId, messageId, filename = null) {
     const progressData = {
       batchId,
       total: totalTasks,
       completed: 0,
       chatId,
       messageId,
-      startTime: Date.now()
+      filename: filename || `batch-${batchId}`,
+      startTime: Date.now(),
+      counts: { VALID: 0, INVALID: 0, BLOCKED: 0, ERROR: 0 },
+      validCreds: []
     };
 
     try {
       // Store progress tracker in Redis with 7-day TTL
       const key = PROGRESS_TRACKER.generate(batchId);
-      await this.redis.setex(key, PROGRESS_TRACKER.ttl, JSON.stringify(progressData));
+      await this.redis.executeCommand('setex', key, PROGRESS_TRACKER.ttl, JSON.stringify(progressData));
       
       // Initialize progress counter to 0
       const counterKey = PROGRESS_TRACKER.generateCounter(batchId);
-      await this.redis.set(counterKey, 0);
-      await this.redis.expire(counterKey, PROGRESS_TRACKER.ttl);
+      await this.redis.executeCommand('set', counterKey, 0);
+      await this.redis.executeCommand('expire', counterKey, PROGRESS_TRACKER.ttl);
+      
+      // Initialize result counters
+      const countsKey = PROGRESS_TRACKER.generateCounts(batchId);
+      await this.redis.executeCommand('hset', countsKey, 
+        'VALID', 0, 'INVALID', 0, 'BLOCKED', 0, 'ERROR', 0);
+      await this.redis.executeCommand('expire', countsKey, PROGRESS_TRACKER.ttl);
       
       // Store in local cache for fast access
       this.activeTrackers.set(batchId, progressData);
@@ -62,7 +72,8 @@ class ProgressTracker {
         batchId,
         totalTasks,
         chatId,
-        messageId
+        messageId,
+        filename
       });
       
     } catch (error) {
@@ -89,7 +100,7 @@ class ProgressTracker {
       
       // Fallback to Redis
       const key = PROGRESS_TRACKER.generate(batchId);
-      const data = await this.redis.get(key);
+      const data = await this.redis.executeCommand('get', key);
       
       if (!data) {
         return null;
@@ -131,21 +142,21 @@ class ProgressTracker {
 
   /**
    * Handle progress update from worker (called on Redis pub/sub event)
-   * Implements 3-second throttling per batch to prevent Telegram rate limiting
+   * Implements 2-second throttling per batch to prevent Telegram rate limiting
    * @param {string} batchId - Batch identifier
    * @returns {Promise<void>}
    */
   async handleProgressUpdate(batchId) {
     try {
-      // Check throttling - skip if less than 3 seconds since last update
+      // Check throttling - skip if less than 2 seconds since last update
       const now = Date.now();
       const lastUpdate = this.updateTimers.get(batchId) || 0;
       
-      if (now - lastUpdate < this.throttleMs) {
+      if (now - lastUpdate < 2000) { // Reduced from 3000ms to 2000ms for more responsive updates
         this.logger.debug('Progress update throttled', {
           batchId,
           timeSinceLastUpdate: now - lastUpdate,
-          throttleMs: this.throttleMs
+          throttleMs: 2000
         });
         return;
       }
@@ -159,27 +170,44 @@ class ProgressTracker {
       
       // Fetch current completed count from Redis
       const counterKey = PROGRESS_TRACKER.generateCounter(batchId);
-      const completedStr = await this.redis.get(counterKey);
+      const completedStr = await this.redis.executeCommand('get', counterKey);
       const completed = parseInt(completedStr) || 0;
       
-      // Calculate percentage
-      const percentage = progressData.total > 0 ? Math.round((completed / progressData.total) * 100) : 0;
+      // Fetch result counts from Redis
+      const countsKey = PROGRESS_TRACKER.generateCounts(batchId);
+      const countsData = await this.redis.executeCommand('hgetall', countsKey);
+      const counts = {
+        VALID: parseInt(countsData.VALID) || 0,
+        INVALID: parseInt(countsData.INVALID) || 0,
+        BLOCKED: parseInt(countsData.BLOCKED) || 0,
+        ERROR: parseInt(countsData.ERROR) || 0
+      };
+      
+      // Fetch valid credentials from Redis
+      const validCredsKey = PROGRESS_TRACKER.generateValidCreds(batchId);
+      const validCredsData = await this.redis.executeCommand('lrange', validCredsKey, 0, -1);
+      const validCreds = validCredsData.map(data => {
+        try {
+          return JSON.parse(data);
+        } catch (e) {
+          return null;
+        }
+      }).filter(Boolean);
       
       // Update local cache
       progressData.completed = completed;
+      progressData.counts = counts;
+      progressData.validCreds = validCreds;
       this.activeTrackers.set(batchId, progressData);
       
-      // Create progress bar (10 characters)
-      const filledBars = Math.floor(percentage / 10);
-      const progressBar = '█'.repeat(filledBars) + '░'.repeat(10 - filledBars);
-      
-      // Format progress message
-      const progressMessage = this._formatProgressMessage({
-        batchId,
-        completed,
+      // Use the same progress message format as single-node mode
+      const { buildBatchProgress } = require('../../telegram/messages');
+      const progressMessage = buildBatchProgress({
+        filename: progressData.filename,
+        processed: completed,
         total: progressData.total,
-        percentage,
-        progressBar,
+        counts,
+        validCreds,
         startTime: progressData.startTime
       });
       
@@ -200,7 +228,9 @@ class ProgressTracker {
         batchId,
         total: progressData.total,
         completed,
-        percentage,
+        percentage: Math.round((completed / progressData.total) * 100),
+        counts,
+        validCount: validCreds.length,
         estimatedTimeRemaining: this._calculateETA(progressData.startTime, completed, progressData.total),
         throughput: this._calculateThroughput(progressData.startTime, completed)
       });
@@ -209,7 +239,8 @@ class ProgressTracker {
         batchId,
         completed,
         total: progressData.total,
-        percentage
+        counts,
+        validCount: validCreds.length
       });
       
     } catch (error) {
@@ -304,43 +335,38 @@ class ProgressTracker {
         return;
       }
       
-      // Query Result_Store for all results matching batchId
-      const results = await this._queryResultsByBatchId(batchId);
-      
-      // Aggregate counts by status
+      // Get final counts and valid credentials from Redis
+      const countsKey = PROGRESS_TRACKER.generateCounts(batchId);
+      const countsData = await this.redis.executeCommand('hgetall', countsKey);
       const counts = {
-        VALID: 0,
-        INVALID: 0,
-        BLOCKED: 0,
-        ERROR: 0
+        VALID: parseInt(countsData.VALID) || 0,
+        INVALID: parseInt(countsData.INVALID) || 0,
+        BLOCKED: parseInt(countsData.BLOCKED) || 0,
+        ERROR: parseInt(countsData.ERROR) || 0
       };
       
-      const validCredentials = [];
-      
-      for (const result of results) {
-        const status = result.status || 'ERROR';
-        counts[status] = (counts[status] || 0) + 1;
-        
-        // Collect VALID credentials with IP addresses
-        if (status === 'VALID') {
-          validCredentials.push({
-            username: result.username,
-            password: result.password,
-            ipAddress: result.ipAddress || 'Unknown'
-          });
+      const validCredsKey = PROGRESS_TRACKER.generateValidCreds(batchId);
+      const validCredsData = await this.redis.executeCommand('lrange', validCredsKey, 0, -1);
+      const validCreds = validCredsData.map(data => {
+        try {
+          return JSON.parse(data);
+        } catch (e) {
+          return null;
         }
-      }
+      }).filter(Boolean);
       
       // Calculate elapsed time
       const elapsed = Date.now() - progressData.startTime;
       
-      // Format summary message
-      const summaryMessage = this._formatSummaryMessage({
-        batchId,
+      // Use the same summary format as single-node mode
+      const { buildBatchSummary } = require('../../telegram/messages');
+      const summaryMessage = buildBatchSummary({
+        filename: progressData.filename,
         total: progressData.total,
+        skipped: 0, // No skipped in distributed mode
         counts,
-        validCredentials,
-        elapsed
+        elapsedMs: elapsed,
+        validCreds
       });
       
       // Send summary message to Telegram
@@ -354,7 +380,7 @@ class ProgressTracker {
         batchId,
         total: progressData.total,
         counts,
-        validCount: validCredentials.length,
+        validCount: validCreds.length,
         elapsed
       });
       
@@ -524,15 +550,25 @@ class ProgressTracker {
       // Remove from Redis
       const key = PROGRESS_TRACKER.generate(batchId);
       const counterKey = PROGRESS_TRACKER.generateCounter(batchId);
+      const countsKey = PROGRESS_TRACKER.generateCounts(batchId);
+      const validCredsKey = PROGRESS_TRACKER.generateValidCreds(batchId);
       
       await Promise.all([
-        this.redis.del(key),
-        this.redis.del(counterKey)
+        this.redis.executeCommand('del', key),
+        this.redis.executeCommand('del', counterKey),
+        this.redis.executeCommand('del', countsKey),
+        this.redis.executeCommand('del', validCredsKey)
       ]);
       
       // Remove from local caches
       this.activeTrackers.delete(batchId);
       this.updateTimers.delete(batchId);
+      
+      // Clean up polling interval
+      if (this.pollingIntervals && this.pollingIntervals.has(batchId)) {
+        clearInterval(this.pollingIntervals.get(batchId));
+        this.pollingIntervals.delete(batchId);
+      }
       
       this.logger.info('Progress tracker cleaned up', { batchId });
       
@@ -561,7 +597,7 @@ class ProgressTracker {
       this.activeTrackers.set(batchId, data);
     }
     
-    // Start polling interval for this batch (every 3 seconds)
+    // Start polling interval for this batch (every 1.5 seconds for more responsive updates)
     const pollInterval = setInterval(async () => {
       try {
         const progressData = this.activeTrackers.get(batchId);
@@ -574,6 +610,20 @@ class ProgressTracker {
         if (progressData.aborted || progressData.completed >= progressData.total) {
           clearInterval(pollInterval);
           this.logger.info('Polling stopped - batch complete or aborted', { batchId });
+          
+          // If batch is complete (not aborted), send summary
+          if (!progressData.aborted && progressData.completed >= progressData.total) {
+            this.logger.info('Batch completed, sending summary', { batchId });
+            try {
+              await this.sendSummary(batchId);
+            } catch (error) {
+              this.logger.error('Failed to send completion summary', { 
+                batchId, 
+                error: error.message 
+              });
+            }
+          }
+          
           return;
         }
         
@@ -583,7 +633,7 @@ class ProgressTracker {
       } catch (error) {
         this.logger.warn('Progress polling error', { batchId, error: error.message });
       }
-    }, this.throttleMs);
+    }, 1500); // 1.5 second polling interval for more responsive updates
     
     // Store interval reference for cleanup
     if (!this.pollingIntervals) {
