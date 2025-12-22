@@ -9,16 +9,16 @@
   "scripts": {
     "start": "node main.js",
     "dev": "node main.js",
-    "test:pow-integration": "node scripts/test-pow-integration.js",
-    "verify:pow-deployment": "node scripts/verify-pow-deployment.js",
     "start:pow-service": "node pow-service.js",
-    "test:integration": "node scripts/run-all-integration-tests.js",
-    "test:e2e-batch": "node scripts/test-end-to-end-batch-processing.js",
-    "test:coordinator-failover": "node scripts/test-coordinator-failover.js",
-    "test:worker-crash": "node scripts/test-worker-crash-recovery.js",
-    "test:proxy-health": "node scripts/test-proxy-rotation-health.js",
-    "test:pow-degradation": "node scripts/test-pow-service-degradation.js",
-    "test:deduplication": "node scripts/test-deduplication-across-batches.js"
+    "test:pow-integration": "node scripts/tests/test-pow-integration.js",
+    "test:integration": "node scripts/tests/run-all-integration-tests.js",
+    "test:e2e-batch": "node scripts/tests/test-end-to-end-batch-processing.js",
+    "test:coordinator-failover": "node scripts/tests/test-coordinator-failover.js",
+    "test:worker-crash": "node scripts/tests/test-worker-crash-recovery.js",
+    "test:proxy-health": "node scripts/tests/test-proxy-rotation-health.js",
+    "test:pow-degradation": "node scripts/tests/test-pow-service-degradation.js",
+    "test:deduplication": "node scripts/tests/test-deduplication-across-batches.js",
+    "verify:pow-deployment": "node scripts/deploy/verify-pow-deployment.js"
   },
   "keywords": [
     "telegram",
