@@ -209,15 +209,15 @@ This implementation plan transforms the Rakuten credential checker from a single
     - **Property 30: Result aggregation**
     - **Validates: Requirements 5.1, 5.2, 5.3, 5.4, 5.5, 7.4, 7.5**
 
-- [ ] 10. Implement Channel Forwarder (Coordinator component)
-  - [ ] 10.1 Create ChannelForwarder class with event handlers
+- [x] 10. Implement Channel Forwarder (Coordinator component)
+  - [x] 10.1 Create ChannelForwarder class with event handlers
     - Subscribe to Redis pub/sub: `forward_events`, `update_events`
     - Implement handleForwardEvent() with capture data validation
     - Validate: latestOrder !== 'n/a' AND cards.length > 0
     - Skip forwarding if validation fails (log reason)
     - _Requirements: 11.1, 11.9_
 
-  - [ ] 10.2 Implement two-phase commit for channel forwarding
+  - [x] 10.2 Implement two-phase commit for channel forwarding
     - Generate tracking code: `RK-${hash(username+password).substring(0, 8)}`
     - Phase 1: SET `forward:pending:{trackingCode}` with event data (2-min TTL)
     - Phase 2: Format and forward message to Telegram channel
@@ -226,14 +226,14 @@ This implementation plan transforms the Rakuten credential checker from a single
     - Phase 5: DEL `forward:pending:{trackingCode}`
     - _Requirements: 11.2, 11.3, 12.7_
 
-  - [ ] 10.3 Implement status update handling
+  - [x] 10.3 Implement status update handling
     - Implement handleUpdateEvent() for INVALID/BLOCKED status changes
     - Query reverse lookup: GET `msg:cred:{username}:{password}`
     - For INVALID: Delete channel message and Redis references
     - For BLOCKED: Edit channel message to show blocked status
     - _Requirements: 11.4, 11.5, 11.6, 11.7, 11.8_
 
-  - [ ] 10.4 Implement pending forward retry on coordinator startup
+  - [x] 10.4 Implement pending forward retry on coordinator startup
     - Implement retryPendingForwards() to scan `forward:pending:*`
     - Retry forwards older than 30 seconds
     - Delete pending state on success
