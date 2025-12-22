@@ -5,4 +5,36 @@ node_modules/
 data/
 rakuten.pem
 ssh-logs.bat
-test-credentials.txt
+test-credentials.txtles
+.env
+.env.local
+.env.*.local
+package-lock.json
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+
+# Screenshots and evidence
+screenshots/
+
+# IDE and editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+data/
+*.pem
+ssh-logs.bat

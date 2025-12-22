@@ -369,9 +369,11 @@ class ProgressTracker {
         validCreds
       });
       
-      // Send summary message to Telegram
-      await this.telegram.sendMessage(
+      // Edit the progress message to show final summary
+      await this.telegram.editMessageText(
         progressData.chatId,
+        progressData.messageId,
+        undefined,
         summaryMessage,
         { parse_mode: 'MarkdownV2' }
       );
