@@ -105,15 +105,15 @@ This implementation plan transforms the Rakuten credential checker from a single
     - **Property 6: Proxy affinity on retry**
     - **Validates: Requirements 1.1, 1.2, 1.5, 1.8, 1.9, 4.3, 7.1**
 
-- [ ] 6. Implement Proxy Pool Manager (Coordinator component)
-  - [ ] 6.1 Create ProxyPoolManager class with round-robin assignment
+- [x] 6. Implement Proxy Pool Manager (Coordinator component)
+  - [x] 6.1 Create ProxyPoolManager class with round-robin assignment
     - Load proxies from environment variable (comma-separated)
     - Implement assignProxy() with round-robin selection
     - Filter out unhealthy proxies from Redis health state
     - Return null proxy if all unhealthy (fallback to direct)
     - _Requirements: 4.1, 4.2, 4.6_
 
-  - [ ] 6.2 Implement proxy health tracking
+  - [x] 6.2 Implement proxy health tracking
     - Implement recordProxyResult() to update health statistics
     - Mark proxy unhealthy after 3 consecutive failures (5-min TTL)
     - Restore proxy to active rotation on success
