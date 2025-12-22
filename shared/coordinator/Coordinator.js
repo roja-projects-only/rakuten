@@ -50,11 +50,13 @@ class Coordinator {
     this.startTime = null;
     this.heartbeatInterval = null;
     this.healthMonitorInterval = null;
+    this.zombieRecoveryInterval = null;
     
     // Bind methods to preserve 'this' context
     this.handleWorkerHeartbeat = this.handleWorkerHeartbeat.bind(this);
     this.sendHeartbeat = this.sendHeartbeat.bind(this);
     this.detectDeadWorkers = this.detectDeadWorkers.bind(this);
+    this.recoverZombieTasks = this.recoverZombieTasks.bind(this);
     
     this.logger.info('Coordinator initialized', {
       coordinatorId: this.coordinatorId,
@@ -89,6 +91,9 @@ class Coordinator {
       
       // Start health monitoring (every 30 seconds)
       this.healthMonitorInterval = setInterval(this.detectDeadWorkers, 30000);
+      
+      // Start zombie task recovery (every 60 seconds)
+      this.zombieRecoveryInterval = setInterval(this.recoverZombieTasks, 60000);
       
       // Perform crash recovery
       await this.performCrashRecovery();
@@ -128,6 +133,11 @@ class Coordinator {
       if (this.healthMonitorInterval) {
         clearInterval(this.healthMonitorInterval);
         this.healthMonitorInterval = null;
+      }
+      
+      if (this.zombieRecoveryInterval) {
+        clearInterval(this.zombieRecoveryInterval);
+        this.zombieRecoveryInterval = null;
       }
       
       // Stop components
@@ -491,6 +501,139 @@ class Coordinator {
     } catch (error) {
       this.logger.error('Failed to detect dead workers', {
         error: error.message
+      });
+    }
+  }
+
+  /**
+   * Recover zombie tasks with expired leases
+   * Scans Redis for expired task leases and re-enqueues them
+   * Requirements: 1.7
+   */
+  async recoverZombieTasks() {
+    try {
+      this.logger.debug('Starting zombie task recovery scan');
+      
+      // Scan Redis for all task lease keys matching pattern: job:*
+      const { KEY_PATTERNS, TASK_LEASE } = require('../redis/keys');
+      const leaseKeys = await this.redis.executeCommand('keys', KEY_PATTERNS.allTaskLeases);
+      
+      if (leaseKeys.length === 0) {
+        this.logger.debug('No task leases found');
+        return;
+      }
+      
+      this.logger.debug(`Found ${leaseKeys.length} task leases to check`);
+      
+      let recoveredCount = 0;
+      let activeCount = 0;
+      
+      // Check each lease for expiration
+      for (const leaseKey of leaseKeys) {
+        try {
+          // Check TTL: -2 means key doesn't exist (expired), -1 means no TTL, >0 means active
+          const ttl = await this.redis.executeCommand('ttl', leaseKey);
+          
+          if (ttl === -2) {
+            // Lease has expired - this is a zombie task
+            // Extract batchId and taskId from key pattern: job:{batchId}:{taskId}
+            const keyParts = leaseKey.split(':');
+            if (keyParts.length !== 3) {
+              this.logger.warn('Invalid lease key format, skipping', { leaseKey });
+              continue;
+            }
+            
+            const batchId = keyParts[1];
+            const taskId = keyParts[2];
+            
+            // Get the task data from the lease (if it still exists)
+            // Note: For expired leases, we need to get the data before it's cleaned up
+            let taskData = await this.redis.executeCommand('get', leaseKey);
+            
+            if (!taskData) {
+              // Lease key was already cleaned up, skip
+              this.logger.debug('Lease key already cleaned up', { leaseKey, batchId, taskId });
+              continue;
+            }
+            
+            try {
+              const task = JSON.parse(taskData);
+              
+              // Check if batch is cancelled before re-enqueuing
+              const isCancelled = await this.jobQueue.isBatchCancelled(batchId);
+              if (isCancelled) {
+                this.logger.info('Skipping zombie task from cancelled batch', {
+                  taskId,
+                  batchId
+                });
+                // Clean up the expired lease
+                await this.redis.executeCommand('del', leaseKey);
+                continue;
+              }
+              
+              // Re-enqueue the task through JobQueueManager retry logic
+              // This will handle retry count and max retries enforcement
+              const requeued = await this.jobQueue.retryTask(task, 'LEASE_EXPIRED');
+              
+              if (requeued) {
+                recoveredCount++;
+                this.logger.info('Recovered zombie task', {
+                  taskId,
+                  batchId,
+                  retryCount: task.retryCount,
+                  proxyId: task.proxyId
+                });
+              } else {
+                this.logger.warn('Zombie task exceeded max retries, marked as ERROR', {
+                  taskId,
+                  batchId,
+                  retryCount: task.retryCount
+                });
+              }
+              
+              // Clean up the expired lease
+              await this.redis.executeCommand('del', leaseKey);
+              
+            } catch (parseError) {
+              this.logger.warn('Failed to parse zombie task data', {
+                leaseKey,
+                error: parseError.message
+              });
+              // Clean up invalid lease
+              await this.redis.executeCommand('del', leaseKey);
+            }
+            
+          } else if (ttl > 0) {
+            // Lease is still active
+            activeCount++;
+          }
+          // ttl === -1 means no expiration set (shouldn't happen, but skip)
+          
+        } catch (error) {
+          this.logger.warn('Error checking lease TTL', {
+            leaseKey,
+            error: error.message
+          });
+        }
+      }
+      
+      if (recoveredCount > 0) {
+        this.logger.info('Zombie task recovery completed', {
+          totalLeases: leaseKeys.length,
+          activeLeases: activeCount,
+          recoveredTasks: recoveredCount
+        });
+      } else {
+        this.logger.debug('Zombie task recovery completed - no zombies found', {
+          totalLeases: leaseKeys.length,
+          activeLeases: activeCount
+        });
+      }
+      
+    } catch (error) {
+      this.logger.error('Failed to recover zombie tasks', {
+        error: error.message,
+        stack: error.stack
       });
     }
   }

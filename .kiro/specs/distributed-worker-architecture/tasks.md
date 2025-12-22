@@ -283,7 +283,7 @@ This implementation plan transforms the Rakuten credential checker from a single
     - **Property 40: Distributed lock prevention**
     - **Validates: Requirements 8.2, 12.2, 12.4**
 
-- [ ] 12. Implement zombie task recovery background job
+- [x] 12. Implement zombie task recovery background job
   - Scan Redis for expired leases: `job:*` with TTL = -2
   - Re-enqueue tasks with expired leases
   - Run every 60 seconds as background job
