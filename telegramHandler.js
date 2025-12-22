@@ -341,7 +341,7 @@ function initializeTelegramHandler(botToken, options = {}) {
       log.info(`[chk] finish status=${result.status} user=${maskUser(creds.username)} time=${durationMs}ms`);
       
       // Edit message with final result
-      await updateStatus(buildCheckResult(result, creds.username, durationMs, creds.password));
+      await updateStatus(buildCheckResult(result, creds.username, durationMs, creds.password, result.ipAddress));
 
       // Always remove any screenshot file quietly
       if (result.screenshot) {
@@ -355,7 +355,7 @@ function initializeTelegramHandler(botToken, options = {}) {
           await updateStatus(buildCheckProgress('capture'));
           
           const capture = await captureAccountData(result.session, { timeoutMs: options.timeoutMs || 60000 });
-          const finalMessage = buildCheckAndCaptureResult(result, capture, creds.username, durationMs, creds.password);
+          const finalMessage = buildCheckAndCaptureResult(result, capture, creds.username, durationMs, creds.password, result.ipAddress);
           await updateStatus(finalMessage);
 
           log.info(`[chk] captured: points=${capture.points} rank=${capture.rank} cash=${capture.cash} lastOrder=${capture.latestOrder} orderId=${capture.latestOrderId}`);
@@ -374,7 +374,7 @@ function initializeTelegramHandler(botToken, options = {}) {
         } catch (captureErr) {
           log.warn(`[chk] capture failed: ${captureErr.message}`);
           // Still show the check result even if capture failed
-          await updateStatus(buildCheckResult(result, creds.username, durationMs, creds.password));
+          await updateStatus(buildCheckResult(result, creds.username, durationMs, creds.password, result.ipAddress));
         } finally {
           // Clean up session
           closeSession(result.session);
