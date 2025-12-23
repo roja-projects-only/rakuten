@@ -29,10 +29,28 @@ const {
   PUBSUB_CHANNELS,
   generateWorkerId 
 } = require('../redis/keys');
+const { getConfigService } = require('../config/configService');
 
 const log = createLogger('worker-node');
 const structuredLog = createStructuredLogger('worker-node');
-const PROCESSED_TTL_MS = parseInt(process.env.PROCESSED_TTL_MS, 10) || undefined;
+
+/**
+ * Get worker configuration from config service (hot-reloadable) or env fallback
+ */
+function getWorkerConfig() {
+  const configService = getConfigService();
+  if (configService.isInitialized()) {
+    return {
+      concurrency: configService.get('WORKER_CONCURRENCY') || 3,
+      processedTtlMs: configService.get('PROCESSED_TTL_MS') || undefined
+    };
+  }
+  // Fallback to env
+  return {
+    concurrency: parseInt(process.env.WORKER_CONCURRENCY, 10) || 3,
+    processedTtlMs: parseInt(process.env.PROCESSED_TTL_MS, 10) || undefined
+  };
+}
 
 class WorkerNode {
   constructor(redisClient, options = {}) {
@@ -40,9 +58,9 @@ class WorkerNode {
     this.workerId = options.workerId || generateWorkerId();
     this.powServiceUrl = options.powServiceUrl || process.env.POW_SERVICE_URL;
     
-    // Concurrency configuration
-    this.concurrency = options.concurrency || 
-      parseInt(process.env.WORKER_CONCURRENCY, 10) || 3;
+    // Concurrency configuration (read from config service at startup)
+    const workerConfig = getWorkerConfig();
+    this.concurrency = options.concurrency || workerConfig.concurrency;
     this.limit = pLimit(this.concurrency);
     
     // Worker state - parallel task tracking
@@ -723,7 +741,8 @@ class WorkerNode {
     // Mirror into processed store so Telegram dedupe works in distributed mode
     try {
       const credKey = makeKey(result.username, result.password);
-      await markProcessedStatus(credKey, result.status, PROCESSED_TTL_MS);
+      const { processedTtlMs } = getWorkerConfig();
+      await markProcessedStatus(credKey, result.status, processedTtlMs);
     } catch (error) {
       log.warn('Processed store write failed', {
         workerId: this.workerId,

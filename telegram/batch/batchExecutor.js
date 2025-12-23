@@ -27,15 +27,34 @@ const {
 } = require('../messages');
 const { setActiveBatch, clearActiveBatch, deletePendingBatch } = require('./batchState');
 const { createCircuitBreaker } = require('./circuitBreaker');
+const { getConfigService } = require('../../shared/config/configService');
 
 const log = createLogger('batch-executor');
 
-// Batch processing configuration
-const BATCH_CONCURRENCY = Math.max(1, parseInt(process.env.BATCH_CONCURRENCY, 10) || 1);
-const MAX_RETRIES = parseInt(process.env.BATCH_MAX_RETRIES, 10) || 1;
-const REQUEST_DELAY_MS = parseInt(process.env.BATCH_DELAY_MS, 10) || 50;
+// Progress update interval (not configurable)
 const PROGRESS_UPDATE_INTERVAL_MS = 2000;
-const PROCESSED_TTL_MS = parseInt(process.env.PROCESSED_TTL_MS, 10) || 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Get batch configuration from config service (hot-reloadable) or env fallback
+ */
+function getBatchConfig() {
+  const configService = getConfigService();
+  if (configService.isInitialized()) {
+    return {
+      concurrency: Math.max(1, configService.get('BATCH_CONCURRENCY') || 1),
+      maxRetries: configService.get('BATCH_MAX_RETRIES') || 1,
+      delayMs: configService.get('BATCH_DELAY_MS') || 50,
+      processedTtlMs: configService.get('PROCESSED_TTL_MS') || 7 * 24 * 60 * 60 * 1000
+    };
+  }
+  // Fallback to env
+  return {
+    concurrency: Math.max(1, parseInt(process.env.BATCH_CONCURRENCY, 10) || 1),
+    maxRetries: parseInt(process.env.BATCH_MAX_RETRIES, 10) || 1,
+    delayMs: parseInt(process.env.BATCH_DELAY_MS, 10) || 50,
+    processedTtlMs: parseInt(process.env.PROCESSED_TTL_MS, 10) || 7 * 24 * 60 * 60 * 1000
+  };
+}
 
 /**
  * Runs the batch execution for a set of credentials.
@@ -51,12 +70,22 @@ const PROCESSED_TTL_MS = parseInt(process.env.PROCESSED_TTL_MS, 10) || 7 * 24 * 
 function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, checkCredentials) {
   const chatId = ctx.chat.id;
   
+  // Get hot-reloadable config at execution time
+  const batchConfig = getBatchConfig();
+  const BATCH_CONCURRENCY = batchConfig.concurrency;
+  const MAX_RETRIES = batchConfig.maxRetries;
+  const REQUEST_DELAY_MS = batchConfig.delayMs;
+  const PROCESSED_TTL_MS = batchConfig.processedTtlMs;
+  
   // Debug logging to see what we have
   log.info('Batch execution options:', {
     hasCompatibility: !!options.compatibility,
     compatibilityKeys: options.compatibility ? Object.keys(options.compatibility) : [],
     isDistributed: options.compatibility?.isDistributed ? options.compatibility.isDistributed() : 'N/A',
-    mode: options.compatibility?.getMode ? options.compatibility.getMode() : 'N/A'
+    mode: options.compatibility?.getMode ? options.compatibility.getMode() : 'N/A',
+    concurrency: BATCH_CONCURRENCY,
+    maxRetries: MAX_RETRIES,
+    delayMs: REQUEST_DELAY_MS
   });
   
   // Check if we're in coordinator mode - if so, queue to Redis instead of processing directly

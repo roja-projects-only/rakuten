@@ -20,7 +20,8 @@
  */
 
 const { createLogger } = require('./logger');
-const { initRedisClient } = require('./shared/redis/client');
+const { initRedisClient, getPubSubClient } = require('./shared/redis/client');
+const { initConfigService, getConfigService } = require('./shared/config/configService');
 const WorkerNode = require('./shared/worker/WorkerNode');
 
 const log = createLogger('worker-main');
@@ -62,6 +63,25 @@ async function main() {
     }
     
     log.info('Redis connection established');
+    
+    // Initialize centralized config service
+    try {
+      log.info('Initializing centralized config service...');
+      const pubSubClient = getPubSubClient();
+      await pubSubClient.connect();
+      
+      await initConfigService(redisClient, pubSubClient);
+      
+      // Subscribe to config updates
+      const configService = getConfigService();
+      await configService.subscribe((key, value, action) => {
+        log.info(`Config ${action}: ${key} = ${value}`);
+      });
+      
+      log.info('Centralized config service initialized');
+    } catch (configErr) {
+      log.warn(`Config service init failed (using env fallback): ${configErr.message}`);
+    }
     
     // Create worker node
     const worker = new WorkerNode(redisClient, {

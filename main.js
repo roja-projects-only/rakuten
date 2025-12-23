@@ -23,6 +23,8 @@ const { initializeTelegramHandler } = require('./telegramHandler');
 const { getAllActiveBatches, waitForAllBatchCompletion } = require('./telegram/batchHandlers');
 const { getAllActiveCombineBatches, waitForAllCombineBatchCompletion } = require('./telegram/combineBatchRunner');
 const { flushWriteBuffer, closeStore } = require('./automation/batch/processedStore');
+const { initConfigService, getConfigService } = require('./shared/config/configService');
+const { getRedisClient, getPubSubClient } = require('./shared/redis/client');
 const fs = require('fs');
 const path = require('path');
 const { createLogger } = require('./logger');
@@ -110,6 +112,31 @@ async function main() {
     const compatibility = await createCompatibilityLayer();
     
     log.info(`Running in ${compatibility.getMode()} mode`);
+    
+    // Initialize centralized config service (if Redis is available)
+    if (!compatibility.isSingleNode()) {
+      try {
+        log.info('Initializing centralized config service...');
+        const redisClient = getRedisClient();
+        await redisClient.connect();
+        
+        // Pub/sub client for subscribing to config updates
+        const pubSubClient = getPubSubClient();
+        await pubSubClient.connect();
+        
+        await initConfigService(redisClient, pubSubClient);
+        
+        // Subscribe to config updates
+        const configService = getConfigService();
+        await configService.subscribe((key, value, action) => {
+          log.info(`Config ${action}: ${key} = ${value}`);
+        });
+        
+        log.success('Centralized config service initialized');
+      } catch (configErr) {
+        log.warn(`Config service init failed (using env fallback): ${configErr.message}`);
+      }
+    }
     
     // Log mode-specific information
     if (compatibility.isSingleNode()) {

@@ -10,9 +10,30 @@
 const { createLogger } = require('../../logger');
 const { createStructuredLogger } = require('../logger/structured');
 const { PROXY_HEALTH } = require('../redis/keys');
+const { getConfigService } = require('../config/configService');
 
 const log = createLogger('proxy-pool-manager');
 const structuredLog = createStructuredLogger('proxy-pool-manager');
+
+/**
+ * Get proxy configuration from config service (hot-reloadable) or env fallback
+ */
+function getProxyConfig() {
+  const configService = getConfigService();
+  if (configService.isInitialized()) {
+    const pool = configService.get('PROXY_POOL');
+    const server = configService.get('PROXY_SERVER');
+    return {
+      proxyPool: pool || '',
+      proxyServer: server || ''
+    };
+  }
+  // Fallback to env
+  return {
+    proxyPool: process.env.PROXY_POOL || '',
+    proxyServer: process.env.PROXY_SERVER || ''
+  };
+}
 
 class ProxyPoolManager {
   constructor(redisClient, proxies = []) {
@@ -24,8 +45,8 @@ class ProxyPoolManager {
   }
 
   /**
-   * Load proxies from environment variable or provided array
-   * @param {Array<string>} proxies - Array of proxy URLs or empty to load from env
+   * Load proxies from config service, environment variable, or provided array
+   * @param {Array<string>} proxies - Array of proxy URLs or empty to load from config
    * @returns {Array<string>} Array of proxy URLs
    */
   _loadProxiesFromConfig(proxies) {
@@ -34,16 +55,26 @@ class ProxyPoolManager {
       return proxies;
     }
 
-    // Load from environment variable (comma-separated)
-    const proxyEnv = process.env.PROXY_SERVERS || process.env.PROXY_SERVER;
+    // Load from config service or environment variable (comma-separated)
+    const config = getProxyConfig();
+    const proxyEnv = config.proxyPool || config.proxyServer;
     if (!proxyEnv) {
       log.warn('No proxies configured - workers will use direct connections');
       return [];
     }
 
     const proxyList = proxyEnv.split(',').map(proxy => proxy.trim()).filter(Boolean);
-    log.info(`Loaded ${proxyList.length} proxies from environment`);
+    log.info(`Loaded ${proxyList.length} proxies from config`);
     return proxyList;
+  }
+
+  /**
+   * Reload proxies from config (call when config changes via pub/sub)
+   */
+  reloadProxies() {
+    const oldCount = this.proxies.length;
+    this.proxies = this._loadProxiesFromConfig([]);
+    log.info(`Proxies reloaded: ${oldCount} -> ${this.proxies.length}`);
   }
 
   /**

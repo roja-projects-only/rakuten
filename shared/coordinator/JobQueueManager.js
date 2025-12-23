@@ -14,15 +14,38 @@ const {
   PROGRESS_TRACKER,
   generateTaskId 
 } = require('../redis/keys');
+const { getConfigService } = require('../config/configService');
 
 const log = createLogger('job-queue-manager');
+
+/**
+ * Get job queue configuration from config service (hot-reloadable) or env fallback
+ */
+function getJobQueueConfig() {
+  const configService = getConfigService();
+  if (configService.isInitialized()) {
+    return {
+      maxRetries: configService.get('BATCH_MAX_RETRIES') || 2
+    };
+  }
+  // Fallback to env
+  return {
+    maxRetries: parseInt(process.env.BATCH_MAX_RETRIES, 10) || 2
+  };
+}
 
 class JobQueueManager {
   constructor(redisClient, proxyPoolManager) {
     this.redis = redisClient;
     this.proxyPool = proxyPoolManager;
-    this.maxRetries = parseInt(process.env.BATCH_MAX_RETRIES, 10) || 2;
     this.errorExclusionTtl = 24 * 60 * 60; // 24 hours in seconds
+  }
+
+  /**
+   * Get current max retries (hot-reloadable)
+   */
+  get maxRetries() {
+    return getJobQueueConfig().maxRetries;
   }
 
   /**
