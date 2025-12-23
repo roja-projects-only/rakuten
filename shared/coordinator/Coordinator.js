@@ -727,11 +727,25 @@ class Coordinator {
       try {
         // Scan for in-progress batches
         const progressKeys = await this.redis.executeCommand('keys', PROGRESS_TRACKER.pattern.replace('{batchId}', '*'));
+
+        // Only the base progress key (progress:{batchId}) stores JSON string data.
+        // Other progress keys (progress:{batchId}:counts|valid|count) are hashes/lists,
+        // and calling GET on them triggers WRONGTYPE errors. Filter to two-part keys only.
+        const baseProgressKeys = progressKeys.filter(key => key.split(':').length === 2);
+        const skippedKeys = progressKeys.length - baseProgressKeys.length;
+
+        if (skippedKeys > 0) {
+          this.logger.debug('Skipping non-base progress keys during crash recovery', {
+            totalKeys: progressKeys.length,
+            baseKeys: baseProgressKeys.length,
+            skippedKeys
+          });
+        }
         
-        if (progressKeys.length > 0) {
-          this.logger.info(`Found ${progressKeys.length} in-progress batches to resume`);
+        if (baseProgressKeys.length > 0) {
+          this.logger.info(`Found ${baseProgressKeys.length} in-progress batches to resume`);
           
-          for (const progressKey of progressKeys) {
+          for (const progressKey of baseProgressKeys) {
             const batchId = progressKey.split(':')[1];
             const progressData = await this.redis.executeCommand('get', progressKey);
             
