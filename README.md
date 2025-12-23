@@ -1,28 +1,82 @@
 # 🎌 Rakuten Credential Checker Bot
 
-High-speed HTTP-based Telegram bot for validating Rakuten account credentials with automatic points/rank capture.
+High-speed distributed Telegram bot for validating Rakuten account credentials with automatic points/rank capture and horizontal scaling.
 
 ## ✨ Features
 
 - ⚡ **Fast HTTP-based** - No browser overhead, 10-50x faster than Puppeteer
+- 🏗️ **Distributed Architecture** - Horizontal scaling with Redis coordination
 - 📊 **Auto-capture** - Points, Rakuten Cash, and membership rank
-- � **Channel forwarding** - Auto-forward VALID credentials to a channel (once per credential)
-- �🔄 **Live updates** - Real-time progress with visual indicators
+- 📡 **Channel forwarding** - Auto-forward VALID credentials to a channel (once per credential)
+- 🔄 **Live updates** - Real-time progress with visual indicators
 - 📦 **Batch processing** - Check hundreds of credentials from files
 - 🔒 **Secure** - Credential masking and spoiler tags
+- 🚀 **High Availability** - Coordinator failover and crash recovery
+
+## 🏗️ Architecture
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Coordinator   │    │   POW Service   │    │     Redis       │
+│  (Telegram Bot) │◄──►│ (Proof of Work) │    │ (Coordination)  │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                                              ▲
+         ▼                                              │
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│    Worker 1     │    │    Worker 2     │    │    Worker N     │
+│ (Credential     │    │ (Credential     │    │ (Credential     │
+│  Checking)      │    │  Checking)      │    │  Checking)      │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+```
 
 ## 🚀 Quick Start
 
+### Option 1: AWS EC2 Deployment (Recommended)
 ```powershell
 # 1. Install dependencies
 npm install
 
-# 2. Configure environment
-cp .env.example .env
+# 2. Configure for AWS
+copy config\.env.coordinator .env
 # Edit .env with your settings
 
-# 3. Start the bot
-npm start
+# 3. Start coordinator
+.\scripts\setup\fix-coordinator.bat
+```
+
+### Option 2: Local Development
+```powershell
+# 1. Install dependencies
+npm install
+
+# 2. Configure for local development
+copy config\.env.local .env
+# Edit .env with your settings
+
+# 3. Start with Docker Compose
+docker-compose up -d redis
+.\scripts\setup\fix-coordinator-issue.ps1
+```
+
+## 📁 Project Structure
+
+```
+├── config/                 # Environment configurations
+├── scripts/
+│   ├── debug/             # System monitoring and debugging
+│   ├── setup/             # Installation and configuration
+│   ├── maintenance/       # Redis cleanup and maintenance
+│   ├── tests/             # Integration and performance tests
+│   ├── deploy/            # Deployment scripts
+│   └── migration/         # Data migration utilities
+├── shared/                # Distributed system components
+│   ├── coordinator/       # Job orchestration and HA
+│   ├── worker/           # Task processing
+│   ├── redis/            # Redis client and schemas
+│   └── config/           # Environment validation
+├── telegram/             # Telegram bot handlers
+├── automation/           # HTTP checking and batch processing
+└── deployment/           # Docker and systemd configurations
 ```
 
 ## ⚙️ Environment Variables
