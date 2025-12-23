@@ -13,6 +13,12 @@ const { createStructuredLogger } = require('../logger/structured');
 const { checkCredentials } = require('../../httpChecker');
 const { captureAccountData } = require('../../automation/http/httpDataCapture');
 const { fetchIpInfo } = require('../../automation/http/ipFetcher');
+const {
+  markProcessedStatus,
+  makeKey,
+  flushWriteBuffer,
+  closeStore,
+} = require('../../automation/batch/processedStore');
 const powServiceClient = require('../../automation/http/fingerprinting/powServiceClient');
 const { 
   JOB_QUEUE, 
@@ -26,6 +32,7 @@ const {
 
 const log = createLogger('worker-node');
 const structuredLog = createStructuredLogger('worker-node');
+const PROCESSED_TTL_MS = parseInt(process.env.PROCESSED_TTL_MS, 10) || undefined;
 
 class WorkerNode {
   constructor(redisClient, options = {}) {
@@ -712,6 +719,20 @@ class WorkerNode {
         // Don't throw - but this is a serious issue that needs attention
       }
     }
+
+    // Mirror into processed store so Telegram dedupe works in distributed mode
+    try {
+      const credKey = makeKey(result.username, result.password);
+      await markProcessedStatus(credKey, result.status, PROCESSED_TTL_MS);
+    } catch (error) {
+      log.warn('Processed store write failed', {
+        workerId: this.workerId,
+        taskId: result.taskId,
+        username: result.username,
+        status: result.status,
+        error: error.message
+      });
+    }
   }
 
   /**
@@ -1089,6 +1110,15 @@ class WorkerNode {
         workerId: this.workerId,
         error: error.message
       });
+    }
+
+    // Flush buffered processed-store writes before exit
+    try {
+      await flushWriteBuffer();
+      await closeStore();
+      log.debug('Processed store flushed and closed');
+    } catch (error) {
+      log.warn('Processed store cleanup failed', { error: error.message });
     }
   }
 
