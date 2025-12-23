@@ -20,12 +20,12 @@ class ProgressTracker {
     // Track active progress trackers for coordinator restart recovery
     this.activeTrackers = new Map(); // batchId -> progress data
     
-    // Throttle interval (1.5 seconds for more responsive updates)
-    this.throttleMs = 1500;
+    // Throttle interval (longer to avoid Telegram 429s)
+    this.throttleMs = 8000;
     
     // Progress polling interval (independent of heartbeats)
     this.pollingInterval = null;
-    this.pollingFrequency = 3000; // Poll every 3 seconds
+    this.pollingFrequency = 8000; // Poll every 8 seconds
   }
 
   /**
@@ -155,15 +155,15 @@ class ProgressTracker {
    */
   async handleProgressUpdate(batchId) {
     try {
-      // Check throttling - skip if less than 2 seconds since last update
+      // Check throttling - skip if less than throttleMs since last update
       const now = Date.now();
       const lastUpdate = this.updateTimers.get(batchId) || 0;
       
-      if (now - lastUpdate < 2000) { // Reduced from 3000ms to 2000ms for more responsive updates
+      if (now - lastUpdate < this.throttleMs) {
         this.logger.debug('Progress update throttled', {
           batchId,
           timeSinceLastUpdate: now - lastUpdate,
-          throttleMs: 2000
+          throttleMs: this.throttleMs
         });
         return;
       }
@@ -722,7 +722,7 @@ class ProgressTracker {
       } catch (error) {
         this.logger.warn('Progress polling error', { batchId, error: error.message });
       }
-    }, 1500); // 1.5 second polling interval for more responsive updates
+    }, this.throttleMs); // Align polling interval to throttle to avoid 429s
     
     // Store interval reference for cleanup
     if (!this.pollingIntervals) {
