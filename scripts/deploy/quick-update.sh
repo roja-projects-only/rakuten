@@ -103,7 +103,8 @@ update_service() {
   
   # Step 4: Start
   log_step 4 4 "Starting $service"
-  if $docker_cmd up -d $service; then
+  # Use --no-deps to prevent starting dependency services
+  if $docker_cmd up -d --no-deps $service; then
     log_success "Started $service"
   else
     log_error "Failed to start $service"

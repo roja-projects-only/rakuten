@@ -192,7 +192,8 @@ function startService(service, dockerCmd) {
     return false;
   }
   
-  const result = execCommand(`${dockerCmd} up -d ${service}`);
+  // Use --no-deps to prevent starting dependency services
+  const result = execCommand(`${dockerCmd} up -d --no-deps ${service}`);
   if (result.success) {
     logSuccess(`Started ${service}`);
     return true;
