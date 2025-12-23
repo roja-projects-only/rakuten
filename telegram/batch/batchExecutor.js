@@ -377,9 +377,7 @@ function runSingleNodeBatch(ctx, batch, msgId, statusMsg, options, helpers, key,
 
 module.exports = {
   runBatchExecution,
-  BATCH_CONCURRENCY,
-  MAX_RETRIES,
-  REQUEST_DELAY_MS,
+  getBatchConfig,
   PROGRESS_UPDATE_INTERVAL_MS,
 };
 
