@@ -155,18 +155,8 @@ class ProgressTracker {
    */
   async handleProgressUpdate(batchId) {
     try {
-      // Check throttling - skip if less than throttleMs since last update
       const now = Date.now();
       const lastUpdate = this.updateTimers.get(batchId) || 0;
-      
-      if (now - lastUpdate < this.throttleMs) {
-        this.logger.debug('Progress update throttled', {
-          batchId,
-          timeSinceLastUpdate: now - lastUpdate,
-          throttleMs: this.throttleMs
-        });
-        return;
-      }
       
       // Get progress data
       const progressData = await this.getProgressData(batchId);
@@ -206,7 +196,24 @@ class ProgressTracker {
       progressData.counts = counts;
       progressData.validCreds = validCreds;
       this.activeTrackers.set(batchId, progressData);
-      
+
+      // If complete, send summary immediately (don't wait for next poll)
+      if (!progressData.aborted && completed >= progressData.total) {
+        this.logger.info('Batch complete, sending summary', { batchId, completed, total: progressData.total });
+        await this.sendSummary(batchId);
+        return;
+      }
+
+      // Throttle only the Telegram edit, not the state refresh
+      if (now - lastUpdate < this.throttleMs) {
+        this.logger.debug('Progress update throttled (state refreshed)', {
+          batchId,
+          timeSinceLastUpdate: now - lastUpdate,
+          throttleMs: this.throttleMs
+        });
+        return;
+      }
+
       // Use the same progress message format as single-node mode
       const { buildBatchProgress } = require('../../telegram/messages');
       const progressMessage = buildBatchProgress({
