@@ -1,35 +1,23 @@
 #!/usr/bin/env node
 
 /**
- * Deployment Update Script
+ * Deployment Update Script (Raw Docker - no docker-compose)
  * 
- * Handles the complete update workflow for AWS/Railway instances:
- * 1. Stop running containers
- * 2. Remove old containers
- * 3. Build new images
- * 4. Start containers
- * 5. Show logs
+ * Uses raw Docker commands with --env-file
  * 
  * Usage:
  *   node scripts/deploy/update-instance.js [service]
  * 
- * Services: coordinator, worker, pow-service, all (default)
- * 
- * Examples:
- *   node scripts/deploy/update-instance.js              # Update all services
- *   node scripts/deploy/update-instance.js coordinator  # Update coordinator only
- *   node scripts/deploy/update-instance.js worker       # Update worker only
+ * Services: coordinator, worker, pow-service (pow), all
  */
 
 const { execSync } = require('child_process');
 const fs = require('fs');
-const path = require('path');
 
 // Colors for terminal output
 const colors = {
   reset: '\x1b[0m',
   bright: '\x1b[1m',
-  dim: '\x1b[2m',
   red: '\x1b[31m',
   green: '\x1b[32m',
   yellow: '\x1b[33m',
@@ -42,7 +30,7 @@ function log(message, color = 'reset') {
 }
 
 function logStep(step, total, message) {
-  log(`\n[${ step}/${total}] ${message}`, 'cyan');
+  log(`\n[${step}/${total}] ${message}`, 'cyan');
 }
 
 function logSuccess(message) {
@@ -61,7 +49,7 @@ function logInfo(message) {
   log(`ℹ️  ${message}`, 'blue');
 }
 
-function execCommand(command, options = {}) {
+function exec(command, options = {}) {
   try {
     const output = execSync(command, {
       stdio: options.silent ? 'pipe' : 'inherit',
@@ -70,285 +58,247 @@ function execCommand(command, options = {}) {
     });
     return { success: true, output };
   } catch (error) {
-    return { 
-      success: false, 
-      error: error.message,
-      output: error.stdout || error.stderr || ''
-    };
+    return { success: false, error: error.message };
   }
 }
 
-function detectDockerCompose() {
-  // Try docker-compose first, then docker compose
-  const tryCompose = execCommand('docker-compose --version', { silent: true });
-  if (tryCompose.success) {
-    return 'docker-compose';
+// Service configurations
+const SERVICES = {
+  'coordinator': {
+    dockerfile: 'Dockerfile.coordinator',
+    image: 'rakuten-coordinator',
+    container: 'rakuten-coordinator',
+    envFile: '.env.coordinator',
+    ports: ['-p', '9090:9090']
+  },
+  'worker': {
+    dockerfile: 'Dockerfile.worker',
+    image: 'rakuten-worker',
+    container: 'rakuten-worker',
+    envFile: '.env.worker',
+    ports: []
+  },
+  'pow-service': {
+    dockerfile: 'Dockerfile.pow-service',
+    image: 'rakuten-pow',
+    container: 'rakuten-pow',
+    envFile: '.env.pow-service',
+    ports: ['-p', '8080:8080', '-p', '9090:9090']
   }
-  
-  const tryDockerCompose = execCommand('docker compose version', { silent: true });
-  if (tryDockerCompose.success) {
-    return 'docker compose';
-  }
-  
-  return null;
-}
+};
 
-function getRunningContainers(service = null) {
-  const cmd = service 
-    ? `docker ps --filter "name=${service}" --format "{{.Names}}"` 
-    : 'docker ps --filter "name=rakuten" --format "{{.Names}}"';
-  
-  const result = execCommand(cmd, { silent: true });
-  if (!result.success || !result.output) {
-    return [];
-  }
-  
-  return result.output.trim().split('\n').filter(Boolean);
-}
-
-function stopService(service, dockerCmd) {
-  logInfo(`Stopping ${service}...`);
-  
-  // Try docker-compose stop first
-  if (fs.existsSync('docker-compose.yml')) {
-    const result = execCommand(`${dockerCmd} stop ${service}`, { silent: true });
-    if (result.success) {
-      logSuccess(`Stopped ${service} via docker-compose`);
-      return true;
-    }
-  }
-  
-  // Fallback: stop container by name
-  const containers = getRunningContainers(service);
-  if (containers.length === 0) {
-    logWarning(`No running containers found for ${service}`);
-    return true;
-  }
-  
-  for (const container of containers) {
-    const result = execCommand(`docker stop ${container}`, { silent: true });
-    if (result.success) {
-      logSuccess(`Stopped container: ${container}`);
-    } else {
-      logError(`Failed to stop container: ${container}`);
-    }
-  }
-  
-  return true;
-}
-
-function removeService(service, dockerCmd) {
-  logInfo(`Removing old ${service} container...`);
-  
-  // Try docker-compose rm first
-  if (fs.existsSync('docker-compose.yml')) {
-    const result = execCommand(`${dockerCmd} rm -f ${service}`, { silent: true });
-    if (result.success) {
-      logSuccess(`Removed ${service} via docker-compose`);
-      return true;
-    }
-  }
-  
-  // Fallback: remove by name pattern
-  const allContainers = execCommand(`docker ps -a --filter "name=${service}" --format "{{.Names}}"`, { silent: true });
-  if (!allContainers.success || !allContainers.output) {
-    return true;
-  }
-  
-  const containers = allContainers.output.trim().split('\n').filter(Boolean);
-  for (const container of containers) {
-    execCommand(`docker rm -f ${container}`, { silent: true });
-  }
-  
-  logSuccess(`Removed ${service} containers`);
-  return true;
-}
-
-function buildService(service, dockerCmd) {
-  logInfo(`Building ${service}...`);
-  
-  if (!fs.existsSync('docker-compose.yml')) {
-    logError('docker-compose.yml not found');
+function updateService(serviceName) {
+  const config = SERVICES[serviceName];
+  if (!config) {
+    logError(`Unknown service: ${serviceName}`);
     return false;
   }
-  
-  // Build with --no-cache option to ensure fresh build
-  // Note: Env var warnings during build are expected and can be ignored
-  const result = execCommand(`${dockerCmd} build ${service}`);
-  if (result.success) {
-    logSuccess(`Built ${service}`);
-    return true;
-  } else {
-    logError(`Failed to build ${service}`);
-    return false;
-  }
-}
 
-function startService(service, dockerCmd) {
-  logInfo(`Starting ${service}...`);
-  
-  if (!fs.existsSync('docker-compose.yml')) {
-    logError('docker-compose.yml not found');
-    return false;
-  }
-  
-  // Use --no-deps to prevent starting dependency services
-  const result = execCommand(`${dockerCmd} up -d --no-deps ${service}`);
-  if (result.success) {
-    logSuccess(`Started ${service}`);
-    return true;
-  } else {
-    logError(`Failed to start ${service}`);
-    return false;
-  }
-}
-
-function showLogs(service, dockerCmd, lines = 50) {
-  log(`\n${'='.repeat(60)}`, 'dim');
-  log(`📋 Logs for ${service} (last ${lines} lines):`, 'bright');
-  log('='.repeat(60), 'dim');
-  
-  if (fs.existsSync('docker-compose.yml')) {
-    execCommand(`${dockerCmd} logs --tail=${lines} ${service}`);
-  } else {
-    const containers = getRunningContainers(service);
-    if (containers.length > 0) {
-      execCommand(`docker logs --tail=${lines} ${containers[0]}`);
-    } else {
-      logWarning(`No running containers for ${service}`);
-    }
-  }
-}
-
-function updateService(service, dockerCmd) {
   log(`\n${'═'.repeat(60)}`, 'bright');
-  log(`🚀 Updating ${service.toUpperCase()}`, 'bright');
+  log(`🚀 Updating ${serviceName.toUpperCase()}`, 'bright');
   log('═'.repeat(60), 'bright');
-  
-  const steps = [
-    { name: 'Stop', fn: () => stopService(service, dockerCmd) },
-    { name: 'Remove', fn: () => removeService(service, dockerCmd) },
-    { name: 'Build', fn: () => buildService(service, dockerCmd) },
-    { name: 'Start', fn: () => startService(service, dockerCmd) },
-  ];
-  
-  for (let i = 0; i < steps.length; i++) {
-    logStep(i + 1, steps.length, steps[i].name);
-    const success = steps[i].fn();
-    if (!success && steps[i].name !== 'Stop' && steps[i].name !== 'Remove') {
-      logError(`Failed at step: ${steps[i].name}`);
-      return false;
-    }
+
+  // Check env file exists
+  if (!fs.existsSync(config.envFile)) {
+    logError(`Environment file not found: ${config.envFile}`);
+    logInfo(`Create it with: cp deployment/${config.envFile}.example ${config.envFile}`);
+    return false;
   }
+  
+  logSuccess(`Using env file: ${config.envFile}`);
+
+  // Step 1: Stop container
+  logStep(1, 4, `Stopping ${config.container}`);
+  const stopResult = exec(`docker stop ${config.container}`, { silent: true });
+  if (stopResult.success) {
+    logSuccess(`Stopped ${config.container}`);
+  } else {
+    logWarning(`Container ${config.container} not running (OK)`);
+  }
+
+  // Step 2: Remove container
+  logStep(2, 4, `Removing ${config.container}`);
+  const rmResult = exec(`docker rm -f ${config.container}`, { silent: true });
+  if (rmResult.success) {
+    logSuccess(`Removed ${config.container}`);
+  } else {
+    logWarning(`Container ${config.container} not found (OK)`);
+  }
+
+  // Step 3: Build image
+  logStep(3, 4, `Building ${config.image}`);
+  const buildCmd = `docker build -f ${config.dockerfile} -t ${config.image} .`;
+  logInfo(`Command: ${buildCmd}`);
+  
+  const buildResult = exec(buildCmd);
+  if (!buildResult.success) {
+    logError(`Failed to build ${config.image}`);
+    return false;
+  }
+  logSuccess(`Built ${config.image}`);
+
+  // Step 4: Run container
+  logStep(4, 4, `Starting ${config.container}`);
+  
+  let runCmd = `docker run -d --name ${config.container} --restart unless-stopped`;
+  if (config.ports.length > 0) {
+    runCmd += ' ' + config.ports.join(' ');
+  }
+  runCmd += ` --env-file ${config.envFile} ${config.image}`;
+  
+  logInfo(`Command: ${runCmd}`);
+  
+  const runResult = exec(runCmd);
+  if (!runResult.success) {
+    logError(`Failed to start ${config.container}`);
+    return false;
+  }
+  logSuccess(`Started ${config.container}`);
+
+  log(`\n✅ ${serviceName} updated successfully! 🎉`, 'green');
   
   // Show logs
-  showLogs(service, dockerCmd, 30);
+  log(`\n${'═'.repeat(60)}`, 'bright');
+  log(`📋 Logs for ${config.container} (Ctrl+C to exit):`, 'bright');
+  log('═'.repeat(60), 'bright');
   
-  log(`\n✅ ${service} updated successfully!`, 'green');
+  exec(`docker logs --tail=50 -f ${config.container}`);
+  
   return true;
 }
 
-function main() {
-  const args = process.argv.slice(2);
-  const targetService = args[0] || 'all';
+function updateAll() {
+  log('\nUpdating all services: pow-service → coordinator → worker', 'blue');
   
-  log('\n╔═══════════════════════════════════════════════════════════╗', 'bright');
-  log('║                                                           ║', 'bright');
-  log('║        🔄  RAKUTEN DEPLOYMENT UPDATER  🔄                ║', 'bright');
-  log('║                                                           ║', 'bright');
-  log('╚═══════════════════════════════════════════════════════════╝', 'bright');
-  
-  // Detect docker-compose command
-  const dockerCmd = detectDockerCompose();
-  if (!dockerCmd) {
-    logError('Docker Compose not found!');
-    logInfo('Install docker-compose or use Docker with Compose plugin');
-    process.exit(1);
-  }
-  
-  logSuccess(`Using: ${dockerCmd}`);
-  
-  // Check if docker-compose.yml exists
-  if (!fs.existsSync('docker-compose.yml')) {
-    logError('docker-compose.yml not found in current directory');
-    logInfo('Run this script from the project root');
-    process.exit(1);
-  }
-  
-  // Determine which services to update
-  const allServices = ['coordinator', 'worker1', 'worker2', 'worker3', 'pow-service'];
-  let services;
-  
-  if (targetService === 'all') {
-    services = allServices;
-  } else if (targetService === 'worker') {
-    // 'worker' is alias for all workers
-    services = ['worker1', 'worker2', 'worker3'];
-  } else {
-    services = [targetService];
-  }
-  
-  // Validate service names (skip if already expanded from 'worker' alias)
-  if (targetService !== 'worker' && targetService !== 'all') {
-    for (const service of services) {
-      if (!allServices.includes(service)) {
-        logError(`Unknown service: ${service}`);
-        logInfo(`Valid services: coordinator, worker (all workers), worker1, worker2, worker3, pow-service, all`);
-        process.exit(1);
-      }
-    }
-  }
-  
-  logInfo(`Updating services: ${services.join(', ')}`);
-  
-  // Update each service
+  const order = ['pow-service', 'coordinator', 'worker'];
   const results = {};
-  for (const service of services) {
-    results[service] = updateService(service, dockerCmd);
+  
+  for (const serviceName of order) {
+    const config = SERVICES[serviceName];
+    
+    log(`\n${'═'.repeat(60)}`, 'bright');
+    log(`🚀 Updating ${serviceName.toUpperCase()}`, 'bright');
+    log('═'.repeat(60), 'bright');
+    
+    // Check env file
+    if (!fs.existsSync(config.envFile)) {
+      logError(`Missing: ${config.envFile}`);
+      results[serviceName] = false;
+      continue;
+    }
+    
+    // Stop & remove
+    exec(`docker stop ${config.container}`, { silent: true });
+    exec(`docker rm -f ${config.container}`, { silent: true });
+    
+    // Build
+    logInfo(`Building ${config.image}...`);
+    const buildResult = exec(`docker build -f ${config.dockerfile} -t ${config.image} .`);
+    if (!buildResult.success) {
+      logError(`Failed to build ${serviceName}`);
+      results[serviceName] = false;
+      continue;
+    }
+    
+    // Run
+    let runCmd = `docker run -d --name ${config.container} --restart unless-stopped`;
+    if (config.ports.length > 0) {
+      runCmd += ' ' + config.ports.join(' ');
+    }
+    runCmd += ` --env-file ${config.envFile} ${config.image}`;
+    
+    const runResult = exec(runCmd, { silent: true });
+    if (runResult.success) {
+      logSuccess(`${serviceName} started`);
+      results[serviceName] = true;
+    } else {
+      logError(`${serviceName} failed to start`);
+      results[serviceName] = false;
+    }
   }
   
   // Summary
   log(`\n${'═'.repeat(60)}`, 'bright');
-  log('📊 DEPLOYMENT SUMMARY', 'bright');
+  log('📊 SUMMARY', 'bright');
   log('═'.repeat(60), 'bright');
   
-  const successes = Object.values(results).filter(Boolean).length;
-  const failures = Object.values(results).filter(r => !r).length;
+  exec('docker ps --filter "name=rakuten" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"');
   
-  for (const [service, success] of Object.entries(results)) {
-    if (success) {
-      logSuccess(`${service}: Updated`);
-    } else {
-      logError(`${service}: Failed`);
-    }
-  }
-  
-  log('');
-  if (failures === 0) {
-    logSuccess(`All ${successes} service(s) updated successfully! 🎉`);
-    logInfo('\nNext steps:');
-    logInfo(`  - Monitor logs: ${dockerCmd} logs -f [service]`);
-    logInfo(`  - Check status: ${dockerCmd} ps`);
-    logInfo('  - Test /config command in Telegram');
+  const failed = Object.values(results).filter(r => !r).length;
+  if (failed === 0) {
+    log('\n✅ All services updated! 🎉', 'green');
   } else {
-    logError(`${failures} service(s) failed to update`);
-    logInfo('\nTroubleshooting:');
-    logInfo(`  - Check logs: ${dockerCmd} logs [service]`);
-    logInfo('  - Check build errors above');
-    logInfo(`  - Manual restart: ${dockerCmd} restart [service]`);
+    logError(`${failed} service(s) failed`);
+  }
+  
+  logInfo('View logs: docker logs -f rakuten-coordinator');
+}
+
+function showUsage() {
+  console.log(`
+Usage: node scripts/deploy/update-instance.js [service]
+
+Services:
+  coordinator  - Telegram bot and job orchestration
+  worker       - Credential checking worker
+  pow-service  - Proof-of-work service (alias: pow)
+  all          - Update all services
+
+Examples:
+  node scripts/deploy/update-instance.js coordinator
+  node scripts/deploy/update-instance.js worker
+  node scripts/deploy/update-instance.js pow
+  node scripts/deploy/update-instance.js all
+
+Prerequisites:
+  - .env.coordinator
+  - .env.worker
+  - .env.pow-service
+`);
+}
+
+function main() {
+  const args = process.argv.slice(2);
+  let service = args[0] || 'coordinator';
+
+  log('\n╔═══════════════════════════════════════════════════════════╗', 'bright');
+  log('║                                                           ║', 'bright');
+  log('║        🔄  RAKUTEN QUICK UPDATE  🔄                      ║', 'bright');
+  log('║                                                           ║', 'bright');
+  log('╚═══════════════════════════════════════════════════════════╝', 'bright');
+
+  // Normalize service name
+  if (service === 'pow') service = 'pow-service';
+  if (service === '-h' || service === '--help' || service === 'help') {
+    showUsage();
+    process.exit(0);
+  }
+
+  // Git pull
+  logInfo('Pulling latest code...');
+  const pullResult = exec('git pull');
+  if (pullResult.success) {
+    logSuccess('Git pull successful');
+  } else {
+    logError('Git pull failed');
+    process.exit(1);
+  }
+
+  // Update
+  if (service === 'all') {
+    updateAll();
+  } else if (SERVICES[service]) {
+    updateService(service);
+  } else {
+    logError(`Unknown service: ${service}`);
+    showUsage();
     process.exit(1);
   }
 }
 
-// Run main
+// Run
 if (require.main === module) {
-  try {
-    main();
-  } catch (error) {
-    logError(`Fatal error: ${error.message}`);
-    console.error(error.stack);
-    process.exit(1);
-  }
+  main();
 }
 
-module.exports = { updateService };
+module.exports = { updateService, SERVICES };
