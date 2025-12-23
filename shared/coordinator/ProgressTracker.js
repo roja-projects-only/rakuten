@@ -20,8 +20,12 @@ class ProgressTracker {
     // Track active progress trackers for coordinator restart recovery
     this.activeTrackers = new Map(); // batchId -> progress data
     
-    // Throttle interval (2 seconds per batch for more responsive updates)
-    this.throttleMs = 2000;
+    // Throttle interval (1.5 seconds for more responsive updates)
+    this.throttleMs = 1500;
+    
+    // Progress polling interval (independent of heartbeats)
+    this.pollingInterval = null;
+    this.pollingFrequency = 3000; // Poll every 3 seconds
   }
 
   /**
@@ -67,6 +71,9 @@ class ProgressTracker {
       
       // Initialize throttle timer
       this.updateTimers.set(batchId, 0);
+      
+      // Start progress polling if not already running
+      this.startProgressPolling();
       
       this.logger.info('Progress tracker initialized', {
         batchId,
@@ -220,14 +227,26 @@ class ProgressTracker {
           progressMessage,
           { parse_mode: 'MarkdownV2' }
         );
+        
+        this.logger.debug('Progress message updated successfully', { batchId });
+        
       } catch (error) {
         // Ignore "message not modified" errors - this is normal when progress hasn't changed
         if (error.message && error.message.includes('message is not modified')) {
           this.logger.debug('Progress message unchanged, skipping update', { batchId });
           return;
         }
-        // Re-throw other errors
-        throw error;
+        
+        // Log other Telegram API errors but don't fail the update
+        this.logger.warn('Failed to update Telegram progress message', {
+          batchId,
+          error: error.message,
+          chatId: progressData.chatId,
+          messageId: progressData.messageId
+        });
+        
+        // Don't re-throw - progress tracking should continue even if Telegram fails
+        return;
       }
       
       // Update throttle timer
@@ -286,6 +305,65 @@ class ProgressTracker {
         stack: error.stack
       });
       // Don't throw - progress updates are non-critical
+    }
+  }
+
+  /**
+   * Start progress polling for all active batches
+   * This ensures progress updates continue even if heartbeats are missed
+   */
+  startProgressPolling() {
+    if (this.pollingInterval) {
+      return; // Already running
+    }
+
+    this.pollingInterval = setInterval(async () => {
+      try {
+        // Poll progress for all active batches
+        const activeBatchIds = Array.from(this.activeTrackers.keys());
+        
+        if (activeBatchIds.length === 0) {
+          return;
+        }
+
+        this.logger.debug('Polling progress for active batches', {
+          batchCount: activeBatchIds.length,
+          batchIds: activeBatchIds
+        });
+
+        // Update progress for each active batch
+        for (const batchId of activeBatchIds) {
+          try {
+            await this.handleProgressUpdate(batchId);
+          } catch (error) {
+            this.logger.warn('Failed to update progress during polling', {
+              batchId,
+              error: error.message
+            });
+          }
+        }
+      } catch (error) {
+        this.logger.error('Progress polling error', {
+          error: error.message,
+          stack: error.stack
+        });
+      }
+    }, this.pollingFrequency);
+
+    this.logger.info('Progress polling started', {
+      frequency: this.pollingFrequency,
+      throttle: this.throttleMs
+    });
+  }
+
+  /**
+   * Stop progress polling
+   */
+  stopProgressPolling() {
+    if (this.pollingInterval) {
+      clearInterval(this.pollingInterval);
+      this.pollingInterval = null;
+      this.logger.info('Progress polling stopped');
     }
   }
 
@@ -576,10 +654,9 @@ class ProgressTracker {
       this.activeTrackers.delete(batchId);
       this.updateTimers.delete(batchId);
       
-      // Clean up polling interval
-      if (this.pollingIntervals && this.pollingIntervals.has(batchId)) {
-        clearInterval(this.pollingIntervals.get(batchId));
-        this.pollingIntervals.delete(batchId);
+      // Stop polling if no more active batches
+      if (this.activeTrackers.size === 0) {
+        this.stopProgressPolling();
       }
       
       this.logger.info('Progress tracker cleaned up', { batchId });
