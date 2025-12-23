@@ -1,6 +1,7 @@
 const { Markup } = require('telegraf');
 const { parseColonCredential, isAllowedHotmailUser } = require('../automation/batch/parse');
 const { createLogger } = require('../logger');
+const { generateBatchId } = require('../shared/redis/keys');
 const {
   escapeV2,
   codeV2,
@@ -276,6 +277,7 @@ async function processSessionFiles(ctx, session) {
  */
 function registerCombineHandlers(bot, options, helpers) {
   const checkCredentials = options.checkCredentials;
+  const compatibility = options.compatibility;
 
   // /combine command - start combine mode
   bot.command('combine', async (ctx) => {
@@ -503,8 +505,64 @@ function registerCombineHandlers(bot, options, helpers) {
     log.info(`[combine] session cleared, starting batch chatId=${chatId}`);
     
     try {
-      const { runCombineBatch } = require('./combineBatchRunner');
-      await runCombineBatch(ctx, batch, options, helpers, checkCredentials);
+      const isDistributed = compatibility?.isDistributed && compatibility.isDistributed();
+
+      if (isDistributed) {
+        const coordinator = compatibility?.coordinator;
+        if (!coordinator || !coordinator.jobQueue || !coordinator.progressTracker) {
+          throw new Error('Coordinator not initialized for distributed combine mode');
+        }
+
+        // Queue to Redis so workers process combined batch
+        const batchId = generateBatchId();
+        const statusMsg = await ctx.reply(
+          escapeV2('⏳ Queuing combined batch...'),
+          { parse_mode: 'MarkdownV2' }
+        );
+
+        const batchTypeMap = { hotmail: 'HOTMAIL', ulp: 'ULP', jp: 'JP', all: 'ALL' };
+        const batchType = batchTypeMap[type] || 'COMBINE';
+
+        const result = await coordinator.jobQueue.enqueueBatch(batchId, batch.creds, {
+          batchType,
+          chatId,
+          filename: batch.filename,
+          userId: ctx.from.id,
+        });
+
+        const { buildBatchProgress } = require('./messages');
+        const text = buildBatchProgress({
+          filename: batch.filename,
+          processed: 0,
+          total: result.queued,
+          counts: { VALID: 0, INVALID: 0, BLOCKED: 0, ERROR: 0 },
+          validCreds: [],
+          cached: result.cached,
+        });
+
+        await ctx.telegram.editMessageText(
+          chatId,
+          statusMsg.message_id,
+          undefined,
+          text,
+          {
+            parse_mode: 'MarkdownV2',
+            ...Markup.inlineKeyboard([[Markup.button.callback('⏹ Abort', `combine_abort_dist_${batchId}`)]]),
+          }
+        );
+
+        await coordinator.progressTracker.initBatch(
+          batchId,
+          result.queued,
+          chatId,
+          statusMsg.message_id,
+          batch.filename
+        );
+        coordinator.progressTracker.startTracking(batchId, batch.filename);
+      } else {
+        const { runCombineBatch } = require('./combineBatchRunner');
+        await runCombineBatch(ctx, batch, options, helpers, checkCredentials);
+      }
     } catch (err) {
       log.error(`[combine] batch execution error: ${err.message}`);
       await ctx.reply(escapeV2(`⚠️ Batch failed: ${err.message}`), {
@@ -543,6 +601,38 @@ function registerCombineHandlers(bot, options, helpers) {
       }
     } else {
       await ctx.reply(escapeV2('⚠️ No active combine batch to abort.'), {
+        parse_mode: 'MarkdownV2',
+      });
+    }
+  });
+
+  // Abort distributed combine batch (coordinator mode)
+  bot.action(/combine_abort_dist_(.+)/, async (ctx) => {
+    await ctx.answerCbQuery('Aborting...');
+    const batchId = ctx.match[1];
+    const coordinator = compatibility?.coordinator;
+
+    if (!coordinator) {
+      await ctx.reply(escapeV2('⚠️ Coordinator not available to abort batch.'), {
+        parse_mode: 'MarkdownV2',
+      });
+      return;
+    }
+
+    try {
+      await coordinator.cancelBatch(batchId);
+      await coordinator.progressTracker.abortBatch(batchId);
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        ctx.update.callback_query.message.message_id,
+        undefined,
+        escapeV2(`⏹ Batch ${batchId} stop requested.`),
+        { parse_mode: 'MarkdownV2' }
+      );
+      log.info(`[combine] distributed abort requested batchId=${batchId}`);
+    } catch (err) {
+      log.warn(`[combine] failed to abort distributed batch ${batchId}: ${err.message}`);
+      await ctx.reply(escapeV2(`⚠️ Failed to abort batch: ${err.message}`), {
         parse_mode: 'MarkdownV2',
       });
     }
