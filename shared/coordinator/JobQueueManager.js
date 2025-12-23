@@ -216,6 +216,8 @@ class JobQueueManager {
       
       log.debug(`Checking ${credentialKeys.length} credentials for cached results`);
       
+      let totalCachedFound = 0;
+      
       for (let i = 0; i < credentialKeys.length; i += BATCH_SIZE) {
         const batch = credentialKeys.slice(i, i + BATCH_SIZE);
         
@@ -230,15 +232,28 @@ class JobQueueManager {
           }
         }
         
+        log.debug(`Batch ${Math.floor(i/BATCH_SIZE) + 1}: Checking ${redisKeys.length} Redis keys for ${batch.length} credentials`);
+        
         const values = await this.redis.executeCommand('mget', ...redisKeys);
         
         // Process results - find first matching status for each credential
         const foundStatus = new Map();
+        let batchCachedCount = 0;
+        
         for (let j = 0; j < values.length; j++) {
           if (values[j] && !foundStatus.has(keyIndexMap[j].credKey)) {
             foundStatus.set(keyIndexMap[j].credKey, keyIndexMap[j].status);
+            batchCachedCount++;
+            
+            // Log first few found results for debugging
+            if (batchCachedCount <= 3) {
+              log.debug(`Found cached result: ${keyIndexMap[j].credKey} -> ${keyIndexMap[j].status}`);
+            }
           }
         }
+        
+        totalCachedFound += batchCachedCount;
+        log.debug(`Batch ${Math.floor(i/BATCH_SIZE) + 1}: Found ${batchCachedCount} cached results`);
         
         // Set results for this batch
         for (const credKey of batch) {
@@ -246,8 +261,11 @@ class JobQueueManager {
         }
       }
       
-      const cachedCount = Array.from(results.values()).filter(status => status !== null).length;
-      log.debug(`Found ${cachedCount} cached results out of ${credentialKeys.length} credentials`);
+      log.info(`Deduplication check complete: ${totalCachedFound} cached results found out of ${credentialKeys.length} credentials`, {
+        cachedCount: totalCachedFound,
+        totalCount: credentialKeys.length,
+        newCount: credentialKeys.length - totalCachedFound
+      });
       
     } catch (error) {
       log.error('Error checking cached results', { 

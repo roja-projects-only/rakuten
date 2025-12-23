@@ -646,12 +646,19 @@ class WorkerNode {
       const resultKey = RESULT_CACHE.generate(result.status, result.username, result.password);
       const resultData = JSON.stringify(result);
       
+      // Store result with immediate verification
       await this.redis.executeCommand(
         'setex',
         resultKey,
         RESULT_CACHE.ttl,
         resultData
       );
+      
+      // Immediately verify the result was stored
+      const verification = await this.redis.executeCommand('get', resultKey);
+      if (!verification) {
+        throw new Error(`Failed to verify result storage for key: ${resultKey}`);
+      }
       
       // Update result counts for real-time progress tracking
       await this.updateResultCounts(result);
@@ -661,19 +668,49 @@ class WorkerNode {
         await this.addValidCredential(result);
       }
       
-      log.debug(`Stored result in cache`, {
+      log.info(`Result stored and verified in cache`, {
         workerId: this.workerId,
         resultKey,
-        status: result.status
+        status: result.status,
+        username: result.username,
+        ttl: RESULT_CACHE.ttl
       });
       
     } catch (error) {
-      log.error('Failed to store result in cache', {
+      log.error('CRITICAL: Failed to store result in cache', {
         workerId: this.workerId,
         taskId: result.taskId,
-        error: error.message
+        username: result.username,
+        status: result.status,
+        error: error.message,
+        stack: error.stack
       });
-      // Don't throw - result storage failure shouldn't fail the task
+      
+      // This is critical - if we can't store results, deduplication won't work
+      // Try one more time with a different approach
+      try {
+        const resultKey = RESULT_CACHE.generate(result.status, result.username, result.password);
+        const resultData = JSON.stringify(result);
+        
+        // Use SET with EX instead of SETEX
+        await this.redis.executeCommand('set', resultKey, resultData, 'EX', RESULT_CACHE.ttl);
+        
+        log.warn('Result stored using fallback method', {
+          workerId: this.workerId,
+          resultKey,
+          status: result.status
+        });
+        
+      } catch (fallbackError) {
+        log.error('CRITICAL: Fallback result storage also failed', {
+          workerId: this.workerId,
+          taskId: result.taskId,
+          username: result.username,
+          fallbackError: fallbackError.message
+        });
+        
+        // Don't throw - but this is a serious issue that needs attention
+      }
     }
   }
 
