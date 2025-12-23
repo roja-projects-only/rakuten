@@ -156,6 +156,16 @@ function guardInput(raw) {
  */
 function initializeTelegramHandler(botToken, options = {}) {
   const bot = new Telegraf(botToken);
+
+  // Global error handler to keep polling alive on handler exceptions
+  bot.catch((err, ctx) => {
+    log.error(`Telegram handler error for update ${ctx?.update?.update_id || 'unknown'}: ${err.message}`);
+  });
+
+  // Log polling errors instead of crashing
+  bot.on('polling_error', (err) => {
+    log.warn(`Polling error: ${err.message}`);
+  });
   
   // Parse allowed user IDs from environment
   const allowedUserIds = parseAllowedUserIds();
@@ -369,6 +379,7 @@ function initializeTelegramHandler(botToken, options = {}) {
     };
 
     try {
+      let sessionToClose = null;
       // Keep creds in state for follow-up capture summary (masked via spoiler later).
       ctx.state.lastUsername = creds.username;
       ctx.state.lastPassword = creds.password;
@@ -389,6 +400,7 @@ function initializeTelegramHandler(botToken, options = {}) {
           },
         }
       );
+      sessionToClose = result.session;
 
       // Format result message with masked username
       const durationMs = Date.now() - startedAt;
@@ -432,6 +444,7 @@ function initializeTelegramHandler(botToken, options = {}) {
         } finally {
           // Clean up session
           closeSession(result.session);
+          sessionToClose = null;
         }
       } else if (result.status === 'VALID' && !result.session) {
         log.warn(`[chk] no session for capture (deferCloseOnValid=false?)`);
@@ -447,6 +460,11 @@ function initializeTelegramHandler(botToken, options = {}) {
         });
       } catch (editErr) {
         await ctx.reply(buildCheckError(err.message), { parse_mode: 'MarkdownV2' });
+      }
+    } finally {
+      // Ensure any leftover session is closed to avoid leaks that could block future checks
+      if (typeof sessionToClose === 'object' && sessionToClose?.id) {
+        closeSession(sessionToClose);
       }
     }
   });
