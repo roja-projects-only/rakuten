@@ -19,19 +19,28 @@ const {
 } = require('./messageTracker');
 const { escapeV2, codeV2, boldV2 } = require('./messages/helpers');
 const { createLogger } = require('../logger');
+const { getConfigService } = require('../shared/config/configService');
 
 const log = createLogger('channel-forwarder');
 
 /**
- * Get the channel ID from environment.
+ * Get the channel ID from config service (hot-reloadable) or env fallback.
  * @returns {string|null} Channel ID or null if not configured
  */
 function getChannelId() {
-  const channelId = process.env.FORWARD_CHANNEL_ID;
-  if (!channelId || !channelId.trim()) {
+  const configService = getConfigService();
+  let channelId;
+  
+  if (configService.isInitialized()) {
+    channelId = configService.get('FORWARD_CHANNEL_ID');
+  } else {
+    channelId = process.env.FORWARD_CHANNEL_ID;
+  }
+  
+  if (!channelId || !String(channelId).trim()) {
     return null;
   }
-  return channelId.trim();
+  return String(channelId).trim();
 }
 
 /**

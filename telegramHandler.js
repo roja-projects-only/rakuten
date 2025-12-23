@@ -8,8 +8,10 @@ const { registerBatchHandlers, abortActiveBatch, hasActiveBatch } = require('./t
 const { registerCombineHandlers, hasSession: hasCombineSession, addFileToSession, TELEGRAM_FILE_LIMIT_BYTES } = require('./telegram/combineHandler');
 const { abortCombineBatch, hasCombineBatch, getActiveCombineBatch } = require('./telegram/combineBatchRunner');
 const { registerExportHandler } = require('./telegram/exportHandler');
+const { registerConfigHandler } = require('./telegram/configHandler');
 const { forwardValidToChannel, handleCredentialStatusChange } = require('./telegram/channelForwarder');
 const { getRedisClient, initProcessedStore } = require('./automation/batch/processedStore');
+const { getConfigService } = require('./shared/config/configService');
 const {
   buildStartMessage,
   buildHelpMessage,
@@ -336,6 +338,15 @@ function initializeTelegramHandler(botToken, options = {}) {
   }).catch((err) => {
     log.warn(`Export handler setup failed: ${err.message}`);
   });
+
+  // Register config handler (centralized config via Telegram)
+  // Only register if config service is initialized (Redis available)
+  const configService = getConfigService();
+  if (configService.isInitialized()) {
+    registerConfigHandler(bot, getRedisClient);
+  } else {
+    log.info('Config handler not registered (config service not initialized)');
+  }
 
   // Handle .chk command
   bot.hears(/^\.chk\s+(.+)/, async (ctx) => {

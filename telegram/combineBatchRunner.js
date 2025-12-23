@@ -16,27 +16,47 @@ const {
   buildBatchFailed,
 } = require('./messages');
 const { createLogger } = require('../logger');
+const { getConfigService } = require('../shared/config/configService');
 
 const log = createLogger('combine-batch');
 
 // Track active batches
 const activeCombineBatches = new Map();
 
-// Configuration
-const BATCH_CONCURRENCY = Math.max(1, parseInt(process.env.BATCH_CONCURRENCY, 10) || 1);
-const MAX_RETRIES = parseInt(process.env.BATCH_MAX_RETRIES, 10) || 1;
-const REQUEST_DELAY_MS = parseInt(process.env.BATCH_DELAY_MS, 10) || 50; // reduced for speed
+// Non-configurable constants
 const PROGRESS_UPDATE_INTERVAL_MS = 2000;
 const ERROR_THRESHOLD_PERCENT = 60;
 const ERROR_WINDOW_SIZE = 5;
 const CIRCUIT_BREAKER_PAUSE_MS = 3000;
-const PROCESSED_TTL_MS = parseInt(process.env.PROCESSED_TTL_MS, 10) || DEFAULT_TTL_MS;
+
+/**
+ * Get batch configuration from config service (hot-reloadable) or env fallback
+ */
+function getBatchConfig() {
+  const configService = getConfigService();
+  if (configService.isInitialized()) {
+    return {
+      concurrency: Math.max(1, configService.get('BATCH_CONCURRENCY') || 1),
+      maxRetries: configService.get('BATCH_MAX_RETRIES') || 1,
+      delayMs: configService.get('BATCH_DELAY_MS') || 50,
+      processedTtlMs: configService.get('PROCESSED_TTL_MS') || DEFAULT_TTL_MS
+    };
+  }
+  // Fallback to env
+  return {
+    concurrency: Math.max(1, parseInt(process.env.BATCH_CONCURRENCY, 10) || 1),
+    maxRetries: parseInt(process.env.BATCH_MAX_RETRIES, 10) || 1,
+    delayMs: parseInt(process.env.BATCH_DELAY_MS, 10) || 50,
+    processedTtlMs: parseInt(process.env.PROCESSED_TTL_MS, 10) || DEFAULT_TTL_MS
+  };
+}
 
 /**
  * Filter already processed credentials using batch Redis lookup
  */
 async function filterAlreadyProcessed(creds) {
-  await initProcessedStore(PROCESSED_TTL_MS);
+  const { processedTtlMs } = getBatchConfig();
+  await initProcessedStore(processedTtlMs);
   
   log.info(`[filter] Filtering ${creds.length} credentials against processed store...`);
   
@@ -48,7 +68,7 @@ async function filterAlreadyProcessed(creds) {
   
   // Batch lookup - single MGET call per 1000 keys
   const allKeys = credsWithKeys.map(c => c._dedupeKey);
-  const statusMap = await getProcessedStatusBatch(allKeys, PROCESSED_TTL_MS);
+  const statusMap = await getProcessedStatusBatch(allKeys, processedTtlMs);
   
   const filtered = [];
   let skipped = 0;
@@ -192,7 +212,9 @@ async function runCombineBatch(ctx, batch, options, helpers, checkCredentials) {
   // Track active batch
   activeCombineBatches.set(chatId, batchData);
 
-  log.info(`[combine-batch] starting total=${filtered.length} concurrency=${BATCH_CONCURRENCY}`);
+  // Get config at execution start (will be read fresh for each batch)
+  const batchConfig = getBatchConfig();
+  log.info(`[combine-batch] starting total=${filtered.length} concurrency=${batchConfig.concurrency}`);
 
   // Schedule execution to avoid Telegraf 90s per-update timeout
   // This allows the callback handler to return immediately
@@ -292,14 +314,14 @@ async function runCombineBatch(ctx, batch, options, helpers, checkCredentials) {
       validCreds.push({ username: cred.username, password: cred.password });
     }
 
-    markProcessedStatus(credKey, result.status, PROCESSED_TTL_MS).catch(() => {});
+    markProcessedStatus(credKey, result.status, batchConfig.processedTtlMs).catch(() => {});
     
     return result;
   };
 
   const processInChunks = async () => {
     const allCreds = batchData.creds;
-    const chunkSize = BATCH_CONCURRENCY;
+    const chunkSize = batchConfig.concurrency;
     
     for (let i = 0; i < allCreds.length; i += chunkSize) {
       if (batchData.aborted) break;
@@ -319,8 +341,8 @@ async function runCombineBatch(ctx, batch, options, helpers, checkCredentials) {
       
       await updateProgress(true);
       
-      if (i + chunkSize < allCreds.length && REQUEST_DELAY_MS > 0) {
-        await new Promise(r => setTimeout(r, REQUEST_DELAY_MS));
+      if (i + chunkSize < allCreds.length && batchConfig.delayMs > 0) {
+        await new Promise(r => setTimeout(r, batchConfig.delayMs));
       }
     }
   };

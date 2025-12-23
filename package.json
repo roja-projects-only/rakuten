@@ -18,7 +18,13 @@
     "test:proxy-health": "node scripts/tests/test-proxy-rotation-health.js",
     "test:pow-degradation": "node scripts/tests/test-pow-service-degradation.js",
     "test:deduplication": "node scripts/tests/test-deduplication-across-batches.js",
-    "verify:pow-deployment": "node scripts/deploy/verify-pow-deployment.js"
+    "test:config": "node scripts/tests/test-config-service.js",
+    "verify:pow-deployment": "node scripts/deploy/verify-pow-deployment.js",
+    "verify:config": "node scripts/tests/verify-config-deployment.js",
+    "update": "node scripts/deploy/update-instance.js",
+    "update:coordinator": "node scripts/deploy/update-instance.js coordinator",
+    "update:worker": "node scripts/deploy/update-instance.js worker",
+    "update:pow": "node scripts/deploy/update-instance.js pow-service"
   },
   "keywords": [
     "telegram",
