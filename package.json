@@ -24,6 +24,9 @@
     "update": "node scripts/deploy/update-instance.js",
     "update:coordinator": "node scripts/deploy/update-instance.js coordinator",
     "update:worker": "node scripts/deploy/update-instance.js worker",
+    "update:worker1": "node scripts/deploy/update-instance.js worker1",
+    "update:worker2": "node scripts/deploy/update-instance.js worker2",
+    "update:worker3": "node scripts/deploy/update-instance.js worker3",
     "update:pow": "node scripts/deploy/update-instance.js pow-service"
   },
   "keywords": [

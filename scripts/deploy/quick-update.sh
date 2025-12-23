@@ -103,7 +103,8 @@ update_service() {
   
   # Step 4: Start
   log_step 4 4 "Starting $service"
-  if $docker_cmd up -d $service; then
+  # Use --no-deps to prevent starting dependency services
+  if $docker_cmd up -d --no-deps $service; then
     log_success "Started $service"
   else
     log_error "Failed to start $service"
@@ -156,7 +157,10 @@ main() {
   
   # Determine services to update
   if [ "$SERVICE" = "all" ]; then
-    SERVICES=("coordinator" "worker" "pow-service")
+    SERVICES=("coordinator" "worker1" "worker2" "worker3" "pow-service")
+  elif [ "$SERVICE" = "worker" ]; then
+    # 'worker' is alias for all workers
+    SERVICES=("worker1" "worker2" "worker3")
   else
     SERVICES=("$SERVICE")
   fi

@@ -172,6 +172,8 @@ function buildService(service, dockerCmd) {
     return false;
   }
   
+  // Build with --no-cache option to ensure fresh build
+  // Note: Env var warnings during build are expected and can be ignored
   const result = execCommand(`${dockerCmd} build ${service}`);
   if (result.success) {
     logSuccess(`Built ${service}`);
@@ -190,7 +192,8 @@ function startService(service, dockerCmd) {
     return false;
   }
   
-  const result = execCommand(`${dockerCmd} up -d ${service}`);
+  // Use --no-deps to prevent starting dependency services
+  const result = execCommand(`${dockerCmd} up -d --no-deps ${service}`);
   if (result.success) {
     logSuccess(`Started ${service}`);
     return true;
@@ -273,15 +276,26 @@ function main() {
   }
   
   // Determine which services to update
-  const allServices = ['coordinator', 'worker', 'pow-service'];
-  const services = targetService === 'all' ? allServices : [targetService];
+  const allServices = ['coordinator', 'worker1', 'worker2', 'worker3', 'pow-service'];
+  let services;
   
-  // Validate service names
-  for (const service of services) {
-    if (!allServices.includes(service)) {
-      logError(`Unknown service: ${service}`);
-      logInfo(`Valid services: ${allServices.join(', ')}, all`);
-      process.exit(1);
+  if (targetService === 'all') {
+    services = allServices;
+  } else if (targetService === 'worker') {
+    // 'worker' is alias for all workers
+    services = ['worker1', 'worker2', 'worker3'];
+  } else {
+    services = [targetService];
+  }
+  
+  // Validate service names (skip if already expanded from 'worker' alias)
+  if (targetService !== 'worker' && targetService !== 'all') {
+    for (const service of services) {
+      if (!allServices.includes(service)) {
+        logError(`Unknown service: ${service}`);
+        logInfo(`Valid services: coordinator, worker (all workers), worker1, worker2, worker3, pow-service, all`);
+        process.exit(1);
+      }
     }
   }
   

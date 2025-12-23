@@ -10,16 +10,21 @@ node scripts/deploy/update-instance.js
 
 # Update specific service
 node scripts/deploy/update-instance.js coordinator
-node scripts/deploy/update-instance.js worker
+node scripts/deploy/update-instance.js worker    # All workers (worker1, worker2, worker3)
+node scripts/deploy/update-instance.js worker1   # Specific worker
+node scripts/deploy/update-instance.js worker2
+node scripts/deploy/update-instance.js worker3
 node scripts/deploy/update-instance.js pow-service
 ```
 
 **What it does:**
 1. ✋ Stops running container
 2. 🗑️ Removes old container
-3. 🔨 Builds new image
+3. 🔨 Builds new image (env warnings are normal and ignored)
 4. ▶️ Starts new container
 5. 📋 Shows recent logs
+
+**Note:** Environment variable warnings during build are expected since vars are set at runtime, not build time. They can be safely ignored.
 
 ### Option 2: Bash Script (Linux/Mac)
 
@@ -32,7 +37,8 @@ chmod +x scripts/deploy/quick-update.sh
 
 # Update specific service
 ./scripts/deploy/quick-update.sh coordinator
-./scripts/deploy/quick-update.sh worker
+./scripts/deploy/quick-update.sh worker    # All workers
+./scripts/deploy/quick-update.sh worker1   # Specific worker
 ```
 
 **Bonus:** Includes git pull in the workflow
@@ -67,10 +73,13 @@ git pull
 ssh user@coordinator-ip "cd /app && git pull && ./scripts/deploy/quick-update.sh coordinator"
 
 # Update worker 1
-ssh user@worker1-ip "cd /app && git pull && ./scripts/deploy/quick-update.sh worker"
+ssh user@worker1-ip "cd /app && git pull && ./scripts/deploy/quick-update.sh worker1"
 
 # Update worker 2
-ssh user@worker2-ip "cd /app && git pull && ./scripts/deploy/quick-update.sh worker"
+ssh user@worker2-ip "cd /app && git pull && ./scripts/deploy/quick-update.sh worker2"
+
+# Update all workers on one instance
+ssh user@instance-ip "cd /app && git pull && ./scripts/deploy/quick-update.sh worker"
 ```
 
 ---
