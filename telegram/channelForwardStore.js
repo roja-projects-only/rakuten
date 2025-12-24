@@ -73,6 +73,14 @@ async function rewriteFile() {
   await fs.writeFile(STORE_PATH, lines.join('\n') + (lines.length ? '\n' : ''), 'utf8');
 }
 
+async function removeFromFile(key) {
+  const removed = cache.delete(key);
+  if (removed) {
+    await rewriteFile();
+  }
+  return removed;
+}
+
 // ============ Redis Backend ============
 
 async function initRedis() {
@@ -177,6 +185,64 @@ async function hasBeenForwarded(username, password, ttlMs = DEFAULT_TTL_MS) {
 }
 
 /**
+ * Atomically reserve a forward slot. Returns false if it already exists.
+ * @param {string} username
+ * @param {string} password
+ * @param {number} ttlMs
+ * @returns {Promise<boolean>} True if reservation created
+ */
+async function reserveForwarded(username, password, ttlMs = DEFAULT_TTL_MS) {
+  await initForwardStore(ttlMs);
+
+  const key = makeKey(username, password);
+  const ts = Date.now();
+
+  if (backend === 'redis') {
+    try {
+      const redisKey = `${REDIS_PREFIX}${key}`;
+      const ttlSeconds = Math.ceil(ttlMs / 1000);
+      const result = await redisClient.set(redisKey, String(ts), 'NX', 'EX', ttlSeconds);
+      return result === 'OK';
+    } catch (err) {
+      log.warn(`Redis reserve error: ${err.message}`);
+      return false;
+    }
+  }
+
+  // JSONL backend (single-process best-effort)
+  const existing = cache.get(key);
+  if (existing && ts - existing <= ttlMs) return false;
+  cache.set(key, ts);
+  await rewriteFile();
+  return true;
+}
+
+/**
+ * Remove a forwarded marker so the credential can be forwarded again.
+ * @param {string} username
+ * @param {string} password
+ * @returns {Promise<boolean>} True if an entry was removed
+ */
+async function releaseForwarded(username, password) {
+  await initForwardStore();
+
+  const key = makeKey(username, password);
+
+  if (backend === 'redis') {
+    try {
+      const redisKey = `${REDIS_PREFIX}${key}`;
+      const deleted = await redisClient.del(redisKey);
+      return deleted === 1;
+    } catch (err) {
+      log.warn(`Redis release error: ${err.message}`);
+      return false;
+    }
+  }
+
+  return removeFromFile(key);
+}
+
+/**
  * Mark a credential as forwarded to channel.
  * @param {string} username - Email/username
  * @param {string} password - Password
@@ -214,5 +280,7 @@ module.exports = {
   hasBeenForwarded,
   markForwarded,
   makeKey,
+  reserveForwarded,
+  releaseForwarded,
   DEFAULT_TTL_MS,
 };

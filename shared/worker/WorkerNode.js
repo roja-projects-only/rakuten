@@ -869,8 +869,34 @@ class WorkerNode {
         });
       }
       
-      // If status changed (recheck), publish update_event
-      // Note: For now, we don't track previous status, so this is for future enhancement
+      // If credential was previously forwarded and is now INVALID/BLOCKED, publish update_event
+      if (result.status === 'INVALID' || result.status === 'BLOCKED') {
+        const trackingCode = await this.redis.executeCommand('get', `msg:cred:${result.username}:${result.password}`);
+        if (trackingCode) {
+          const updateEvent = {
+            username: result.username,
+            password: result.password,
+            newStatus: result.status,
+            trackingCode,
+            timestamp: result.checkedAt,
+            workerId: this.workerId,
+            batchId: result.batchId
+          };
+
+          await this.redis.executeCommand(
+            'publish',
+            PUBSUB_CHANNELS.updateEvents,
+            JSON.stringify(updateEvent)
+          );
+
+          log.debug('Published update_event', {
+            workerId: this.workerId,
+            username: result.username,
+            batchId: result.batchId,
+            status: result.status
+          });
+        }
+      }
       
     } catch (error) {
       log.error('Failed to publish result events', {

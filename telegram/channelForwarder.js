@@ -9,13 +9,12 @@
  * =============================================================================
  */
 
-const { hasBeenForwarded, markForwarded } = require('./channelForwardStore');
+const { reserveForwarded, releaseForwarded } = require('./channelForwardStore');
 const {
   generateTrackingCode,
   storeMessageRef,
   getMessageRefByCredentials,
   deleteMessageRef,
-  clearForwardedStatus,
 } = require('./messageTracker');
 const { escapeV2, codeV2, boldV2 } = require('./messages/helpers');
 const { createLogger } = require('../logger');
@@ -138,9 +137,9 @@ async function forwardValidToChannel(telegram, username, password, message, capt
   }
   
   try {
-    // Check if already forwarded (dedupe)
-    const alreadyForwarded = await hasBeenForwarded(username, password);
-    if (alreadyForwarded) {
+    // Atomically reserve a forward slot to prevent duplicates across workers/.chk
+    const reserved = await reserveForwarded(username, password);
+    if (!reserved) {
       log.debug(`Already forwarded: ${username.slice(0, 5)}***`);
       return false;
     }
@@ -165,15 +164,19 @@ async function forwardValidToChannel(telegram, username, password, message, capt
       password,
     });
     
-    // Mark as forwarded
-    await markForwarded(username, password);
-    
     log.info(`Forwarded to channel: ${username.slice(0, 5)}*** [${trackingCode}]`);
     return true;
     
   } catch (err) {
     // Log error but don't throw - channel forwarding should not break main flow
     log.error(`Channel forward failed: ${err.message}`);
+
+    // Release dedupe reservation so a retry can happen
+    try {
+      await releaseForwarded(username, password);
+    } catch (releaseErr) {
+      log.warn(`Failed to release forward reservation: ${releaseErr.message}`);
+    }
     
     // Common error handling
     if (err.message.includes('chat not found')) {
@@ -213,9 +216,9 @@ async function handleCredentialStatusChange(telegram, username, password, newSta
       // Delete the message from channel
       await telegram.deleteMessage(channelId, messageId);
       
-      // Clean up Redis entries
+      // Clean up Redis entries and dedupe marker so future forwards are allowed
       await deleteMessageRef(username, password);
-      await clearForwardedStatus(username, password);
+      await releaseForwarded(username, password);
       
       log.info(`Deleted channel message: ${username.slice(0, 5)}*** [${trackingCode}]`);
       return true;
@@ -245,6 +248,7 @@ async function handleCredentialStatusChange(telegram, username, password, newSta
       log.debug(`Message already deleted/modified: ${username.slice(0, 5)}***`);
       // Clean up stale references
       await deleteMessageRef(username, password);
+      await releaseForwarded(username, password);
       return false;
     }
     

