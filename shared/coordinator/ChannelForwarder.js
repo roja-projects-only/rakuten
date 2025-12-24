@@ -125,6 +125,21 @@ class ChannelForwarder {
       return { valid: false, reason: 'no cards captured' };
     }
 
+    // Require at least one unexpired card
+    const hasUnexpiredCard = capture.profile.cards.some((card) => {
+      if (!card || !card.expiry) return false;
+      const [mm, yy] = String(card.expiry).split(/[\/\-]/);
+      const month = Number(mm);
+      const year = yy ? Number(yy.length === 2 ? `20${yy}` : yy) : NaN;
+      if (!month || month < 1 || month > 12 || !year) return false;
+      const expiryDate = new Date(year, month, 0); // last day of month
+      return expiryDate >= new Date();
+    });
+
+    if (!hasUnexpiredCard) {
+      return { valid: false, reason: 'all cards expired or missing expiry' };
+    }
+
     return { valid: true, reason: '' };
   }
 
