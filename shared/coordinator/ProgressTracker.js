@@ -422,11 +422,14 @@ class ProgressTracker {
    * @returns {Promise<void>}
    */
   async sendSummary(batchId) {
+    let progressData;
+
     try {
       // Get progress data
-      const progressData = await this.getProgressData(batchId);
+      progressData = await this.getProgressData(batchId);
       if (!progressData) {
         this.logger.warn('Cannot send summary for unknown batch', { batchId });
+        await this._cleanupSilently(batchId, 'sendSummary:missing');
         return;
       }
       
@@ -481,16 +484,15 @@ class ProgressTracker {
         elapsed
       });
       
-      // Clean up progress tracker
-      await this.cleanup(batchId);
-      
     } catch (error) {
       this.logger.error('Failed to send batch summary', {
         batchId,
         error: error.message,
         stack: error.stack
       });
-      throw error;
+    } finally {
+      // Always clean up to stop further progress polling even if Telegram returns 429
+      await this._cleanupSilently(batchId, 'sendSummary:finalize');
     }
   }
 
@@ -792,10 +794,13 @@ class ProgressTracker {
    * @returns {Promise<void>}
    */
   async sendAbortedMessage(batchId) {
+    let progressData;
+
     try {
-      const progressData = await this.getProgressData(batchId);
+      progressData = await this.getProgressData(batchId);
       if (!progressData) {
         this.logger.warn('Cannot send aborted message for unknown batch', { batchId });
+        await this._cleanupSilently(batchId, 'sendAborted:missing');
         return;
       }
       
@@ -845,13 +850,30 @@ class ProgressTracker {
         validCount: validCreds.length
       });
       
-      // Clean up progress tracker
-      await this.cleanup(batchId);
-      
     } catch (error) {
       this.logger.error('Failed to send aborted message', {
         batchId,
         error: error.message
+      });
+    } finally {
+      await this._cleanupSilently(batchId, 'sendAborted:finalize');
+    }
+  }
+
+  /**
+   * Cleanup helper that never throws, used to stop polling even when Telegram errors.
+   * @param {string} batchId
+   * @param {string} context
+   * @returns {Promise<void>}
+   */
+  async _cleanupSilently(batchId, context = 'unknown') {
+    try {
+      await this.cleanup(batchId);
+    } catch (cleanupError) {
+      this.logger.error('Failed to cleanup progress tracker', {
+        batchId,
+        context,
+        error: cleanupError.message
       });
     }
   }
