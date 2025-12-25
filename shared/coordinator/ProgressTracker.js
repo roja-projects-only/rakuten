@@ -432,6 +432,13 @@ class ProgressTracker {
         await this._cleanupSilently(batchId, 'sendSummary:missing');
         return;
       }
+
+      // If Telegram client is not ready (e.g., during crash recovery), skip edits but still clean up
+      if (!this.telegram) {
+        this.logger.warn('Telegram client unavailable during sendSummary, skipping edit', { batchId });
+        await this._cleanupSilently(batchId, 'sendSummary:no-telegram');
+        return;
+      }
       
       // Get final counts and valid credentials from Redis
       const countsKey = PROGRESS_TRACKER.generateCounts(batchId);
@@ -801,6 +808,13 @@ class ProgressTracker {
       if (!progressData) {
         this.logger.warn('Cannot send aborted message for unknown batch', { batchId });
         await this._cleanupSilently(batchId, 'sendAborted:missing');
+        return;
+      }
+
+      // If Telegram client is not ready (e.g., during crash recovery), skip edits but still clean up
+      if (!this.telegram) {
+        this.logger.warn('Telegram client unavailable during sendAbortedMessage, skipping edit', { batchId });
+        await this._cleanupSilently(batchId, 'sendAborted:no-telegram');
         return;
       }
       
