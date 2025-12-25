@@ -6,8 +6,13 @@ React + Vite single-page dashboard with Vercel serverless APIs for coordinator s
 
 ```bash
 npm install
+# terminal 1: local API for /api/status and /api/valids
+npm run dev:api
+# terminal 2: Vite frontend (proxies /api to 3000 by default)
 npm run dev
 ```
+
+The local API server loads `/web/.env.local` explicitly (dotenv), so put your `ALLOWED_IPS`, `REDIS_URL`, and endpoint URLs there.
 
 ## Required env (API + frontend)
 
@@ -23,6 +28,7 @@ Set these in Vercel/`.env.local` before deploy:
 Optional:
 - `REDIS_COMMAND_TIMEOUT` — override Redis command timeout (ms).
 - `VITE_API_BASE` — if hosting API separately, point the frontend at it; defaults to same origin.
+- `VITE_API_PROXY_TARGET` — Vite dev-only proxy target for `/api` (defaults to `http://localhost:3000`). Use when running `vercel dev` locally.
 
 ## What the APIs do
 

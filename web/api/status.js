@@ -2,7 +2,7 @@ import { enforceIpAllowlist } from './_lib/ipAllowlist.js';
 
 const TIMEOUT_MS = 5000;
 
-async function fetchJson(url) {
+async function fetchResource(url) {
   if (!url) return { error: 'url_not_configured' };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
@@ -12,8 +12,15 @@ async function fetchJson(url) {
     if (!res.ok) {
       return { error: `HTTP ${res.status}`, url };
     }
-    const data = await res.json();
-    return { data, url };
+
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      const data = await res.json();
+      return { data, url };
+    }
+
+    const text = await res.text();
+    return { text, url };
   } catch (error) {
     clearTimeout(timer);
     return { error: error.message, url };
@@ -34,9 +41,9 @@ export default async function handler(req, res) {
   const powStatsUrl = process.env.POW_SERVICE_STATS_URL || process.env.POW_SERVICE_URL?.replace(/\/$/, '') + '/stats';
 
   const [coordinator, powHealth, powStats] = await Promise.all([
-    fetchJson(coordinatorUrl),
-    fetchJson(powHealthUrl),
-    fetchJson(powStatsUrl),
+    fetchResource(coordinatorUrl),
+    fetchResource(powHealthUrl),
+    fetchResource(powStatsUrl),
   ]);
 
   res.status(200).json({
@@ -45,6 +52,7 @@ export default async function handler(req, res) {
     powService: {
       health: powHealth.data || null,
       stats: powStats.data || null,
+      statsText: powStats.text || null,
       error: powHealth.error || powStats.error || null,
     },
   });

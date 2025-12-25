@@ -1,7 +1,9 @@
-const allowedIps = (process.env.ALLOWED_IPS || '')
-  .split(',')
-  .map((ip) => ip.trim())
-  .filter(Boolean);
+function getAllowedIps() {
+  return (process.env.ALLOWED_IPS || '')
+    .split(',')
+    .map((ip) => ip.trim())
+    .filter(Boolean);
+}
 
 function extractClientIp(req) {
   const forwarded = req.headers['x-forwarded-for'];
@@ -15,6 +17,7 @@ function extractClientIp(req) {
 }
 
 export function enforceIpAllowlist(req, res) {
+  const allowedIps = getAllowedIps();
   if (!allowedIps.length) {
     res.status(403).json({ error: 'forbidden', reason: 'allowlist_empty' });
     return false;
