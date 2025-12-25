@@ -27,12 +27,14 @@ const {
   PROGRESS_TRACKER,
   WORKER_HEARTBEAT,
   PUBSUB_CHANNELS,
+  CAPTURE_SUMMARY,
   generateWorkerId 
 } = require('../redis/keys');
 const { getConfigService } = require('../config/configService');
 
 const log = createLogger('worker-node');
 const structuredLog = createStructuredLogger('worker-node');
+const DEFAULT_PROCESSED_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 /**
  * Get worker configuration from config service (hot-reloadable) or env fallback
@@ -752,6 +754,69 @@ class WorkerNode {
         error: error.message
       });
     }
+
+    // Persist trimmed capture summary for dashboard/API consumption (best-effort)
+    try {
+      await this.storeCaptureSummary(result);
+    } catch (error) {
+      log.warn('Capture summary store failed', {
+        workerId: this.workerId,
+        taskId: result.taskId,
+        username: result.username,
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Store a trimmed capture summary for VALID results (skip if capture is absent)
+   * @param {Object} result
+   */
+  async storeCaptureSummary(result) {
+    if (result.status !== 'VALID') return;
+    if (!result.capture) return;
+
+    const processedTtlMs = getWorkerConfig().processedTtlMs || DEFAULT_PROCESSED_TTL_MS;
+    const ttlSeconds = Math.max(1, Math.ceil(processedTtlMs / 1000));
+
+    const capture = result.capture;
+    const profile = capture.profile || {};
+    const hasProfile = Boolean(capture.profile);
+
+    const summary = {
+      username: result.username,
+      ipAddress: result.ipAddress || null,
+      ts: result.checkedAt || Date.now(),
+      points: capture.points ?? null,
+      cash: capture.cash ?? null,
+      rank: capture.rank ?? null,
+      latestOrder: capture.latestOrder ?? null,
+      latestOrderId: capture.latestOrderId ?? null,
+      cards: hasProfile ? profile.cards || null : null,
+      address: hasProfile
+        ? {
+            postalCode: profile.postalCode || null,
+            state: profile.state || null,
+            city: profile.city || null,
+            addressLine1: profile.addressLine1 || null,
+          }
+        : null,
+      profile: hasProfile
+        ? {
+            name: profile.name || null,
+            nameKana: profile.nameKana || null,
+            nickname: profile.nickname || null,
+            email: profile.email || null,
+            mobilePhone: profile.mobilePhone || null,
+            homePhone: profile.homePhone || null,
+            dob: profile.dob || null,
+            gender: profile.gender || null,
+          }
+        : null,
+    };
+
+    const key = CAPTURE_SUMMARY.generate('VALID', result.username, result.password);
+    await this.redis.executeCommand('setex', key, ttlSeconds, JSON.stringify(summary));
   }
 
   /**

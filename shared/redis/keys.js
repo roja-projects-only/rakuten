@@ -30,6 +30,17 @@ const RESULT_CACHE = {
 };
 
 /**
+ * Capture summary keys (VALID only for now)
+ * Pattern: cap:{status}:{email}:{password}
+ * TTL: aligns with processed creds TTL (configured in worker)
+ * Purpose: Store trimmed capture summaries for dashboard/API consumption
+ */
+const CAPTURE_SUMMARY = {
+  pattern: 'cap:{status}:{email}:{password}',
+  generate: (status, email, password) => `cap:${status}:${email}:${password}`
+};
+
+/**
  * Batch progress tracking keys
  * Pattern: progress:{batchId}
  * TTL: 7 days
@@ -259,6 +270,7 @@ module.exports = {
   // Key generators
   TASK_LEASE,
   RESULT_CACHE,
+  CAPTURE_SUMMARY,
   PROGRESS_TRACKER,
   PROXY_HEALTH,
   MESSAGE_TRACKING,
