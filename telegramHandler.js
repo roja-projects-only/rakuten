@@ -38,12 +38,11 @@ const { createLogger } = require('./logger');
 const log = createLogger('telegram');
 
 /**
- * Parse ALLOWED_USER_IDS from environment variable.
- * Supports comma-separated list of Telegram user IDs.
+ * Parse ALLOWED_USER_IDS (comma-separated Telegram user IDs).
+ * @param {string|undefined|null} rawIds
  * @returns {Set<number>|null} Set of allowed user IDs, or null if not configured (allow all)
  */
-function parseAllowedUserIds() {
-  const raw = process.env.ALLOWED_USER_IDS;
+function parseAllowedUserIds(raw) {
   if (!raw || !raw.trim()) return null; // No allowlist = allow all
   
   const ids = raw
@@ -158,6 +157,16 @@ function guardInput(raw) {
  */
 function initializeTelegramHandler(botToken, options = {}) {
   const bot = new Telegraf(botToken);
+  const configService = getConfigService();
+
+  const getRuntimeConfig = () => {
+    const useConfig = configService.isInitialized();
+    return {
+      timeoutMs: useConfig ? configService.get('TIMEOUT_MS') : (options.timeoutMs || 60000),
+      proxy: useConfig ? (configService.get('PROXY_SERVER') || null) : (options.proxy || null),
+      targetUrl: useConfig ? configService.get('TARGET_LOGIN_URL') : (options.targetUrl || process.env.TARGET_LOGIN_URL),
+    };
+  };
 
   // Global error handler to keep polling alive on handler exceptions
   bot.catch((err, ctx) => {
@@ -169,16 +178,16 @@ function initializeTelegramHandler(botToken, options = {}) {
     log.warn(`Polling error: ${err.message}`);
   });
   
-  // Parse allowed user IDs from environment
-  const allowedUserIds = parseAllowedUserIds();
-  if (allowedUserIds) {
-    log.info(`User allowlist enabled: ${allowedUserIds.size} user(s) allowed`);
-  } else {
-    log.info('User allowlist disabled (ALLOWED_USER_IDS not set) - all users allowed');
-  }
-  
-  // Middleware: Check if user is allowed to use the bot
+  // Middleware: Check if user is allowed to use the bot (reads config each time for dynamic updates)
   bot.use(async (ctx, next) => {
+    const allowedUserIds = parseAllowedUserIds(
+      configService.isInitialized() ? configService.get('ALLOWED_USER_IDS') : process.env.ALLOWED_USER_IDS
+    );
+
+    if (allowedUserIds) {
+      log.debug(`Allowlist enabled: ${allowedUserIds.size} user(s)`);
+    }
+
     const userId = ctx.from?.id;
     if (!userId) {
       log.debug('No user ID in context, skipping allowlist check');
@@ -341,7 +350,6 @@ function initializeTelegramHandler(botToken, options = {}) {
 
   // Register config handler (centralized config via Telegram)
   // Only register if config service is initialized (Redis available)
-  const configService = getConfigService();
   if (configService.isInitialized()) {
     registerConfigHandler(bot, getRedisClient);
   } else {
@@ -396,14 +404,16 @@ function initializeTelegramHandler(botToken, options = {}) {
       ctx.state.lastPassword = creds.password;
 
       // Check credentials
+      const runtimeConfig = getRuntimeConfig();
+
       const result = await checkCredentials(
         creds.username,
         creds.password,
         {
-          timeoutMs: options.timeoutMs || 60000,
-          proxy: options.proxy,
+          timeoutMs: runtimeConfig.timeoutMs,
+          proxy: runtimeConfig.proxy,
           screenshotOn: options.screenshotOn || false,
-          targetUrl: options.targetUrl || process.env.TARGET_LOGIN_URL,
+          targetUrl: runtimeConfig.targetUrl,
           headless: options.headless,
           deferCloseOnValid: true, // keep session open for optional capture flow
           onProgress: async (phase) => {

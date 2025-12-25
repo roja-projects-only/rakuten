@@ -113,29 +113,27 @@ async function main() {
     
     log.info(`Running in ${compatibility.getMode()} mode`);
     
-    // Initialize centralized config service (if Redis is available)
-    if (!compatibility.isSingleNode()) {
-      try {
-        log.info('Initializing centralized config service...');
-        const redisClient = getRedisClient();
-        await redisClient.connect();
-        
-        // Pub/sub client for subscribing to config updates
-        const pubSubClient = getPubSubClient();
-        await pubSubClient.connect();
-        
-        await initConfigService(redisClient, pubSubClient);
-        
-        // Subscribe to config updates
-        const configService = getConfigService();
-        await configService.subscribe((key, value, action) => {
-          log.info(`Config ${action}: ${key} = ${value}`);
-        });
-        
-        log.success('Centralized config service initialized');
-      } catch (configErr) {
-        log.warn(`Config service init failed (using env fallback): ${configErr.message}`);
-      }
+    // Initialize centralized config service (always attempt; falls back to env on failure)
+    try {
+      log.info('Initializing centralized config service...');
+      const redisClient = getRedisClient();
+      await redisClient.connect();
+      
+      // Pub/sub client for subscribing to config updates
+      const pubSubClient = getPubSubClient();
+      await pubSubClient.connect();
+      
+      await initConfigService(redisClient, pubSubClient);
+      
+      // Subscribe to config updates
+      const configService = getConfigService();
+      await configService.subscribe((key, value, action) => {
+        log.info(`Config ${action}: ${key} = ${value}`);
+      });
+      
+      log.success('Centralized config service initialized');
+    } catch (configErr) {
+      log.warn(`Config service init failed (using env fallback): ${configErr.message}`);
     }
     
     // Log mode-specific information
@@ -154,13 +152,22 @@ async function main() {
     }
 
     // Initialize Telegram handler with compatibility layer
+    const configService = getConfigService();
     const botToken = process.env.TELEGRAM_BOT_TOKEN;
-    const batchConcurrency = parseInt(process.env.BATCH_CONCURRENCY, 10) || 1;
+    const batchConcurrency = configService.isInitialized()
+      ? (configService.get('BATCH_CONCURRENCY') || 1)
+      : (parseInt(process.env.BATCH_CONCURRENCY, 10) || 1);
 
     const handlerOptions = {
-      timeoutMs: parseInt(process.env.TIMEOUT_MS, 10) || 60000,
-      proxy: process.env.PROXY_SERVER || null,
-      targetUrl: process.env.TARGET_LOGIN_URL,
+      timeoutMs: configService.isInitialized()
+        ? configService.get('TIMEOUT_MS')
+        : (parseInt(process.env.TIMEOUT_MS, 10) || 60000),
+      proxy: configService.isInitialized()
+        ? (configService.get('PROXY_SERVER') || null)
+        : (process.env.PROXY_SERVER || null),
+      targetUrl: configService.isInitialized()
+        ? configService.get('TARGET_LOGIN_URL')
+        : process.env.TARGET_LOGIN_URL,
       compatibility // Pass compatibility layer to handler
     };
 

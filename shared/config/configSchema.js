@@ -59,6 +59,12 @@ const CONFIG_SCHEMA = {
     description: 'HTTP request timeout (ms)',
     category: 'batch'
   },
+  TARGET_LOGIN_URL: {
+    type: 'url',
+    default: 'https://login.account.rakuten.com/sso/authorize?client_id=rakuten_ichiba_top_web&service_id=s245&response_type=code&scope=openid&redirect_uri=https%3A%2F%2Fwww.rakuten.co.jp%2F',
+    description: 'Rakuten login URL',
+    category: 'batch'
+  },
 
   // ═══════════════════════════════════════════════════════════════════════════
   // PROXY CONFIGURATION
@@ -149,6 +155,13 @@ const CONFIG_SCHEMA = {
     default: false,
     description: 'Enable structured JSON logging',
     category: 'logging'
+  },
+  ALLOWED_USER_IDS: {
+    type: 'csv',
+    default: '',
+    description: 'Comma-separated Telegram user IDs allowed to use the bot',
+    category: 'logging',
+    allowEmpty: true
   }
 };
 
