@@ -8,6 +8,7 @@
  */
 
 const pLimit = require('p-limit').default || require('p-limit');
+const http = require('http');
 const { createLogger } = require('../../logger');
 const { createStructuredLogger } = require('../logger/structured');
 const { checkCredentials } = require('../../httpChecker');
@@ -44,13 +45,15 @@ function getWorkerConfig() {
   if (configService.isInitialized()) {
     return {
       concurrency: configService.get('WORKER_CONCURRENCY') || 3,
-      processedTtlMs: configService.get('PROCESSED_TTL_MS') || undefined
+      processedTtlMs: configService.get('PROCESSED_TTL_MS') || undefined,
+      httpPort: configService.get('WORKER_HTTP_PORT') || undefined
     };
   }
   // Fallback to env
   return {
     concurrency: parseInt(process.env.WORKER_CONCURRENCY, 10) || 3,
-    processedTtlMs: parseInt(process.env.PROCESSED_TTL_MS, 10) || undefined
+    processedTtlMs: parseInt(process.env.PROCESSED_TTL_MS, 10) || undefined,
+    httpPort: parseInt(process.env.WORKER_HTTP_PORT, 10) || undefined
   };
 }
 
@@ -71,6 +74,11 @@ class WorkerNode {
     this.shutdown = false;
     this.tasksCompleted = 0;
     this.startTime = Date.now();
+
+    // HTTP status server
+    const httpPort = options.httpPort || getWorkerConfig().httpPort || 3010;
+    this.httpPort = httpPort;
+    this.httpServer = null;
     
     // Metrics tracking
     this.metricsInterval = null;
@@ -109,6 +117,9 @@ class WorkerNode {
       
       // 3. Start metrics logging
       this.startMetricsLogging();
+
+      // 4. Start lightweight HTTP status server (health/metrics/status)
+      await this.startHttpServer();
       
       // 4. Main processing loop - parallel task execution
       while (!this.shutdown) {
@@ -1230,6 +1241,16 @@ class WorkerNode {
     } catch (error) {
       log.warn('Processed store cleanup failed', { error: error.message });
     }
+
+    // Stop HTTP server
+    if (this.httpServer) {
+      try {
+        await new Promise((resolve) => this.httpServer.close(resolve));
+        log.info('Worker HTTP status server stopped', { workerId: this.workerId });
+      } catch (error) {
+        log.warn('Failed to stop worker HTTP status server', { error: error.message });
+      }
+    }
   }
 
   /**
@@ -1282,6 +1303,135 @@ class WorkerNode {
       uptime,
       memory
     });
+  }
+
+  /**
+   * Start an HTTP server exposing /status, /health, /metrics
+   */
+  async startHttpServer() {
+    if (this.httpServer) return;
+
+    const handler = async (req, res) => {
+      try {
+        if (req.method === 'OPTIONS') {
+          res.writeHead(200, this.getCorsHeaders());
+          return res.end();
+        }
+
+        if (req.method === 'GET' && req.url === '/health') {
+          const payload = this.buildHealthPayload();
+          res.writeHead(payload.status === 'healthy' ? 200 : 503, {
+            'Content-Type': 'application/json',
+            ...this.getCorsHeaders(),
+          });
+          return res.end(JSON.stringify(payload));
+        }
+
+        if (req.method === 'GET' && req.url === '/status') {
+          const payload = this.buildStatusPayload();
+          res.writeHead(200, { 'Content-Type': 'application/json', ...this.getCorsHeaders() });
+          return res.end(JSON.stringify(payload));
+        }
+
+        if (req.method === 'GET' && req.url === '/metrics') {
+          const body = this.buildMetricsPayload();
+          res.writeHead(200, {
+            'Content-Type': 'text/plain; version=0.0.4; charset=utf-8',
+            ...this.getCorsHeaders(),
+          });
+          return res.end(body);
+        }
+
+        if (req.method === 'GET' && req.url === '/') {
+          res.writeHead(200, { 'Content-Type': 'text/plain', ...this.getCorsHeaders() });
+          return res.end('worker status: /health /status /metrics\n');
+        }
+
+        res.writeHead(404, { 'Content-Type': 'text/plain', ...this.getCorsHeaders() });
+        res.end('Not Found');
+      } catch (error) {
+        log.warn('Worker HTTP handler error', { error: error.message });
+        if (!res.headersSent) {
+          res.writeHead(500, { 'Content-Type': 'text/plain', ...this.getCorsHeaders() });
+        }
+        res.end('Internal Error');
+      }
+    };
+
+    this.httpServer = http.createServer(handler);
+
+    await new Promise((resolve, reject) => {
+      this.httpServer.once('error', reject);
+      this.httpServer.listen(this.httpPort, () => {
+        log.info('Worker HTTP status server listening', { port: this.httpPort, workerId: this.workerId });
+        resolve();
+      });
+    });
+  }
+
+  getCorsHeaders() {
+    return {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+    };
+  }
+
+  buildHealthPayload() {
+    const now = Date.now();
+    const uptimeMs = now - this.startTime;
+    const tasksPerMinute = uptimeMs > 0 ? this.tasksCompleted / (uptimeMs / 60000) : 0;
+
+    return {
+      status: 'healthy',
+      workerId: this.workerId,
+      timestamp: new Date(now).toISOString(),
+      uptimeMs,
+      activeTasks: this.activeTaskCount,
+      concurrency: this.concurrency,
+      tasksCompleted: this.tasksCompleted,
+      tasksPerMinute: Number(tasksPerMinute.toFixed(2)),
+      memory: {
+        rssMB: Math.round(process.memoryUsage().rss / 1024 / 1024),
+      },
+    };
+  }
+
+  buildStatusPayload() {
+    const health = this.buildHealthPayload();
+    return {
+      ...health,
+      queue: {
+        activeTasks: this.activeTaskCount,
+        utilization: Math.round((this.activeTaskCount / this.concurrency) * 100),
+      },
+      powServiceUrl: this.powServiceUrl || null,
+      startedAt: new Date(this.startTime).toISOString(),
+    };
+  }
+
+  buildMetricsPayload() {
+    const now = Date.now();
+    const uptimeSeconds = (now - this.startTime) / 1000;
+    const utilization = this.concurrency > 0 ? this.activeTaskCount / this.concurrency : 0;
+
+    return [
+      '# HELP worker_active_tasks Number of active tasks currently processing',
+      '# TYPE worker_active_tasks gauge',
+      `worker_active_tasks{workerId="${this.workerId}"} ${this.activeTaskCount}`,
+      '# HELP worker_concurrency Configured concurrency per worker',
+      '# TYPE worker_concurrency gauge',
+      `worker_concurrency{workerId="${this.workerId}"} ${this.concurrency}`,
+      '# HELP worker_tasks_completed_total Total tasks completed by this worker',
+      '# TYPE worker_tasks_completed_total counter',
+      `worker_tasks_completed_total{workerId="${this.workerId}"} ${this.tasksCompleted}`,
+      '# HELP worker_utilization_ratio Current utilization (0-1)',
+      '# TYPE worker_utilization_ratio gauge',
+      `worker_utilization_ratio{workerId="${this.workerId}"} ${utilization.toFixed(4)}`,
+      '# HELP worker_uptime_seconds Worker uptime in seconds',
+      '# TYPE worker_uptime_seconds gauge',
+      `worker_uptime_seconds{workerId="${this.workerId}"} ${uptimeSeconds.toFixed(0)}`
+    ].join('\n');
   }
 }
 
