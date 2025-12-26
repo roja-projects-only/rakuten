@@ -30,7 +30,7 @@ async function completeSessionAlignment(session, outcome, timeoutMs) {
     return;
   }
   
-  const { client } = session;
+  const client = session.directClient || session.client;
   
   try {
     log.debug('Completing session alignment');
@@ -151,7 +151,7 @@ async function checkCredentials(email, password, options = {}) {
       try {
         log.info('[ip-detect] Starting IP detection (proxy configured)');
         onProgress && (await onProgress('ip'));
-        const ipInfo = await fetchIpInfo(session.client, timeoutMs);
+        const ipInfo = await fetchIpInfo(session.directClient || session.client, timeoutMs);
         if (ipInfo.ip) {
           outcome.ipAddress = ipInfo.ip;
           log.info(`[ip-detect] Exit IP attached to outcome: ${ipInfo.ip}`);

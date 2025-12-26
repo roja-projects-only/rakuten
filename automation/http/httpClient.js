@@ -147,6 +147,7 @@ function parseProxy(proxy) {
  * @param {string} [options.proxy] - Proxy in any format (host:port, user:pass@host:port, http://..., etc.)
  * @param {number} [options.timeout=60000] - Request timeout in milliseconds
  * @param {string} [options.userAgent] - Custom User-Agent (random if not provided)
+ * @param {CookieJar} [options.jar] - Existing cookie jar to reuse across clients
  * @returns {Object} Axios instance with cookie jar
  */
 function createHttpClient(options = {}) {
@@ -154,10 +155,11 @@ function createHttpClient(options = {}) {
     proxy = null,
     timeout = 60000,
     userAgent = new UserAgent().toString(),
+    jar: externalJar = null,
   } = options;
 
   // Create cookie jar for session management
-  const jar = new CookieJar();
+  const jar = externalJar || new CookieJar();
   
   // Determine if we need manual cookie handling (when using proxy)
   const proxyConfig = proxy ? parseProxy(proxy) : null;

@@ -12,6 +12,7 @@
  * =============================================================================
  */
 
+const { CookieJar } = require('tough-cookie');
 const { createHttpClient } = require('./httpClient');
 const { createLogger } = require('../../logger');
 
@@ -35,12 +36,23 @@ const activeSessions = new Map();
  */
 function createSession(options = {}) {
   const sessionId = generateSessionId();
-  const { client, jar } = createHttpClient(options);
+  const sharedJar = new CookieJar();
+
+  // Always create a direct client; create a proxied client only when proxy is provided
+  const direct = createHttpClient({ ...options, proxy: null, jar: sharedJar });
+  const proxied = options.proxy
+    ? createHttpClient({ ...options, jar: sharedJar })
+    : null;
+
+  // Default session client is the direct client for speed; login flow can opt into proxiedClient
+  const client = direct.client;
   
   const session = {
     id: sessionId,
     client,
-    jar,
+    proxiedClient: proxied ? proxied.client : null,
+    directClient: direct.client,
+    jar: sharedJar,
     createdAt: Date.now(),
     lastUsedAt: Date.now(),
     requestCount: 0,

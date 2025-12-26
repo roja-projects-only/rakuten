@@ -620,7 +620,7 @@ class WorkerNode {
           taskId: task.taskId
         });
         
-        const ipInfo = await fetchIpInfo(checkResult.session.client, 10000);
+        const ipInfo = await fetchIpInfo(checkResult.session.directClient || checkResult.session.client, 10000);
         if (ipInfo.ip) {
           result.ipAddress = ipInfo.ip;
           log.debug(`Exit IP fetched: ${ipInfo.ip}`, {
@@ -652,12 +652,16 @@ class WorkerNode {
         });
         
         // Close session after capture
-        if (checkResult.session.client) {
-          try {
-            checkResult.session.client.defaults.jar.removeAllCookies();
-          } catch (e) {
-            // Ignore cleanup errors
+        try {
+          if (checkResult.session.jar?.removeAllCookies) {
+            await new Promise((resolve, reject) => {
+              checkResult.session.jar.removeAllCookies((err) => {
+                if (err) reject(err); else resolve();
+              });
+            });
           }
+        } catch (e) {
+          // Ignore cleanup errors
         }
       }
       

@@ -98,7 +98,7 @@ async function computeCresWithService(mdata, step) {
  * @returns {Promise<Object>} Response object with HTML, cookies, and correlation ID
  */
 async function navigateToLogin(session, targetUrl, timeoutMs) {
-  const { client } = session;
+  const client = session.proxiedClient || session.client;
   const correlationId = generateCorrelationId();
   
   log.debug('Navigating to login page');
@@ -169,7 +169,7 @@ async function navigateToLogin(session, targetUrl, timeoutMs) {
  * @returns {Promise<Object>} Response with token for next step
  */
 async function submitEmailStep(session, email, context, timeoutMs) {
-  const { client } = session;
+  const client = session.proxiedClient || session.client;
   const { correlationId } = context;
   
   log.debug('Submitting email');
@@ -323,7 +323,7 @@ async function submitEmailStep(session, email, context, timeoutMs) {
  * @returns {Promise<Object>} Final authentication response
  */
 async function submitPasswordStep(session, password, emailStepResult, username, timeoutMs) {
-  const { client } = session;
+  const client = session.proxiedClient || session.client;
   
   log.debug('Submitting password');
   touchSession(session);
@@ -492,7 +492,7 @@ async function submitPasswordStep(session, password, emailStepResult, username, 
  * @returns {Promise<Object|null>} Updated result or null if failed
  */
 async function skipEmailVerificationStep(session, verifyToken, correlationId, timeoutMs) {
-  const { client } = session;
+  const client = session.proxiedClient || session.client;
   
   touchSession(session);
   
@@ -611,7 +611,7 @@ async function skipEmailVerificationStep(session, verifyToken, correlationId, ti
  * @returns {Promise<Object>} Final response
  */
 async function followRedirects(session, redirectUrl, timeoutMs, maxDepth = 5) {
-  const { client } = session;
+  const client = session.proxiedClient || session.client;
   let currentUrl = redirectUrl;
   let depth = 0;
   
