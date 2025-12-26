@@ -699,15 +699,7 @@ class WorkerNode {
       if (!verification) {
         throw new Error(`Failed to verify result storage for key: ${resultKey}`);
       }
-      
-      // Update result counts for real-time progress tracking
-      await this.updateResultCounts(result);
-      
-      // If VALID, add to valid credentials list
-      if (result.status === 'VALID') {
-        await this.addValidCredential(result);
-      }
-      
+
       log.info(`Result stored and verified in cache`, {
         workerId: this.workerId,
         resultKey,
@@ -751,6 +743,22 @@ class WorkerNode {
         
         // Don't throw - but this is a serious issue that needs attention
       }
+    }
+
+    // Always update progress metrics, even if cache storage fell back
+    try {
+      await this.updateResultCounts(result);
+      if (result.status === 'VALID') {
+        await this.addValidCredential(result);
+      }
+    } catch (error) {
+      log.warn('Progress metric update failed', {
+        workerId: this.workerId,
+        taskId: result.taskId,
+        batchId: result.batchId,
+        status: result.status,
+        error: error.message
+      });
     }
 
     // Mirror into processed store so Telegram dedupe works in distributed mode
