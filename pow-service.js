@@ -462,7 +462,10 @@ class POWService {
         taskTimeout: 5000, // 5 seconds as per requirement
         maxIterations: 8000000 // 8M iterations max
       });
-      log.info('Worker pool initialized with 5-second timeout');
+
+      // Eagerly spawn workers so health is green without waiting for the first request
+      this.workerPool.init();
+      log.info('Worker pool initialized with 5-second timeout and workers spawned');
     } catch (error) {
       log.error('Worker pool initialization failed', { error: error.message });
       throw error;
