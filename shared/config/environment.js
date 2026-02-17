@@ -172,12 +172,15 @@ const ENV_DEFINITIONS = {
     validate: (value) => {
       if (!value) return [];
       
-      const proxies = value.split(',').map(p => p.trim()).filter(Boolean);
-      for (const proxy of proxies) {
+      const proxies = value.split(',').map(p => {
+        let proxy = p.trim();
+        if (!proxy) return null;
+        // Auto-prepend http:// if no protocol specified
         if (!proxy.startsWith('http://') && !proxy.startsWith('https://') && !proxy.startsWith('socks://')) {
-          throw new Error(`Invalid proxy URL: ${proxy}. Must start with http://, https://, or socks://`);
+          proxy = `http://${proxy}`;
         }
-      }
+        return proxy;
+      }).filter(Boolean);
       return proxies;
     }
   },
@@ -318,8 +321,11 @@ const ENV_DEFINITIONS = {
     required: false,
     description: 'Single proxy URL for credential checks (legacy)',
     validate: (value) => {
-      if (value && !value.startsWith('http://') && !value.startsWith('https://') && !value.startsWith('socks://')) {
-        throw new Error('PROXY_SERVER must start with http://, https://, or socks://');
+      if (!value) return value;
+      
+      // Auto-prepend http:// if no protocol specified
+      if (!value.startsWith('http://') && !value.startsWith('https://') && !value.startsWith('socks://')) {
+        value = `http://${value}`;
       }
       return value;
     }
