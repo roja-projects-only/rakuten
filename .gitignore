@@ -12,6 +12,7 @@ test-credentials.txtles
 .env.local
 .env.*.local
 package-lock.json
+tools/
 
 # Logs
 logs/

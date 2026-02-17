@@ -27,15 +27,16 @@ const log = createLogger('pow-pool');
 class PowWorkerPool {
   /**
    * @param {Object} options - Pool options
-   * @param {number} [options.numWorkers] - Number of workers (default: CPU cores - 1, min 1)
+   * @param {number} [options.numWorkers] - Number of workers (default: CPU cores, min 2)
    * @param {number} [options.maxIterations] - Max POW iterations (default: 8M)
-   * @param {number} [options.taskTimeout] - Task timeout in ms (default: 60s)
+   * @param {number} [options.taskTimeout] - Task timeout in ms (default: 10s)
    */
   constructor(options = {}) {
     const cpuCount = os.cpus().length;
-    this.numWorkers = options.numWorkers || Math.max(1, cpuCount - 1);
+    // Default to all CPUs (not CPU-1) for dedicated POW service
+    this.numWorkers = options.numWorkers || Math.max(2, cpuCount);
     this.maxIterations = options.maxIterations || 8000000;
-    this.taskTimeout = options.taskTimeout || 60000;
+    this.taskTimeout = options.taskTimeout || 10000; // 10s default
     
     this.workers = [];
     this.taskQueue = [];
@@ -44,16 +45,20 @@ class PowWorkerPool {
     this.isShutdown = false;
     this.initialized = false;
     
+    // Queue management - reject early if too backed up
+    this.maxQueueDepth = options.maxQueueDepth || 50;
+    
     // Stats
     this.stats = {
       tasksCompleted: 0,
       tasksFailed: 0,
+      tasksRejectedQueue: 0,
       cacheHits: 0,
       totalIterations: 0,
       totalTime: 0
     };
     
-    log.info(`[pool] Initialized with ${this.numWorkers} workers (${cpuCount} CPUs detected)`);
+    log.info(`[pool] Initialized with ${this.numWorkers} workers (${cpuCount} CPUs), timeout=${this.taskTimeout}ms, maxQueue=${this.maxQueueDepth}`);
   }
 
   /**
@@ -94,6 +99,15 @@ class PowWorkerPool {
     
     if (this.isShutdown) {
       throw new Error('Worker pool is shutdown');
+    }
+    
+    // Reject early if queue is too deep (prevents cascading timeouts)
+    if (this.taskQueue.length >= this.maxQueueDepth) {
+      this.stats.tasksRejectedQueue++;
+      log.warn(`[pool] Queue full (${this.taskQueue.length}/${this.maxQueueDepth}), rejecting task`);
+      const err = new Error('POW queue is full - service overloaded');
+      err.code = 'POW_QUEUE_FULL';
+      throw err;
     }
     
     // Check cache first
@@ -275,6 +289,7 @@ class PowWorkerPool {
       tasks: {
         completed: this.stats.tasksCompleted,
         failed: this.stats.tasksFailed,
+        rejectedQueue: this.stats.tasksRejectedQueue,
         cacheHits: this.stats.cacheHits
       },
       performance: {

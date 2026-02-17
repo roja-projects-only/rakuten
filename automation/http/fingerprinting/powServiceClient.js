@@ -23,9 +23,9 @@ const log = createLogger('pow-client');
 class POWServiceClient {
   constructor(options = {}) {
     this.serviceUrl = options.serviceUrl || process.env.POW_SERVICE_URL || 'http://localhost:3001';
-    this.timeout = options.timeout || 5000; // 5 seconds as per requirement
-    this.maxRetries = options.maxRetries || 2;
-    this.retryDelay = options.retryDelay || 1000; // 1 second base delay
+    this.timeout = options.timeout || parseInt(process.env.POW_CLIENT_TIMEOUT, 10) || 8000; // 8s (service has 10s)
+    this.maxRetries = options.maxRetries || 1; // Reduced retries - fallback faster
+    this.retryDelay = options.retryDelay || 500; // 500ms base delay
     
     // Local memory cache for fallback results (not Redis)
     this.localCache = new Map();

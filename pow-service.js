@@ -258,7 +258,15 @@ class POWService {
         log.warn('POW computation timeout', { mask, key, seed, error: error.message });
         return res.status(408).json({
           error: 'POW_TIMEOUT',
-          message: 'POW computation timed out after 5 seconds'
+          message: 'POW computation timed out'
+        });
+      }
+
+      if (error.code === 'POW_QUEUE_FULL') {
+        log.warn('POW queue full', { mask, key, seed, queueDepth: this.workerPool?.taskQueue?.length });
+        return res.status(503).json({
+          error: 'POW_OVERLOADED',
+          message: 'POW service is overloaded, try again later'
         });
       }
 
@@ -455,17 +463,23 @@ class POWService {
       log.warn('REDIS_URL not configured - running without cache');
     }
 
-    // Initialize worker pool with 5-second timeout (Requirement 3.2)
+    // Initialize worker pool with configurable timeout and worker count
     try {
       const { PowWorkerPool } = require('./automation/http/fingerprinting/powWorkerPool');
+      const numWorkers = parseInt(process.env.POW_NUM_WORKERS, 10) || undefined; // undefined = auto (CPU - 1)
+      const taskTimeout = parseInt(process.env.POW_TASK_TIMEOUT, 10) || 10000; // 10s default (was 5s)
+      
       this.workerPool = new PowWorkerPool({
-        taskTimeout: 5000, // 5 seconds as per requirement
+        numWorkers,
+        taskTimeout,
         maxIterations: 8000000 // 8M iterations max
       });
+      
+      log.info('Worker pool config', { numWorkers: numWorkers || 'auto', taskTimeout });
 
       // Eagerly spawn workers so health is green without waiting for the first request
       this.workerPool.init();
-      log.info('Worker pool initialized with 5-second timeout and workers spawned');
+      log.info('Worker pool initialized and workers spawned');
     } catch (error) {
       log.error('Worker pool initialization failed', { error: error.message });
       throw error;
