@@ -641,15 +641,17 @@ class WorkerNode {
         });
       } else if (task.proxyUrl && checkResult.session) {
         // Fetch exit IP for VALID credentials via ipFetcher.js
-        log.debug('Fetching exit IP for VALID credential', {
+        // IMPORTANT: Use proxiedClient to get actual proxy exit IP (same IP used for password step)
+        log.debug('Fetching exit IP for VALID credential via proxy', {
           workerId: this.workerId,
           taskId: task.taskId
         });
         
-        const ipInfo = await fetchIpInfo(checkResult.session.directClient || checkResult.session.client, 10000);
+        const ipClient = checkResult.session.proxiedClient || checkResult.session.client;
+        const ipInfo = await fetchIpInfo(ipClient, 10000);
         if (ipInfo.ip) {
           result.ipAddress = ipInfo.ip;
-          log.debug(`Exit IP fetched: ${ipInfo.ip}`, {
+          log.debug(`Proxy exit IP fetched: ${ipInfo.ip}`, {
             workerId: this.workerId,
             taskId: task.taskId
           });

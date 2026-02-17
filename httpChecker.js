@@ -147,14 +147,17 @@ async function checkCredentials(email, password, options = {}) {
     }
 
     // Fetch exit IP for VALID credentials if proxy is configured
+    // IMPORTANT: Use proxiedClient to get the actual proxy exit IP (same IP used for password submission)
     if (outcome.status === 'VALID' && proxy) {
       try {
-        log.info('[ip-detect] Starting IP detection (proxy configured)');
+        log.info('[ip-detect] Starting IP detection via proxy');
         onProgress && (await onProgress('ip'));
-        const ipInfo = await fetchIpInfo(session.directClient || session.client, timeoutMs);
+        // Must use proxiedClient here - directClient would report server's own IP, not proxy exit IP
+        const ipClient = session.proxiedClient || session.client;
+        const ipInfo = await fetchIpInfo(ipClient, timeoutMs);
         if (ipInfo.ip) {
           outcome.ipAddress = ipInfo.ip;
-          log.info(`[ip-detect] Exit IP attached to outcome: ${ipInfo.ip}`);
+          log.info(`[ip-detect] Proxy exit IP: ${ipInfo.ip}`);
         } else {
           log.warn(`[ip-detect] Failed to fetch IP: ${ipInfo.error}`);
         }
