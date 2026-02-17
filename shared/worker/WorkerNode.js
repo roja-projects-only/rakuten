@@ -488,6 +488,22 @@ class WorkerNode {
         batchMode: true
       });
       
+      // Check if batch was cancelled while we were processing
+      if (await this.isBatchCancelled(batchId)) {
+        log.info(`Task ${taskId} completed but batch ${batchId} is cancelled, discarding result`, {
+          workerId: this.workerId,
+          taskId,
+          batchId,
+          status: checkResult.status
+        });
+        // Close session if valid to avoid leaking
+        if (checkResult.status === 'VALID' && checkResult.sessionCookie) {
+          const { closeSession } = require('../../httpChecker');
+          await closeSession(checkResult.sessionCookie).catch(() => {});
+        }
+        return { discarded: true, reason: 'batch_cancelled' };
+      }
+      
       let result = {
         username,
         password,
@@ -561,6 +577,16 @@ class WorkerNode {
         error: error.message,
         duration
       });
+      
+      // Check if batch was cancelled - if so, don't count the error
+      if (await this.isBatchCancelled(task.batchId)) {
+        log.info(`Task ${task.taskId} failed but batch ${task.batchId} is cancelled, discarding error`, {
+          workerId: this.workerId,
+          taskId: task.taskId,
+          batchId: task.batchId
+        });
+        throw error; // Re-throw but don't count it
+      }
       
       // Create error result
       const errorResult = {
