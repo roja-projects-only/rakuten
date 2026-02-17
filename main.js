@@ -175,9 +175,7 @@ async function main() {
     log.info(`Mode: ${compatibility.getMode()}`);
     log.info(`Timeout: ${handlerOptions.timeoutMs}ms`);
     log.info(`Batch Concurrency: ${batchConcurrency}`);
-    if (handlerOptions.proxy) {
-      log.info(`Proxy: ${handlerOptions.proxy}`);
-    }
+    log.info(`Proxy: ${handlerOptions.proxy ? handlerOptions.proxy : 'not configured (direct connection)'}`);
 
     const bot = initializeTelegramHandler(botToken, handlerOptions);
 

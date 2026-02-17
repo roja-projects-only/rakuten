@@ -40,7 +40,8 @@ function validateEnvironment() {
     redisUrl: process.env.REDIS_URL ? 'configured' : 'missing',
     powServiceUrl: process.env.POW_SERVICE_URL || 'not configured',
     workerId: process.env.WORKER_ID || 'auto-generated',
-    logLevel: process.env.LOG_LEVEL || 'info'
+    logLevel: process.env.LOG_LEVEL || 'info',
+    proxy: process.env.PROXY_SERVER || 'not configured (using pool from coordinator)'
   });
 }
 

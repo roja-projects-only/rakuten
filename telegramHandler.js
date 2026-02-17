@@ -111,6 +111,47 @@ function isValidEmail(email) {
 }
 
 /**
+ * Masks a proxy URL for display (e.g., "http://user:pass@host:port" -> "http://***@ho...st:port")
+ * @param {string} proxyUrl - Full proxy URL
+ * @returns {string} Masked proxy URL
+ */
+function maskProxyUrl(proxyUrl) {
+  if (!proxyUrl) return 'none';
+  
+  try {
+    const url = new URL(proxyUrl);
+    const protocol = url.protocol; // "http:" or "socks5:"
+    const host = url.hostname;
+    const port = url.port;
+    
+    // Mask the host (show first 2 and last 2 chars)
+    let maskedHost = host;
+    if (host.length > 6) {
+      maskedHost = `${host.slice(0, 2)}***${host.slice(-2)}`;
+    }
+    
+    // Build masked URL
+    let masked = `${protocol}//${maskedHost}`;
+    if (port) {
+      masked += `:${port}`;
+    }
+    
+    // Indicate if auth is present
+    if (url.username || url.password) {
+      masked = `${protocol}//(auth)@${maskedHost}${port ? ':' + port : ''}`;
+    }
+    
+    return masked;
+  } catch (e) {
+    // If URL parsing fails, just show first and last few chars
+    if (proxyUrl.length > 20) {
+      return `${proxyUrl.slice(0, 10)}***${proxyUrl.slice(-5)}`;
+    }
+    return proxyUrl;
+  }
+}
+
+/**
  * Basic input guard to keep Telegram commands tidy and safe.
  * @param {string} raw - Raw credential string
  * @returns {{valid: boolean, error?: string}}
@@ -324,6 +365,57 @@ function initializeTelegramHandler(botToken, options = {}) {
     
     // Nothing to stop
     await ctx.reply(escapeV2('⚠️ No active batch or combine session to stop.'), { parse_mode: 'MarkdownV2' });
+  });
+
+  // Handle .proxy command - show proxy configuration status
+  bot.hears(/^\.proxy$/i, async (ctx) => {
+    const runtimeConfig = getRuntimeConfig();
+    const isDistributed = options.compatibility?.isDistributed?.() || false;
+    
+    let lines = ['*Proxy Configuration*', ''];
+    
+    // Single-node proxy (PROXY_SERVER)
+    if (runtimeConfig.proxy) {
+      // Mask proxy URL for security (show protocol and last part of host)
+      const maskedProxy = maskProxyUrl(runtimeConfig.proxy);
+      lines.push(`✅ *Coordinator Proxy:* ${escapeV2(maskedProxy)}`);
+    } else {
+      lines.push('❌ *Coordinator Proxy:* not configured');
+    }
+    
+    // In distributed mode, show proxy pool info
+    if (isDistributed && options.compatibility?.coordinator?.proxyPool) {
+      const proxyPool = options.compatibility.coordinator.proxyPool;
+      const poolSize = proxyPool.proxies?.length || 0;
+      
+      if (poolSize > 0) {
+        lines.push(`✅ *Proxy Pool:* ${poolSize} proxy(ies) loaded`);
+        // Show first few proxies (masked)
+        const showCount = Math.min(3, poolSize);
+        for (let i = 0; i < showCount; i++) {
+          const masked = maskProxyUrl(proxyPool.proxies[i]);
+          lines.push(`   ${i + 1}\\. ${escapeV2(masked)}`);
+        }
+        if (poolSize > showCount) {
+          lines.push(`   \\.\\.\\. and ${poolSize - showCount} more`);
+        }
+      } else {
+        lines.push('❌ *Proxy Pool:* empty \\(workers use direct connections\\)');
+      }
+      
+      // Show worker count if available
+      const coordinator = options.compatibility.coordinator;
+      if (coordinator?.activeWorkers) {
+        const workerCount = coordinator.activeWorkers.size;
+        lines.push('');
+        lines.push(`👷 *Active Workers:* ${workerCount}`);
+      }
+    }
+    
+    lines.push('');
+    lines.push('_Use PROXY\\_SERVER env or /config to set proxy_');
+    
+    await ctx.reply(lines.join('\n'), { parse_mode: 'MarkdownV2' });
   });
 
   // Register combine handlers (must be before batch handlers to intercept files in combine mode)

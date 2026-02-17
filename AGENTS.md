@@ -1,4 +1,3 @@
-Default shell is PowerShell (Windows). Always quote paths with the apostrophe in the username, e.g., "C:\Users\Core'\...".
 Commit locally after each task (no push unless asked). Do not generate extra docs unless requested.
 
 # Rakuten Telegram Credential Checker — Agent Playbook
