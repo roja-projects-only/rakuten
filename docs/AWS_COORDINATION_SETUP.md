@@ -101,8 +101,8 @@ Go to **EC2 → Security Groups → Create security group**
 
 | Type | Port | Source | Description |
 |------|------|--------|-------------|
-| Custom TCP | 8080 | `rakuten-coordinator-sg` | Coordinator access |
-| Custom TCP | 8080 | `rakuten-worker-sg` | Worker access |
+| Custom TCP | 3001 | `rakuten-coordinator-sg` | Coordinator access |
+| Custom TCP | 3001 | `rakuten-worker-sg` | Worker access |
 | SSH | 22 | Your IP | SSH access |
 
 #### 3. Coordinator Security Group
@@ -233,7 +233,7 @@ docker build -f Dockerfile.pow-service -t rakuten-pow-service .
 
 # Create environment file
 tee .env.pow-service << 'EOF'
-PORT=8080
+PORT=3001
 LOG_LEVEL=info
 NODE_ENV=production
 EOF
@@ -243,26 +243,26 @@ docker run -d \
   --name rakuten-pow-service \
   --restart unless-stopped \
   --env-file .env.pow-service \
-  -p 8080:8080 \
+  -p 3001:3001 \
   rakuten-pow-service
 
 # Verify it's running
-curl http://localhost:8080/health
+curl http://localhost:3001/health
 # Should return: {"status":"ok"}
 ```
 
 **Save your POW Service URL:**
 ```
-http://POW_PRIVATE_IP:8080
+http://POW_PRIVATE_IP:3001
 ```
 
-Example: `http://172.31.20.100:8080`
+Example: `http://172.31.20.100:3001`
 
 ### POW Service Environment Variables
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `PORT` | No | `8080` | HTTP server port |
+| `PORT` | No | `3001` | HTTP server port |
 | `LOG_LEVEL` | No | `info` | Logging level |
 | `REDIS_URL` | No | — | Optional: cache computed results |
 
@@ -288,7 +288,7 @@ docker run -d \
   --name rakuten-pow-service \
   --restart unless-stopped \
   --env-file .env.pow-service \
-  -p 8080:8080 \
+  -p 3001:3001 \
   rakuten-pow-service
 ```
 
@@ -504,7 +504,7 @@ REDIS_URL=redis://:YOUR_PASSWORD@REDIS_PRIVATE_IP:6379
 # ===================
 # RECOMMENDED
 # ===================
-POW_SERVICE_URL=http://POW_PRIVATE_IP:8080
+POW_SERVICE_URL=http://POW_PRIVATE_IP:3001
 TARGET_LOGIN_URL=https://login.account.rakuten.com/sso/authorize?client_id=rakuten_ichiba_top_web&service_id=s245&response_type=code&scope=openid&redirect_uri=https%3A%2F%2Fwww.rakuten.co.jp%2F
 
 # ===================
@@ -602,7 +602,7 @@ redis6-cli -h REDIS_PRIVATE_IP -a YOUR_PASSWORD PING
 #### 2. Test POW Service
 
 ```bash
-curl http://POW_PRIVATE_IP:8080/health
+curl http://POW_PRIVATE_IP:3001/health
 # Should return: {"status":"ok"}
 ```
 
