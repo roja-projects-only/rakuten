@@ -23,8 +23,40 @@ const { createLogger } = require('./logger');
 const { initRedisClient, getPubSubClient } = require('./shared/redis/client');
 const { initConfigService, getConfigService } = require('./shared/config/configService');
 const WorkerNode = require('./shared/worker/WorkerNode');
+const { createHttpClient } = require('./automation/http/httpClient');
 
 const log = createLogger('worker-main');
+
+/**
+ * Test proxy connectivity by fetching external IP
+ * @param {string} proxyUrl - Proxy URL to test
+ * @returns {Promise<{success: boolean, ip?: string, error?: string, latencyMs?: number}>}
+ */
+async function testProxyConnection(proxyUrl) {
+  const startTime = Date.now();
+  try {
+    const client = createHttpClient({ proxy: proxyUrl, timeout: 15000 });
+    
+    const response = await client.get('https://api.ipify.org?format=json', {
+      timeout: 15000,
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+      },
+    });
+    
+    const latencyMs = Date.now() - startTime;
+    const ip = response.data?.ip;
+    
+    if (ip) {
+      return { success: true, ip, latencyMs };
+    }
+    return { success: false, error: 'Invalid response format', latencyMs };
+  } catch (error) {
+    const latencyMs = Date.now() - startTime;
+    return { success: false, error: error.message, latencyMs };
+  }
+}
 
 // Validate required environment variables
 function validateEnvironment() {
@@ -82,6 +114,21 @@ async function main() {
       log.info('Centralized config service initialized');
     } catch (configErr) {
       log.warn(`Config service init failed (using env fallback): ${configErr.message}`);
+    }
+    
+    // Test proxy connectivity if configured
+    const proxyUrl = process.env.PROXY_SERVER;
+    if (proxyUrl) {
+      log.info('Testing proxy connectivity...');
+      const proxyTest = await testProxyConnection(proxyUrl);
+      if (proxyTest.success) {
+        log.info(`Proxy test PASSED - exit IP: ${proxyTest.ip} (${proxyTest.latencyMs}ms)`);
+      } else {
+        log.warn(`Proxy test FAILED: ${proxyTest.error} (${proxyTest.latencyMs}ms)`);
+        log.warn('Worker will continue but proxy may not work correctly');
+      }
+    } else {
+      log.info('No PROXY_SERVER configured - worker will use proxies from coordinator pool');
     }
     
     // Create worker node
