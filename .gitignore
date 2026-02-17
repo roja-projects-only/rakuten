@@ -4,6 +4,8 @@ node_modules/
 *.log
 data/
 rakuten.pem
+rakuten2.pem
+rakuten.pub
 ssh-logs.bat
 test-credentials.txtles
 .env
