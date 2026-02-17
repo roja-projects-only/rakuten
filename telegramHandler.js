@@ -392,7 +392,7 @@ function initializeTelegramHandler(botToken, options = {}) {
       const poolSize = proxyPool.proxies?.length || 0;
       
       if (poolSize > 0) {
-        lines.push(`✅ *Proxy Pool:* ${poolSize} proxy(ies) loaded`);
+        lines.push(`✅ *Proxy Pool:* ${poolSize} proxy\\(ies\\) loaded`);
         // Show first few proxies (masked)
         const showCount = Math.min(3, poolSize);
         for (let i = 0; i < showCount; i++) {

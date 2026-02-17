@@ -26,13 +26,13 @@ nano .env.pow-service
 chmod +x scripts/deploy/quick-update.sh
 
 # Update coordinator
-./scripts/deploy/quick-update.sh coordinator
+cd rakuten && ./scripts/deploy/quick-update.sh coordinator
 
 # Update worker
-./scripts/deploy/quick-update.sh worker
+cd rakuten && ./scripts/deploy/quick-update.sh worker
 
 # Update pow-service
-./scripts/deploy/quick-update.sh pow
+cd rakuten && ./scripts/deploy/quick-update.sh pow
 
 # Update all services
 ./scripts/deploy/quick-update.sh all
