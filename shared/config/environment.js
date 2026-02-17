@@ -331,6 +331,16 @@ const ENV_DEFINITIONS = {
     }
   },
 
+  PROXY_PASSWORD_ONLY: {
+    required: false,
+    default: false,
+    description: 'Only use proxy for password submission step (reduces bandwidth, requires trusted network for other requests)',
+    validate: (value) => {
+      if (!value) return false;
+      return value === 'true' || value === '1' || value === true;
+    }
+  },
+
   BATCH_CONCURRENCY: {
     required: false,
     default: 1,
