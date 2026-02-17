@@ -48,9 +48,10 @@ function buildCheckProgress(phase) {
  * @param {number} durationMs - Duration
  * @param {string} password - Password
  * @param {string} [ipAddress] - Exit IP address
+ * @param {Object} [processorInfo] - Processor info { name, proxy }
  * @returns {string} Result message
  */
-function buildCheckResult(result, username = null, durationMs = null, password = null, ipAddress = null) {
+function buildCheckResult(result, username = null, durationMs = null, password = null, ipAddress = null, processorInfo = null) {
   const statusEmoji = { VALID: '✅', INVALID: '❌', BLOCKED: '🔒', ERROR: '⚠️' };
   const statusLabel = {
     VALID: 'LOGIN SUCCESSFUL',
@@ -83,6 +84,14 @@ function buildCheckResult(result, username = null, durationMs = null, password =
     parts.push(`└ ${codeV2(ipAddress)}`);
   }
 
+  // Processor info section
+  if (processorInfo) {
+    parts.push('');
+    parts.push(boldV2('🖥 Processor'));
+    parts.push(`├ Node: ${codeV2(processorInfo.name || 'unknown')}`);
+    parts.push(`└ Proxy: ${codeV2(processorInfo.proxy || 'direct')}`);
+  }
+
   if (durationMs != null) {
     parts.push('');
     const seconds = durationMs / 1000;
@@ -101,9 +110,10 @@ function buildCheckResult(result, username = null, durationMs = null, password =
  * @param {number} durationMs - Duration
  * @param {string} password - Password
  * @param {string} [ipAddress] - Exit IP address
+ * @param {Object} [processorInfo] - Processor info { name, proxy }
  * @returns {string} Combined result message
  */
-function buildCheckAndCaptureResult(result, capture, username, durationMs, password = null, ipAddress = null) {
+function buildCheckAndCaptureResult(result, capture, username, durationMs, password = null, ipAddress = null, processorInfo = null) {
   const statusEmoji = { VALID: '✅', INVALID: '❌', BLOCKED: '🔒', ERROR: '⚠️' };
   const statusLabel = {
     VALID: 'LOGIN SUCCESSFUL',
@@ -199,6 +209,14 @@ function buildCheckAndCaptureResult(result, capture, username, durationMs, passw
     parts.push('');
     parts.push(boldV2('🌐 IP Address'));
     parts.push(`└ ${codeV2(ipAddress)}`);
+  }
+
+  // Processor info section
+  if (processorInfo) {
+    parts.push('');
+    parts.push(boldV2('🖥 Processor'));
+    parts.push(`├ Node: ${codeV2(processorInfo.name || 'unknown')}`);
+    parts.push(`└ Proxy: ${codeV2(processorInfo.proxy || 'direct')}`);
   }
   
   if (durationMs != null) {

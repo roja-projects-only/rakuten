@@ -500,6 +500,13 @@ function initializeTelegramHandler(botToken, options = {}) {
 
       // Check credentials
       const runtimeConfig = getRuntimeConfig();
+      const isDistributed = options.compatibility?.isDistributed?.() || false;
+      
+      // Build processor info for result display
+      const processorInfo = {
+        name: isDistributed ? 'coordinator' : 'local',
+        proxy: runtimeConfig.proxy ? maskProxyUrl(runtimeConfig.proxy) : 'direct'
+      };
 
       const result = await checkCredentials(
         creds.username,
@@ -523,7 +530,7 @@ function initializeTelegramHandler(botToken, options = {}) {
       log.info(`[chk] finish status=${result.status} user=${maskUser(creds.username)} time=${durationMs}ms`);
       
       // Edit message with final result
-      await updateStatus(buildCheckResult(result, creds.username, durationMs, creds.password, result.ipAddress));
+      await updateStatus(buildCheckResult(result, creds.username, durationMs, creds.password, result.ipAddress, processorInfo));
 
       // Always remove any screenshot file quietly
       if (result.screenshot) {
@@ -542,7 +549,7 @@ function initializeTelegramHandler(botToken, options = {}) {
           await updateStatus(buildCheckProgress('capture'));
           
           const capture = await captureAccountData(result.session, { timeoutMs: options.timeoutMs || 60000 });
-          const finalMessage = buildCheckAndCaptureResult(result, capture, creds.username, durationMs, creds.password, result.ipAddress);
+          const finalMessage = buildCheckAndCaptureResult(result, capture, creds.username, durationMs, creds.password, result.ipAddress, processorInfo);
           await updateStatus(finalMessage);
 
           log.info(`[chk] captured: points=${capture.points} rank=${capture.rank} cash=${capture.cash} lastOrder=${capture.latestOrder} orderId=${capture.latestOrderId}`);
@@ -561,7 +568,7 @@ function initializeTelegramHandler(botToken, options = {}) {
         } catch (captureErr) {
           log.warn(`[chk] capture failed: ${captureErr.message}`);
           // Still show the check result even if capture failed
-          await updateStatus(buildCheckResult(result, creds.username, durationMs, creds.password, result.ipAddress));
+          await updateStatus(buildCheckResult(result, creds.username, durationMs, creds.password, result.ipAddress, processorInfo));
         } finally {
           // Clean up session
           closeSession(result.session);
