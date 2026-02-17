@@ -35,7 +35,7 @@ const log = createLogger('worker-main');
 async function testProxyConnection(proxyUrl) {
   const startTime = Date.now();
   try {
-    const client = createHttpClient({ proxy: proxyUrl, timeout: 15000 });
+    const { client } = createHttpClient({ proxy: proxyUrl, timeout: 15000 });
     
     const response = await client.get('https://api.ipify.org?format=json', {
       timeout: 15000,
