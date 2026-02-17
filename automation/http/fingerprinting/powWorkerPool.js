@@ -36,7 +36,7 @@ class PowWorkerPool {
     // Default to all CPUs (not CPU-1) for dedicated POW service
     this.numWorkers = options.numWorkers || Math.max(2, cpuCount);
     this.maxIterations = options.maxIterations || 8000000;
-    this.taskTimeout = options.taskTimeout || 10000; // 10s default
+    this.taskTimeout = options.taskTimeout || 30000; // 30s default
     
     this.workers = [];
     this.taskQueue = [];

@@ -467,7 +467,7 @@ class POWService {
     try {
       const { PowWorkerPool } = require('./automation/http/fingerprinting/powWorkerPool');
       const numWorkers = parseInt(process.env.POW_NUM_WORKERS, 10) || undefined; // undefined = auto (CPU - 1)
-      const taskTimeout = parseInt(process.env.POW_TASK_TIMEOUT, 10) || 10000; // 10s default (was 5s)
+      const taskTimeout = parseInt(process.env.POW_TASK_TIMEOUT, 10) || 30000; // 30s default
       
       this.workerPool = new PowWorkerPool({
         numWorkers,

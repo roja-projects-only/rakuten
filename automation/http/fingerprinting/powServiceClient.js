@@ -23,7 +23,7 @@ const log = createLogger('pow-client');
 class POWServiceClient {
   constructor(options = {}) {
     this.serviceUrl = options.serviceUrl || process.env.POW_SERVICE_URL || 'http://localhost:3001';
-    this.timeout = options.timeout || parseInt(process.env.POW_CLIENT_TIMEOUT, 10) || 8000; // 8s (service has 10s)
+    this.timeout = options.timeout || parseInt(process.env.POW_CLIENT_TIMEOUT, 10) || 25000; // 25s (service has 30s)
     this.maxRetries = options.maxRetries || 1; // Reduced retries - fallback faster
     this.retryDelay = options.retryDelay || 500; // 500ms base delay
     
