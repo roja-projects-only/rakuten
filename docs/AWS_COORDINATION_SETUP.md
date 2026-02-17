@@ -232,8 +232,7 @@ cd rakuten
 docker build -f Dockerfile.pow-service -t rakuten-pow-service .
 
 # Create environment file
-sudo mkdir -p /opt/rakuten
-sudo tee /opt/rakuten/.env.pow-service << 'EOF'
+tee .env.pow-service << 'EOF'
 PORT=8080
 LOG_LEVEL=info
 NODE_ENV=production
@@ -243,7 +242,7 @@ EOF
 docker run -d \
   --name rakuten-pow-service \
   --restart unless-stopped \
-  --env-file /opt/rakuten/.env.pow-service \
+  --env-file .env.pow-service \
   -p 8080:8080 \
   rakuten-pow-service
 
@@ -288,7 +287,7 @@ docker rm rakuten-pow-service
 docker run -d \
   --name rakuten-pow-service \
   --restart unless-stopped \
-  --env-file /opt/rakuten/.env.pow-service \
+  --env-file .env.pow-service \
   -p 8080:8080 \
   rakuten-pow-service
 ```
@@ -339,8 +338,7 @@ cd rakuten
 docker build -f Dockerfile.coordinator -t rakuten-coordinator .
 
 # Create environment file (EDIT VALUES BELOW)
-sudo mkdir -p /opt/rakuten
-sudo nano /opt/rakuten/.env.coordinator
+nano .env.coordinator
 ```
 
 Paste this content (edit the values):
@@ -383,7 +381,7 @@ Save and exit (`Ctrl+X`, `Y`, `Enter`), then run:
 docker run -d \
   --name rakuten-coordinator \
   --restart unless-stopped \
-  --env-file /opt/rakuten/.env.coordinator \
+  --env-file .env.coordinator \
   -p 9090:9090 \
   rakuten-coordinator
 
@@ -427,7 +425,7 @@ docker restart rakuten-coordinator
 docker stop rakuten-coordinator
 
 # Edit environment and restart
-sudo nano /opt/rakuten/.env.coordinator
+nano .env.coordinator
 docker restart rakuten-coordinator
 
 # Update to new version
@@ -439,7 +437,7 @@ docker rm rakuten-coordinator
 docker run -d \
   --name rakuten-coordinator \
   --restart unless-stopped \
-  --env-file /opt/rakuten/.env.coordinator \
+  --env-file .env.coordinator \
   -p 9090:9090 \
   rakuten-coordinator
 ```
@@ -492,8 +490,7 @@ cd rakuten
 docker build -f Dockerfile.worker -t rakuten-worker .
 
 # Create environment file (EDIT VALUES BELOW)
-sudo mkdir -p /opt/rakuten
-sudo nano /opt/rakuten/.env.worker
+nano .env.worker
 ```
 
 Paste this content (edit the values):
@@ -530,7 +527,7 @@ Save and exit, then run:
 docker run -d \
   --name rakuten-worker \
   --restart unless-stopped \
-  --env-file /opt/rakuten/.env.worker \
+  --env-file .env.worker \
   rakuten-worker
 
 # Verify it's running
@@ -564,7 +561,7 @@ docker restart rakuten-worker
 docker stop rakuten-worker
 
 # Change concurrency
-sudo nano /opt/rakuten/.env.worker
+nano .env.worker
 # Change WORKER_CONCURRENCY=5
 docker restart rakuten-worker
 
@@ -577,7 +574,7 @@ docker rm rakuten-worker
 docker run -d \
   --name rakuten-worker \
   --restart unless-stopped \
-  --env-file /opt/rakuten/.env.worker \
+  --env-file .env.worker \
   rakuten-worker
 ```
 
