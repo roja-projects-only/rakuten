@@ -144,7 +144,7 @@ Go to **EC2 → Security Groups → Create security group**
 | Setting | Value |
 |---------|-------|
 | Name | `rakuten-redis` |
-| AMI | Amazon Linux 2023 |
+| AMI | Ubuntu 24.04 LTS |
 | Instance type | `t3.micro` |
 | Key pair | Your SSH key |
 | Security group | `rakuten-redis-sg` |
@@ -158,23 +158,23 @@ Connect via SSH, then run these commands:
 
 ```bash
 # Update system
-sudo dnf update -y
+sudo apt update && sudo apt upgrade -y
 
 # Install Redis
-sudo dnf install -y redis6
+sudo apt install -y redis-server
 
 # Configure Redis for remote access
-sudo sed -i 's/bind 127.0.0.1/bind 0.0.0.0/' /etc/redis6/redis6.conf
+sudo sed -i 's/bind 127.0.0.1/bind 0.0.0.0/' /etc/redis/redis.conf
 
 # Set Redis password (replace YOUR_PASSWORD)
-sudo sed -i 's/# requirepass foobared/requirepass YOUR_PASSWORD/' /etc/redis6/redis6.conf
+sudo sed -i 's/# requirepass foobared/requirepass YOUR_PASSWORD/' /etc/redis/redis.conf
 
 # Enable and start Redis
-sudo systemctl enable redis6
-sudo systemctl start redis6
+sudo systemctl enable redis-server
+sudo systemctl restart redis-server
 
 # Verify Redis is running
-redis6-cli -a YOUR_PASSWORD PING
+redis-cli -a YOUR_PASSWORD PING
 # Should return: PONG
 ```
 
@@ -197,7 +197,7 @@ Example: `redis://:mypassword123@172.31.10.50:6379`
 | Setting | Value |
 |---------|-------|
 | Name | `rakuten-pow-service` |
-| AMI | Amazon Linux 2023 |
+| AMI | Ubuntu 24.04 LTS |
 | Instance type | `c6i.large` (or request Spot) |
 | Key pair | Your SSH key |
 | Security group | `rakuten-pow-sg` |
@@ -211,11 +211,11 @@ Connect via SSH, then run these commands:
 
 ```bash
 # Update and install Docker
-sudo dnf update -y
-sudo dnf install -y docker git
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y docker.io git
 sudo systemctl enable docker
 sudo systemctl start docker
-sudo usermod -aG docker ec2-user
+sudo usermod -aG docker ubuntu
 
 # Re-login for docker group to take effect
 exit
@@ -231,12 +231,12 @@ cd rakuten
 # Build POW service image
 docker build -f Dockerfile.pow-service -t rakuten-pow-service .
 
-# Create environment file
-tee .env.pow-service << 'EOF'
-PORT=8080
-LOG_LEVEL=info
-NODE_ENV=production
-EOF
+# Copy and edit environment file
+cp deployment/.env.pow-service.example .env.pow-service
+nano .env.pow-service
+```
+
+Edit the values as needed (defaults should work), then run:
 
 # Run POW service
 docker run -d \
@@ -304,7 +304,7 @@ docker run -d \
 | Setting | Value |
 |---------|-------|
 | Name | `rakuten-coordinator` |
-| AMI | Amazon Linux 2023 |
+| AMI | Ubuntu 24.04 LTS |
 | Instance type | `t3.small` |
 | Key pair | Your SSH key |
 | Security group | `rakuten-coordinator-sg` |
@@ -317,11 +317,11 @@ Connect via SSH, then run these commands:
 
 ```bash
 # Update and install Docker
-sudo dnf update -y
-sudo dnf install -y docker git
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y docker.io git
 sudo systemctl enable docker
 sudo systemctl start docker
-sudo usermod -aG docker ec2-user
+sudo usermod -aG docker ubuntu
 
 # Re-login for docker group
 exit
@@ -337,11 +337,12 @@ cd rakuten
 # Build coordinator image
 docker build -f Dockerfile.coordinator -t rakuten-coordinator .
 
-# Create environment file (EDIT VALUES BELOW)
+# Copy and edit environment file
+cp deployment/.env.coordinator.example .env.coordinator
 nano .env.coordinator
 ```
 
-Paste this content (edit the values):
+Edit these required values:
 
 ```bash
 # ===================
@@ -454,7 +455,7 @@ docker run -d \
 | Setting | Value |
 |---------|-------|
 | Name | `rakuten-worker-1` |
-| AMI | Amazon Linux 2023 |
+| AMI | Ubuntu 24.04 LTS |
 | Instance type | `t3.micro` |
 | Key pair | Your SSH key |
 | Security group | `rakuten-worker-sg` |
@@ -469,11 +470,11 @@ Connect via SSH, then run these commands:
 
 ```bash
 # Update and install Docker
-sudo dnf update -y
-sudo dnf install -y docker git
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y docker.io git
 sudo systemctl enable docker
 sudo systemctl start docker
-sudo usermod -aG docker ec2-user
+sudo usermod -aG docker ubuntu
 
 # Re-login for docker group
 exit
@@ -489,11 +490,12 @@ cd rakuten
 # Build worker image
 docker build -f Dockerfile.worker -t rakuten-worker .
 
-# Create environment file (EDIT VALUES BELOW)
+# Copy and edit environment file
+cp deployment/.env.worker.example .env.worker
 nano .env.worker
 ```
 
-Paste this content (edit the values):
+Edit these required values:
 
 ```bash
 # ===================
@@ -592,10 +594,10 @@ Repeat the Worker Setup on new EC2 instances. Each worker automatically register
 
 ```bash
 # Install redis-cli if not present
-sudo dnf install -y redis6
+sudo apt install -y redis-tools
 
 # Test connection
-redis6-cli -h REDIS_PRIVATE_IP -a YOUR_PASSWORD PING
+redis-cli -h REDIS_PRIVATE_IP -a YOUR_PASSWORD PING
 # Should return: PONG
 ```
 
@@ -625,7 +627,7 @@ docker logs rakuten-coordinator | grep -i "worker"
 Or via Redis:
 
 ```bash
-redis6-cli -h REDIS_PRIVATE_IP -a YOUR_PASSWORD KEYS "worker:*:heartbeat"
+redis-cli -h REDIS_PRIVATE_IP -a YOUR_PASSWORD KEYS "worker:*:heartbeat"
 # Should list all connected workers
 ```
 
@@ -646,13 +648,13 @@ redis6-cli -h REDIS_PRIVATE_IP -a YOUR_PASSWORD KEYS "worker:*:heartbeat"
 # On any instance with redis-cli installed:
 
 # Check worker count
-redis6-cli -h REDIS_IP -a PASS KEYS "worker:*:heartbeat" | wc -l
+redis-cli -h REDIS_IP -a PASS KEYS "worker:*:heartbeat" | wc -l
 
 # Check queue depth
-redis6-cli -h REDIS_IP -a PASS LLEN queue:tasks
+redis-cli -h REDIS_IP -a PASS LLEN queue:tasks
 
 # Check active batches
-redis6-cli -h REDIS_IP -a PASS KEYS "progress:*"
+redis-cli -h REDIS_IP -a PASS KEYS "progress:*"
 ```
 
 ### Clear Stuck State
@@ -661,7 +663,7 @@ If system gets stuck after a crash:
 
 ```bash
 # Connect to Redis
-redis6-cli -h REDIS_IP -a YOUR_PASSWORD
+redis-cli -h REDIS_IP -a YOUR_PASSWORD
 
 # Inside redis-cli:
 KEYS "progress:*"
@@ -698,7 +700,7 @@ docker restart rakuten-coordinator
 
 **Check:**
 1. Security group allows Redis port 6379 from worker SG
-2. Redis is running: `redis6-cli -h REDIS_IP -a PASS PING`
+2. Redis is running: `redis-cli -h REDIS_IP -a PASS PING`
 3. Worker logs: `docker logs rakuten-worker`
 
 ### Problem: Slow Processing
@@ -720,7 +722,7 @@ docker restart rakuten-coordinator
 **Solution:**
 ```bash
 # Clear old lock
-redis6-cli -h REDIS_IP -a PASS DEL coordinator:heartbeat
+redis-cli -h REDIS_IP -a PASS DEL coordinator:heartbeat
 docker restart rakuten-coordinator
 ```
 
@@ -729,7 +731,7 @@ docker restart rakuten-coordinator
 **Solution:**
 ```bash
 # Clear progress keys
-redis6-cli -h REDIS_IP -a PASS
+redis-cli -h REDIS_IP -a PASS
 KEYS "progress:*"
 # Delete each one:
 DEL progress:xxx

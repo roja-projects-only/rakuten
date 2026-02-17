@@ -277,22 +277,25 @@ function initializeTelegramHandler(botToken, options = {}) {
           const ackMsg = await ctx.reply(escapeV2(`⏹ Stopping batch ${batchId}...`), { parse_mode: 'MarkdownV2' });
           
           try {
-            // Cancel the batch in the job queue (stops workers from picking up new tasks)
-            await coordinator.cancelBatch(batchId);
+            // Cancel the batch in the job queue (stops workers from picking up new tasks, clears leases)
+            const cancelResult = await coordinator.cancelBatch(batchId);
             
             // Abort the batch in progress tracker (marks as aborted)
             await coordinator.progressTracker.abortBatch(batchId);
             
-            // Update the acknowledgment message
+            // Update the acknowledgment message with details
+            const details = cancelResult.drained > 0 || cancelResult.leasesCleared > 0
+              ? ` (cleared ${cancelResult.drained} queued, ${cancelResult.leasesCleared} in-progress)`
+              : '';
             await ctx.telegram.editMessageText(
               chatId, 
               ackMsg.message_id, 
               undefined, 
-              escapeV2(`⏹ Batch ${batchId} stopped successfully`), 
+              escapeV2(`⏹ Batch ${batchId} stopped successfully${details}`), 
               { parse_mode: 'MarkdownV2' }
             );
             
-            log.info(`[stop] Coordinator batch cancelled chatId=${chatId} batchId=${batchId}`);
+            log.info(`[stop] Coordinator batch cancelled chatId=${chatId} batchId=${batchId}`, cancelResult);
             
           } catch (error) {
             log.error(`[stop] Failed to cancel coordinator batch`, {

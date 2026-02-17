@@ -462,12 +462,16 @@ class JobQueueManager {
       drainedCount += await this.drainQueueByBatchId(JOB_QUEUE.tasks, batchId);
       drainedCount += await this.drainQueueByBatchId(JOB_QUEUE.retry, batchId);
 
-      log.info(`Batch ${batchId} cancelled, drained ${drainedCount} tasks`, {
+      // 3. Clean up any active task leases for this batch
+      const leasesCleared = await this.clearTaskLeasesForBatch(batchId);
+
+      log.info(`Batch ${batchId} cancelled, drained ${drainedCount} tasks, cleared ${leasesCleared} leases`, {
         batchId,
-        drainedCount
+        drainedCount,
+        leasesCleared
       });
 
-      return { drained: drainedCount };
+      return { drained: drainedCount, leasesCleared };
     } catch (error) {
       log.error('Error cancelling batch', {
         batchId,
@@ -591,6 +595,41 @@ class JobQueueManager {
     } catch (error) {
       log.error('Error getting queue stats', { error: error.message });
       return { mainQueue: 0, retryQueue: 0, total: 0 };
+    }
+  }
+
+  /**
+   * Clear all task leases for a cancelled batch
+   * This ensures workers won't continue processing tasks for cancelled batches
+   * @param {string} batchId - Batch ID to clear leases for
+   * @returns {Promise<number>} Number of leases cleared
+   */
+  async clearTaskLeasesForBatch(batchId) {
+    try {
+      // Find all task leases for this batch using pattern job:{batchId}:*
+      const pattern = `job:${batchId}:*`;
+      const leaseKeys = await this.redis.executeCommand('keys', pattern);
+      
+      if (leaseKeys.length === 0) {
+        log.debug(`No task leases found for batch ${batchId}`);
+        return 0;
+      }
+
+      // Delete all leases in bulk
+      await this.redis.executeCommand('del', ...leaseKeys);
+      
+      log.info(`Cleared ${leaseKeys.length} task leases for batch ${batchId}`, {
+        batchId,
+        leasesCleared: leaseKeys.length
+      });
+      
+      return leaseKeys.length;
+    } catch (error) {
+      log.error('Error clearing task leases for batch', {
+        batchId,
+        error: error.message
+      });
+      return 0; // Don't fail the cancel operation if lease cleanup fails
     }
   }
 
