@@ -165,6 +165,11 @@ async function runDistributedBatch(ctx, batch, msgId, statusMsg, options, helper
     // Subscribe to progress updates for this batch
     coordinator.progressTracker.startTracking(batchId, batch.filename);
     
+    // Pin the progress message
+    ctx.telegram.pinChatMessage(chatId, statusMsg.message_id, { disable_notification: true }).catch(err => {
+      log.debug(`Failed to pin message: ${err.message}`);
+    });
+    
   } catch (error) {
     log.error('Failed to queue batch', { error: error.message });
     
@@ -203,6 +208,11 @@ function runSingleNodeBatch(ctx, batch, msgId, statusMsg, options, helpers, key,
 
   // Track active batch for /stop command
   setActiveBatch(chatId, batch, key);
+
+  // Pin the progress message
+  ctx.telegram.pinChatMessage(chatId, statusMsg.message_id, { disable_notification: true }).catch(err => {
+    log.debug(`Failed to pin message: ${err.message}`);
+  });
 
   log.info(`Executing file=${batch.filename} total=${batch.count} concurrency=${BATCH_CONCURRENCY}`);
 
@@ -398,6 +408,11 @@ function runSingleNodeBatch(ctx, batch, msgId, statusMsg, options, helpers, key,
     } finally {
       // Flush any buffered Redis writes before completing
       await flushWriteBuffer().catch(() => {});
+      
+      // Unpin the progress message
+      await ctx.telegram.unpinChatMessage(chatId, statusMsg.message_id).catch(err => {
+        log.debug(`Failed to unpin message: ${err.message}`);
+      });
       
       deletePendingBatch(key);
       clearActiveBatch(chatId);

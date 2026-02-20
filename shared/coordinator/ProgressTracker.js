@@ -483,6 +483,11 @@ class ProgressTracker {
         { parse_mode: 'MarkdownV2' }
       );
       
+      // Unpin the progress message
+      await this.telegram.unpinChatMessage(progressData.chatId, progressData.messageId).catch(err => {
+        this.logger.debug('Failed to unpin message', { batchId, error: err.message });
+      });
+      
       this.logger.info('Batch summary sent', {
         batchId,
         total: progressData.total,
@@ -856,6 +861,11 @@ class ProgressTracker {
         abortedMessage,
         { parse_mode: 'MarkdownV2' }
       );
+      
+      // Unpin the progress message
+      await this.telegram.unpinChatMessage(progressData.chatId, progressData.messageId).catch(err => {
+        this.logger.debug('Failed to unpin message', { batchId, error: err.message });
+      });
       
       this.logger.info('Batch aborted message sent', {
         batchId,
