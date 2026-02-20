@@ -208,16 +208,44 @@ function buildBatchSummary({ filename, total, skipped, counts, elapsedMs, validC
 }
 
 /**
- * Builds batch aborted message.
- * @param {Object} data - Abort data
+ * Builds batch aborted message (full summary with ABORTED footer).
+ * @param {Object} data - Abort data (same as summary)
  * @returns {string} Message
  */
-function buildBatchAborted({ filename, total, processed }) {
-  return (
-    escapeV2('⏹️ Batch aborted') +
-    `\nFile: ${codeSpan(filename)}` +
-    `\nProcessed: *${processed}/${total}*`
-  );
+function buildBatchAborted({ filename, total, skipped, counts, elapsedMs, validCreds, processed }) {
+  const parts = [];
+  
+  parts.push(`📊 ${boldV2('BATCH ABORTED')}`);  parts.push('');
+  
+  parts.push(boldV2('📈 Statistics'));
+  parts.push(`├ File: ${codeSpan(filename)}`);
+  parts.push(`├ Total: ${codeV2(String(total))}`);
+  parts.push(`├ Processed: ${codeV2(String(processed || 0))}`);
+  if (skipped) {
+    parts.push(`├ Skipped: ${codeV2(String(skipped))}`);
+  }
+  parts.push(`└ Time: ${codeV2(formatDurationMs(elapsedMs || 0))}`);
+  parts.push('');
+  
+  parts.push(boldV2('📋 Results'));
+  parts.push(`├ ✅ Valid: ${codeV2(String(counts?.VALID || 0))}`);
+  parts.push(`├ ❌ Invalid: ${codeV2(String(counts?.INVALID || 0))}`);
+  parts.push(`├ 🔒 Blocked: ${codeV2(String(counts?.BLOCKED || 0))}`);
+  parts.push(`└ ⚠️ Error: ${codeV2(String(counts?.ERROR || 0))}`);
+  
+  if (validCreds && validCreds.length > 0) {
+    parts.push('');
+    parts.push(boldV2('🔐 Valid Credentials'));
+    validCreds.forEach((cred, i) => {
+      const prefix = i === validCreds.length - 1 ? '└' : '├';
+      parts.push(`${prefix} ${codeV2(`${cred.username}:${cred.password}`)}`);
+    });
+  }
+  
+  parts.push('');
+  parts.push(`⏹️ ${escapeV2('Batch stopped by user')}`);
+
+  return parts.join('\n');
 }
 
 /**
