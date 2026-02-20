@@ -98,8 +98,8 @@ async function computeCresWithService(mdata, step) {
  * @returns {Promise<Object>} Response object with HTML, cookies, and correlation ID
  */
 async function navigateToLogin(session, targetUrl, timeoutMs) {
-  // Use direct client for navigation to save proxy bandwidth
-  const client = session.directClient || session.client;
+  // Use proxy client for navigation (consistent IP for entire login flow)
+  const client = session.proxiedClient || session.client;
   const correlationId = generateCorrelationId();
   
   log.debug('Navigating to login page');
@@ -170,8 +170,8 @@ async function navigateToLogin(session, targetUrl, timeoutMs) {
  * @returns {Promise<Object>} Response with token for next step
  */
 async function submitEmailStep(session, email, context, timeoutMs) {
-  // Use direct client for email step to save proxy bandwidth
-  const client = session.directClient || session.client;
+  // Use proxy client for email step (consistent IP for entire login flow)
+  const client = session.proxiedClient || session.client;
   const { correlationId } = context;
   
   log.debug('Submitting email');
@@ -325,9 +325,8 @@ async function submitEmailStep(session, email, context, timeoutMs) {
  * @returns {Promise<Object>} Final authentication response
  */
 async function submitPasswordStep(session, password, emailStepResult, username, timeoutMs) {
-  // Use direct client for util/gc, proxy only for actual password POST
-  const directClient = session.directClient || session.client;
-  const proxyClient = session.proxiedClient || session.client;
+  // Use proxy client for all password step requests (consistent IP)
+  const client = session.proxiedClient || session.client;
   
   log.debug('Submitting password');
   touchSession(session);
@@ -354,8 +353,8 @@ async function submitPasswordStep(session, password, emailStepResult, username, 
       rat: ratData,
     };
     
-    // Use direct client for util/gc to save bandwidth
-    const gcResponse = await directClient.post(gcUrl, gcPayload, {
+    // Use proxy client for util/gc (consistent IP)
+    const gcResponse = await client.post(gcUrl, gcPayload, {
       timeout: timeoutMs,
       headers: {
         'Accept': '*/*',
@@ -408,8 +407,8 @@ async function submitPasswordStep(session, password, emailStepResult, username, 
     
     const url = `${LOGIN_BASE}${LOGIN_COMPLETE_PATH}`;
     
-    // Use PROXY for password submission to hide our IP from Rakuten
-    const response = await proxyClient.post(url, payload, {
+    // Use proxy for password submission
+    const response = await client.post(url, payload, {
       timeout: timeoutMs,
       maxRedirects: 0,
       validateStatus: (status) => status < 600,
