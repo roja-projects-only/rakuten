@@ -234,7 +234,8 @@ class JobQueueManager {
 
     try {
       // Use batch lookup for efficiency - check all possible status keys
-      const STATUSES = ['VALID', 'INVALID', 'BLOCKED', 'ERROR'];
+      // ERROR is excluded to allow retry in future batches
+      const STATUSES = ['VALID', 'INVALID', 'BLOCKED'];
       const BATCH_SIZE = 1000; // Increased batch size for better performance
       
       log.debug(`Checking ${credentialKeys.length} credentials for cached results`);

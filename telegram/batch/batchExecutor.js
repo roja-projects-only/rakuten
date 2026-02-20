@@ -277,8 +277,10 @@ function runSingleNodeBatch(ctx, batch, msgId, statusMsg, options, helpers, key,
       validCreds.push({ username: cred.username, password: cred.password });
     }
 
-    // Non-blocking cache update
-    markProcessedStatus(credKey, result.status, PROCESSED_TTL_MS).catch(() => {});
+    // Non-blocking cache update - skip ERROR so credentials can be retried later
+    if (result.status !== 'ERROR') {
+      markProcessedStatus(credKey, result.status, PROCESSED_TTL_MS).catch(() => {});
+    }
     
     return result;
   };

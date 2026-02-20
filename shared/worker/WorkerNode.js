@@ -790,18 +790,21 @@ class WorkerNode {
     }
 
     // Mirror into processed store so Telegram dedupe works in distributed mode
-    try {
-      const credKey = makeKey(result.username, result.password);
-      const { processedTtlMs } = getWorkerConfig();
-      await markProcessedStatus(credKey, result.status, processedTtlMs);
-    } catch (error) {
-      log.warn('Processed store write failed', {
-        workerId: this.workerId,
-        taskId: result.taskId,
-        username: result.username,
-        status: result.status,
-        error: error.message
-      });
+    // Skip ERROR status so credentials can be retried in future batches
+    if (result.status !== 'ERROR') {
+      try {
+        const credKey = makeKey(result.username, result.password);
+        const { processedTtlMs } = getWorkerConfig();
+        await markProcessedStatus(credKey, result.status, processedTtlMs);
+      } catch (error) {
+        log.warn('Processed store write failed', {
+          workerId: this.workerId,
+          taskId: result.taskId,
+          username: result.username,
+          status: result.status,
+          error: error.message
+        });
+      }
     }
   }
 
