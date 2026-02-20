@@ -22,19 +22,32 @@ class RedisClient {
       password: options.password || process.env.REDIS_PASSWORD,
       db: options.db || process.env.REDIS_DB || 0,
       
-      // Connection pooling
-      maxRetriesPerRequest: 3,
-      retryDelayOnFailover: 100,
-      lazyConnect: true,
-      keepAlive: 30000,
+      // TCP Keepalive - critical for cloud/NAT environments
+      keepAlive: 10000, // Send keepalive every 10s (was 30s)
+      noDelay: true, // Disable Nagle's algorithm for lower latency
       
-      // Retry logic - exponential backoff: 1s, 2s, 4s, 8s, 16s max
-      retryDelayOnClusterDown: 300,
-      maxRetriesPerRequest: 5,
+      // Connection resilience
+      enableOfflineQueue: true, // Queue commands when disconnected
+      enableReadyCheck: true, // Wait for READY before accepting commands
       
-      // Connection timeout
+      // Retry strategy - more aggressive reconnection
+      retryStrategy: (times) => {
+        if (times > 20) {
+          log.error('Redis max retry attempts reached', { attempts: times });
+          return null; // Stop retrying
+        }
+        // Exponential backoff: 50ms, 100ms, 200ms... max 3s
+        const delay = Math.min(times * 50, 3000);
+        log.debug('Redis retry scheduled', { attempt: times, delay });
+        return delay;
+      },
+      
+      // Timeouts
       connectTimeout: 10000,
-      commandTimeout: parseInt(process.env.REDIS_COMMAND_TIMEOUT, 10) || 60000, // Configurable, default 60s
+      commandTimeout: parseInt(process.env.REDIS_COMMAND_TIMEOUT, 10) || 60000,
+      
+      // Connection limits
+      maxRetriesPerRequest: 3,
       
       // Override with provided options
       ...options
@@ -74,10 +87,7 @@ class RedisClient {
       // IMPORTANT: Never use HTTP proxy for Redis connections
       const redisOptions = {
         ...this.options,
-        // Explicitly set critical timeout options
-        commandTimeout: this.options.commandTimeout,
-        connectTimeout: this.options.connectTimeout,
-        lazyConnect: this.options.lazyConnect
+        lazyConnect: true, // Connect explicitly via connect()
       };
       
       // Remove any proxy-related options that might interfere with Redis
@@ -88,7 +98,10 @@ class RedisClient {
       this.client = new Redis(redisUrl, redisOptions);
     } else {
       // Remove any proxy-related options for direct Redis connections
-      const redisOptions = { ...this.options };
+      const redisOptions = { 
+        ...this.options,
+        lazyConnect: true,
+      };
       delete redisOptions.proxy;
       delete redisOptions.httpsAgent;
       delete redisOptions.httpAgent;
@@ -210,11 +223,17 @@ class RedisClient {
     } catch (error) {
       this.metrics.commandsFailed++;
       
-      // If connection error, try to reconnect once
-      if (error.message.includes('Connection is closed') || 
-          error.message.includes('ECONNREFUSED') ||
-          error.message.includes('ENOTFOUND')) {
-        
+      // Check if this is a connection-related error that warrants reconnection
+      const isConnectionError = 
+        error.message.includes('Connection is closed') || 
+        error.message.includes('ECONNREFUSED') ||
+        error.message.includes('ENOTFOUND') ||
+        error.message.includes('ECONNRESET') ||
+        error.message.includes('ETIMEDOUT') ||
+        error.message.includes('EPIPE') ||
+        error.message.includes('Socket closed');
+      
+      if (isConnectionError) {
         log.warn('Redis command failed due to connection issue, attempting reconnect', {
           command,
           error: error.message
