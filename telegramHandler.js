@@ -9,6 +9,7 @@ const { registerCombineHandlers, hasSession: hasCombineSession, addFileToSession
 const { abortCombineBatch, hasCombineBatch, getActiveCombineBatch } = require('./telegram/combineBatchRunner');
 const { registerExportHandler } = require('./telegram/exportHandler');
 const { registerConfigHandler } = require('./telegram/configHandler');
+const { registerStatusHandler } = require('./telegram/statusHandler');
 const { forwardValidToChannel, handleCredentialStatusChange } = require('./telegram/channelForwarder');
 const { getRedisClient, initProcessedStore } = require('./automation/batch/processedStore');
 const { getConfigService } = require('./shared/config/configService');
@@ -449,6 +450,11 @@ function initializeTelegramHandler(botToken, options = {}) {
     registerConfigHandler(bot, getRedisClient);
   } else {
     log.info('Config handler not registered (config service not initialized)');
+  }
+
+  // Register /status when running as coordinator (distributed mode)
+  if (options.compatibility?.coordinator) {
+    registerStatusHandler(bot, options.compatibility.coordinator);
   }
 
   // Handle .chk command

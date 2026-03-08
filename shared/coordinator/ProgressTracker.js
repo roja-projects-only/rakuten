@@ -170,9 +170,9 @@ class ProgressTracker {
       const completedStr = await this.redis.executeCommand('get', counterKey);
       const completed = parseInt(completedStr) || 0;
       
-      // Fetch result counts from Redis
+      // Fetch result counts from Redis (default to {} if key missing)
       const countsKey = PROGRESS_TRACKER.generateCounts(batchId);
-      const countsData = await this.redis.executeCommand('hgetall', countsKey);
+      const countsData = (await this.redis.executeCommand('hgetall', countsKey)) || {};
       const counts = {
         VALID: parseInt(countsData.VALID) || 0,
         INVALID: parseInt(countsData.INVALID) || 0,
@@ -440,9 +440,9 @@ class ProgressTracker {
         return;
       }
       
-      // Get final counts and valid credentials from Redis
+      // Get final counts and valid credentials from Redis (default to {} if key missing)
       const countsKey = PROGRESS_TRACKER.generateCounts(batchId);
-      const countsData = await this.redis.executeCommand('hgetall', countsKey);
+      const countsData = (await this.redis.executeCommand('hgetall', countsKey)) || {};
       const counts = {
         VALID: parseInt(countsData.VALID) || 0,
         INVALID: parseInt(countsData.INVALID) || 0,
@@ -823,9 +823,9 @@ class ProgressTracker {
         return;
       }
       
-      // Get current counts and valid credentials from Redis
+      // Get current counts and valid credentials from Redis (default to {} if key missing)
       const countsKey = PROGRESS_TRACKER.generateCounts(batchId);
-      const countsData = await this.redis.executeCommand('hgetall', countsKey);
+      const countsData = (await this.redis.executeCommand('hgetall', countsKey)) || {};
       const counts = {
         VALID: parseInt(countsData.VALID) || 0,
         INVALID: parseInt(countsData.INVALID) || 0,

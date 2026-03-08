@@ -157,6 +157,7 @@ class Coordinator {
       }
       
       // Stop components
+      this.progressTracker.stopProgressPolling();
       await this.channelForwarder.stop();
       
       // Stop metrics collection

@@ -571,8 +571,40 @@ function registerCombineHandlers(bot, options, helpers) {
     }
   });
 
-  // Handle abort for combine batch
-  bot.action(/combine_abort_(.+)/, async (ctx) => {
+  // Abort distributed combine batch (coordinator mode) — must be registered before generic combine_abort_
+  bot.action(/^combine_abort_dist_(.+)$/, async (ctx) => {
+    await ctx.answerCbQuery('Aborting...');
+    const batchId = ctx.match[1];
+    const coordinator = compatibility?.coordinator;
+
+    if (!coordinator) {
+      await ctx.reply(escapeV2('⚠️ Coordinator not available to abort batch.'), {
+        parse_mode: 'MarkdownV2',
+      });
+      return;
+    }
+
+    try {
+      await coordinator.cancelBatch(batchId);
+      await coordinator.progressTracker.abortBatch(batchId);
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        ctx.update.callback_query.message.message_id,
+        undefined,
+        escapeV2(`⏹ Batch ${batchId} stop requested.`),
+        { parse_mode: 'MarkdownV2' }
+      );
+      log.info(`[combine] distributed abort requested batchId=${batchId}`);
+    } catch (err) {
+      log.warn(`[combine] failed to abort distributed batch ${batchId}: ${err.message}`);
+      await ctx.reply(escapeV2(`⚠️ Failed to abort batch: ${err.message}`), {
+        parse_mode: 'MarkdownV2',
+      });
+    }
+  });
+
+  // Handle abort for combine batch (single-node; callback_data is combine_abort_<chatId>)
+  bot.action(/^combine_abort_(\d+)$/, async (ctx) => {
     await ctx.answerCbQuery('Aborting...');
     const chatId = parseInt(ctx.match[1], 10);
     
@@ -601,38 +633,6 @@ function registerCombineHandlers(bot, options, helpers) {
       }
     } else {
       await ctx.reply(escapeV2('⚠️ No active combine batch to abort.'), {
-        parse_mode: 'MarkdownV2',
-      });
-    }
-  });
-
-  // Abort distributed combine batch (coordinator mode)
-  bot.action(/combine_abort_dist_(.+)/, async (ctx) => {
-    await ctx.answerCbQuery('Aborting...');
-    const batchId = ctx.match[1];
-    const coordinator = compatibility?.coordinator;
-
-    if (!coordinator) {
-      await ctx.reply(escapeV2('⚠️ Coordinator not available to abort batch.'), {
-        parse_mode: 'MarkdownV2',
-      });
-      return;
-    }
-
-    try {
-      await coordinator.cancelBatch(batchId);
-      await coordinator.progressTracker.abortBatch(batchId);
-      await ctx.telegram.editMessageText(
-        ctx.chat.id,
-        ctx.update.callback_query.message.message_id,
-        undefined,
-        escapeV2(`⏹ Batch ${batchId} stop requested.`),
-        { parse_mode: 'MarkdownV2' }
-      );
-      log.info(`[combine] distributed abort requested batchId=${batchId}`);
-    } catch (err) {
-      log.warn(`[combine] failed to abort distributed batch ${batchId}: ${err.message}`);
-      await ctx.reply(escapeV2(`⚠️ Failed to abort batch: ${err.message}`), {
         parse_mode: 'MarkdownV2',
       });
     }
