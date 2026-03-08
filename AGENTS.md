@@ -15,10 +15,11 @@ Commit locally after each task (no push unless asked). Do not generate extra doc
 - App bootstrap: `main.js`
 - Telegram bot: `telegramHandler.js`
 - HTTP checker: `httpChecker.js`
-- Batch UX: `telegram/batchHandlers.js`
+- Batch UX: `telegram/batchHandlers.js` → `telegram/batch/index.js`, `telegram/batch/documentHandler.js`
 - Combine UX: `telegram/combineHandler.js`, `telegram/combineBatchRunner.js`
 - Channel forwarding: `telegram/channelForwarder.js` (single) and `shared/coordinator/ChannelForwarder.js` (distributed)
 - Progress tracking: `shared/coordinator/ProgressTracker.js`
+- Config/export: `telegram/configHandler.js`, `telegram/exportHandler.js`; `/status`: `telegram/statusHandler.js` (wire with coordinator when distributed)
 
 ## Critical Patterns
 - For long work in Telegram callbacks, wrap with `setTimeout(() => { ... }, 0)` to avoid Telegraf timeouts.
@@ -30,6 +31,9 @@ Commit locally after each task (no push unless asked). Do not generate extra doc
 - `.chk user:pass` — single check (auto capture on VALID).
 - `/stop` — abort active batch/combine; in coordinator mode cancels via progress tracker.
 - `/combine` → upload files → `/done` → choose type → confirm.
+- `/config` — view/set centralized config (when config service initialized).
+- Export VALID creds via export handler (Telegram).
+- `/status` — system health (when `registerStatusHandler(bot, coordinator)` is wired in coordinator mode).
 
 ## Deployment Notes
 - Required env: `TELEGRAM_BOT_TOKEN`, `TARGET_LOGIN_URL`; add `REDIS_URL` for distributed.

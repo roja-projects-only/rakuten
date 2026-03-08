@@ -117,6 +117,13 @@ Checks one credential and auto-captures account data if valid.
 ```
 Aborts the currently running batch process.
 
+### Combine
+`/combine` → upload files → `/done` → choose type → confirm.
+
+### Config & Status
+- `/config` — view or set centralized config (when Redis/config service is available).
+- `/status` — system health and workers (when running as coordinator with status handler wired).
+
 ### URL Batch
 ```
 .ulp https://example.com/credentials.txt
@@ -135,14 +142,21 @@ Process credentials from a remote URL.
 ## 🏗️ Architecture
 
 ```
-main.js                     # Entry point, environment setup
+main.js                     # Entry point, env validation, config service, shutdown
 httpChecker.js              # Core credential checker
 telegramHandler.js          # Telegram bot commands
 ├── telegram/
-│   ├── messages.js         # Message formatters (MarkdownV2)
-│   ├── batchHandlers.js    # File/URL batch processing
+│   ├── messages/           # MarkdownV2 helpers + message builders (static, check, capture, batch)
+│   ├── batchHandlers.js    # Facade → batch/ (file/URL batch)
+│   ├── batch/              # documentHandler, batchExecutor, handlers/ (hotmail, ulp, jp, all)
+│   ├── combineHandler.js   # /combine → /done flow
+│   ├── combineBatchRunner.js
 │   ├── channelForwarder.js # Forward VALID creds to channel
-│   └── channelForwardStore.js # Dedupe store for forwarding
+│   ├── channelForwardStore.js # Dedupe store for forwarding
+│   ├── configHandler.js    # /config (centralized config)
+│   ├── exportHandler.js    # Export VALID from Redis
+│   ├── statusHandler.js    # /status (system health)
+│   └── messageTracker.js   # Forwarded message updates
 └── automation/
     ├── http/
     │   ├── httpFlow.js     # Login flow (navigate → email → password)
@@ -152,12 +166,14 @@ telegramHandler.js          # Telegram bot commands
     │   ├── httpDataCapture.js # Points/Cash/Rank API capture
     │   └── fingerprinting/
     │       ├── challengeGenerator.js  # cres POW algorithm
+    │       ├── powServiceClient.js    # Optional POW service client
     │       ├── ratGenerator.js        # RAT fingerprint data
     │       └── bioGenerator.js        # Behavioral biometrics
     └── batch/
+        ├── parse.js        # File parsing, type filters
         ├── hotmail.js      # HOTMAIL domain filter
         ├── ulp.js          # Rakuten domain filter
-        └── processedStore.js # Dedup cache (7-day TTL)
+        └── processedStore.js # Dedup cache (30-day TTL)
 ```
 
 ## 🔐 cres Algorithm
@@ -212,7 +228,7 @@ npm start
 
 ## 🛡️ Rate Limiting
 
-- Processed credentials are cached for 7 days (configurable via `PROCESSED_TTL_MS`)
+- Processed credentials are cached for 30 days (configurable via `PROCESSED_TTL_MS`)
 - Batch progress updates throttled to every 5 seconds
 - Respect Rakuten's rate limits with appropriate delays
 
@@ -228,6 +244,11 @@ npm start
 5. Deploy — Railway auto-detects Node.js and builds native dependencies
 
 Config file: `railway.json`
+
+## 📚 Developer docs
+
+- [AGENTS.md](AGENTS.md) — Agent playbook (quick start, entry points, patterns, commands).
+- [AI_CONTEXT.md](AI_CONTEXT.md) — Architecture, data flows, storage, and how-tos.
 
 ## 📄 License
 
