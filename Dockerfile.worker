@@ -27,21 +27,18 @@ RUN addgroup -g 1001 -S nodejs && \
 WORKDIR /app
 
 # Copy dependencies from builder (includes compiled native modules)
-COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder --chown=worker:nodejs /app/node_modules ./node_modules
 
 # Copy application files (exclude tests and development files)
-COPY worker.js ./
-COPY httpChecker.js ./
-COPY logger.js ./
-COPY package*.json ./
+COPY --chown=worker:nodejs worker.js ./
+COPY --chown=worker:nodejs httpChecker.js ./
+COPY --chown=worker:nodejs logger.js ./
+COPY --chown=worker:nodejs package*.json ./
 
 # Copy shared modules
-COPY shared/ ./shared/
-COPY automation/ ./automation/
-COPY utils/ ./utils/
-
-# Set ownership to app user
-RUN chown -R worker:nodejs /app
+COPY --chown=worker:nodejs shared/ ./shared/
+COPY --chown=worker:nodejs automation/ ./automation/
+COPY --chown=worker:nodejs utils/ ./utils/
 
 # Switch to non-root user
 USER worker

@@ -31,10 +31,7 @@ COPY package*.json ./
 # Install all dependencies (including dev dependencies for building)
 RUN npm install --include=dev
 
-# Copy source code
-COPY . .
-
-# Remove dev dependencies and clean up
+# Remove dev dependencies (no source copy needed — production stage copies files directly)
 RUN npm prune --production && \
     npm cache clean --force
 

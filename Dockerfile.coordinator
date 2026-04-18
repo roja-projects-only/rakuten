@@ -21,26 +21,23 @@ RUN addgroup -g 1001 -S nodejs && \
 WORKDIR /app
 
 # Copy production dependencies from builder
-COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder --chown=coordinator:nodejs /app/node_modules ./node_modules
 
 # Copy application files (exclude tests and development files)
-COPY main.js ./
-COPY telegramHandler.js ./
-COPY httpChecker.js ./
-COPY logger.js ./
-COPY package*.json ./
+COPY --chown=coordinator:nodejs main.js ./
+COPY --chown=coordinator:nodejs telegramHandler.js ./
+COPY --chown=coordinator:nodejs httpChecker.js ./
+COPY --chown=coordinator:nodejs logger.js ./
+COPY --chown=coordinator:nodejs package*.json ./
 
 # Copy shared modules
-COPY shared/ ./shared/
-COPY telegram/ ./telegram/
-COPY automation/ ./automation/
-COPY utils/ ./utils/
+COPY --chown=coordinator:nodejs shared/ ./shared/
+COPY --chown=coordinator:nodejs telegram/ ./telegram/
+COPY --chown=coordinator:nodejs automation/ ./automation/
+COPY --chown=coordinator:nodejs utils/ ./utils/
 
 # Copy deployment scripts
-COPY deployment/ ./deployment/
-
-# Set ownership to app user
-RUN chown -R coordinator:nodejs /app
+COPY --chown=coordinator:nodejs deployment/ ./deployment/
 
 # Switch to non-root user
 USER coordinator
