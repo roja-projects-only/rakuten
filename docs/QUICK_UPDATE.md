@@ -25,17 +25,17 @@ nano .env.pow-service
 # Make executable (first time only)
 chmod +x scripts/deploy/quick-update.sh
 
-# Update coordinator
+# Full rebuild (needed when package.json changes)
 cd rakuten && ./scripts/deploy/quick-update.sh coordinator
-
-# Update worker
 cd rakuten && ./scripts/deploy/quick-update.sh worker
-
-# Update pow-service
 cd rakuten && ./scripts/deploy/quick-update.sh pow
+cd rakuten && ./scripts/deploy/quick-update.sh all
 
-# Update all services
-./scripts/deploy/quick-update.sh all
+# Fast update — JS-only changes (~5 seconds, skips docker build)
+cd rakuten && ./scripts/deploy/quick-update.sh coordinator --fast
+cd rakuten && ./scripts/deploy/quick-update.sh worker --fast
+cd rakuten && ./scripts/deploy/quick-update.sh pow --fast
+cd rakuten && ./scripts/deploy/quick-update.sh all --fast
 ```
 
 ### Node.js Script (Alternative)
@@ -51,12 +51,18 @@ node scripts/deploy/update-instance.js all
 
 ## What It Does
 
-1. ✅ `git pull` - Gets latest code
-2. ✋ `docker stop` - Stops running container
-3. 🗑️ `docker rm` - Removes old container
-4. 🔨 `docker build` - Builds new image
-5. ▶️ `docker run` - Starts container with `--env-file`
-6. 📋 `docker logs -f` - Shows logs (Ctrl+C to exit)
+**Full rebuild (default):**
+1. `git pull` — gets latest code
+2. `docker stop` — stops running container
+3. `docker rm` — removes old container
+4. `docker build` — builds new image
+5. `docker run` — starts container with `--env-file`
+6. `docker logs -f` — shows logs (Ctrl+C to exit)
+
+**Fast mode (`--fast`):**
+1. `git pull` — gets latest code
+2. `docker cp` — copies changed JS files into running container
+3. `docker restart` — restarts the container (~5 seconds total)
 
 ---
 
@@ -65,17 +71,16 @@ node scripts/deploy/update-instance.js all
 ### POW Service
 
 ```bash
-docker stop rakuten-pow
-docker rm rakuten-pow
-docker build -f Dockerfile.pow-service -t rakuten-pow .
+docker stop rakuten-pow-service
+docker rm rakuten-pow-service
+docker build -f Dockerfile.pow-service -t rakuten-pow-service .
 docker run -d \
-  --name rakuten-pow \
+  --name rakuten-pow-service \
   --restart unless-stopped \
-  -p 8080:8080 \
-  -p 9090:9090 \
+  -p 8080:3001 \
   --env-file .env.pow-service \
-  rakuten-pow
-docker logs -f rakuten-pow
+  rakuten-pow-service
+docker logs -f rakuten-pow-service
 ```
 
 ### Coordinator
@@ -127,7 +132,7 @@ docker ps --filter "name=rakuten"
 # View logs
 docker logs -f rakuten-coordinator
 docker logs -f rakuten-worker
-docker logs -f rakuten-pow
+docker logs -f rakuten-pow-service
 
 # Check container stats
 docker stats --filter "name=rakuten"

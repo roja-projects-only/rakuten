@@ -90,10 +90,10 @@ Standalone HTTP service for POW computation (already implemented in task 2).
 
 ### Example Configuration
 
-**For Railway deployment:**
+**For AWS deployment:**
 ```bash
 # .env
-POW_SERVICE_URL=http://pow-service.railway.app
+POW_SERVICE_URL=http://POW_PRIVATE_IP:8080
 ```
 
 **For local development:**
