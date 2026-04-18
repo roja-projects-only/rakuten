@@ -74,7 +74,23 @@ function parseProxy(proxy) {
       }
       return result;
     } catch (_) {
-      // Fall through to other formats
+      // URL parse failed — may be scheme://host:port:user:pass format
+      // Strip the scheme and try host:port:user:pass on the remainder
+      const withoutScheme = trimmed.replace(/^[a-zA-Z][a-zA-Z0-9+\-.]*:\/\//, '');
+      const schemeParts = withoutScheme.split(':');
+      if (schemeParts.length === 4) {
+        const port = parseInt(schemeParts[1], 10);
+        if (!isNaN(port)) {
+          return {
+            host: schemeParts[0],
+            port,
+            auth: {
+              username: schemeParts[2],
+              password: schemeParts[3],
+            },
+          };
+        }
+      }
     }
   }
   
