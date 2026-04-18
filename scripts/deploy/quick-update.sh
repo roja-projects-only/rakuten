@@ -29,6 +29,22 @@ RESET='\033[0m'
 
 # Service to update (default: coordinator)
 SERVICE="${1:-coordinator}"
+FAST_MODE=false
+
+# Parse flags
+for arg in "$@"; do
+  case $arg in
+    --fast|-f) FAST_MODE=true ;;
+  esac
+done
+
+# Re-parse positional service arg (skip flags)
+for arg in "$@"; do
+  case $arg in
+    --fast|-f) ;;
+    *) SERVICE="$arg" ; break ;;
+  esac
+done
 
 # Functions
 log_step() {
@@ -74,7 +90,7 @@ get_image() {
   case "$1" in
     coordinator) echo "rakuten-coordinator" ;;
     worker)      echo "rakuten-worker" ;;
-    pow-service) echo "rakuten-pow" ;;
+    pow-service) echo "rakuten-pow-service" ;;
   esac
 }
 
@@ -82,7 +98,7 @@ get_container() {
   case "$1" in
     coordinator) echo "rakuten-coordinator" ;;
     worker)      echo "rakuten-worker" ;;
-    pow-service) echo "rakuten-pow" ;;
+    pow-service) echo "rakuten-pow-service" ;;
   esac
 }
 
@@ -98,8 +114,57 @@ get_ports() {
   case "$1" in
     coordinator) echo "-p 9090:9090" ;;
     worker)      echo "" ;;
-    pow-service) echo "-p 8080:8080 -p 9090:9090" ;;
+    pow-service) echo "-p 8080:3001" ;;
   esac
+}
+
+# Files to hot-copy per service (for --fast mode)
+fast_update_service() {
+  local service=$1
+  local container=$(get_container "$service")
+
+  # Check container is running
+  if ! docker inspect "$container" &>/dev/null; then
+    log_error "Container $container is not running. Run a full update first."
+    return 1
+  fi
+
+  log_info "Fast update: copying changed files into $container..."
+
+  case "$service" in
+    coordinator)
+      docker cp main.js           "$container":/app/main.js
+      docker cp telegramHandler.js "$container":/app/telegramHandler.js
+      docker cp httpChecker.js     "$container":/app/httpChecker.js
+      docker cp logger.js          "$container":/app/logger.js
+      docker cp shared/            "$container":/app/shared
+      docker cp telegram/          "$container":/app/telegram
+      docker cp automation/        "$container":/app/automation
+      docker cp utils/             "$container":/app/utils
+      ;;
+    worker)
+      docker cp worker.js      "$container":/app/worker.js
+      docker cp httpChecker.js "$container":/app/httpChecker.js
+      docker cp logger.js      "$container":/app/logger.js
+      docker cp shared/        "$container":/app/shared
+      docker cp automation/    "$container":/app/automation
+      docker cp utils/         "$container":/app/utils
+      ;;
+    pow-service)
+      docker cp pow-service.js                       "$container":/app/pow-service.js
+      docker cp logger.js                            "$container":/app/logger.js
+      docker cp shared/                              "$container":/app/shared
+      docker cp automation/http/fingerprinting/      "$container":/app/automation/http/fingerprinting
+      ;;
+  esac
+
+  log_success "Files copied. Restarting $container..."
+  docker restart "$container"
+  log_success "$service fast-updated in seconds! 🚀"
+
+  echo ""
+  echo -e "${BOLD}📋 Logs for $container (Ctrl+C to exit):${RESET}"
+  docker logs --tail=30 -f "$container"
 }
 
 update_service() {
@@ -182,7 +247,7 @@ update_service() {
 }
 
 show_usage() {
-  echo "Usage: $0 [service]"
+  echo "Usage: $0 [service] [--fast]"
   echo ""
   echo "Services:"
   echo "  coordinator  - Telegram bot and job orchestration"
@@ -190,11 +255,17 @@ show_usage() {
   echo "  pow-service  - Proof-of-work service (alias: pow)"
   echo "  all          - Update all services (no log follow)"
   echo ""
+  echo "Flags:"
+  echo "  --fast / -f  Skip docker build. Copy changed JS files into the running"
+  echo "               container and restart. ~5 seconds vs ~3 minutes."
+  echo "               Only use when package.json has NOT changed."
+  echo ""
   echo "Examples:"
-  echo "  $0 coordinator"
-  echo "  $0 worker"
-  echo "  $0 pow"
-  echo "  $0 all"
+  echo "  $0 coordinator          # full rebuild"
+  echo "  $0 coordinator --fast   # hot update (JS changes only)"
+  echo "  $0 worker --fast"
+  echo "  $0 pow --fast"
+  echo "  $0 all --fast"
   echo ""
   echo "Prerequisites:"
   echo "  - .env.coordinator"
@@ -292,8 +363,21 @@ main() {
     log_error "Git pull failed"
     exit 1
   fi
-  
-  # Update
+
+  # Fast mode: docker cp + restart (no rebuild)
+  if [ "$FAST_MODE" = true ]; then
+    if [ "$SERVICE" = "all" ]; then
+      log_info "Fast-updating all services..."
+      for svc in pow-service coordinator worker; do
+        fast_update_service "$svc" || true
+      done
+    else
+      fast_update_service "$SERVICE"
+    fi
+    exit 0
+  fi
+
+  # Full rebuild
   if [ "$SERVICE" = "all" ]; then
     update_all
   else
