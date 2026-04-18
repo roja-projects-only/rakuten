@@ -5,30 +5,49 @@ Use this as the deep reference for the current workspace. For quick rules, see [
 ## 1) Architecture Map
 ```
 main.js                           # Bootstrap, env validation, config service, shutdown
-telegramHandler.js                # Telegram bot setup, commands, callbacks
+telegramHandler.js                # Telegram bot setup, commands (/start, /help, /stop, .chk, .proxy), callbacks
+worker.js                         # Worker entry point (distributed mode)
+pow-service.js                    # Standalone POW HTTP service (port 3001)
+httpChecker.js                    # HTTP login/check entry
+logger.js                         # Application logger
+
 telegram/messages/                # MarkdownV2 helpers (helpers.js) + message builders (static, check, capture, batch)
 telegram/batchHandlers.js         # Facade → telegram/batch/ (regular batch UX)
 telegram/batch/index.js           # registerBatchHandlers, document + type handlers
 telegram/batch/documentHandler.js # Document upload, inline keyboard (HOTMAIL/ULP/JP/ALL)
-telegram/batch/handlers/          # common, hotmail, ulp, jp, all
+telegram/batch/batchExecutor.js   # Batch execution logic with progress/retries
+telegram/batch/batchState.js      # Active/pending batch state management
+telegram/batch/circuitBreaker.js  # Error rate monitoring, auto-pause at 60% threshold
+telegram/batch/filterUtils.js     # Credential dedup filtering
+telegram/batch/handlers/          # common (confirm/cancel/abort), hotmail, ulp (.ulp <url>), jp, all
 telegram/combineHandler.js        # Combine mode UX (/combine → /done)
 telegram/combineBatchRunner.js    # Combine batch execution (setTimeout wrapper)
 telegram/channelForwarder.js      # Single-node channel forward dedupe
 telegram/channelForwardStore.js   # Forward dedupe (Redis/JSONL), shared by single + distributed
 telegram/configHandler.js         # Centralized config via Telegram (/config)
-telegram/exportHandler.js         # Export VALID credentials from Redis
+telegram/exportHandler.js         # Export VALID credentials from Redis (/export)
 telegram/statusHandler.js         # /status command (system health; pass coordinator when distributed)
 telegram/messageTracker.js        # Forwarded message tracking for updates
+
 shared/coordinator/               # Coordinator, JobQueueManager, ProxyPoolManager, ProgressTracker,
                                  # ChannelForwarder, MetricsManager, MetricsServer
 shared/worker/WorkerNode.js       # Worker execution loop
-shared/config/configService.js    # Centralized config (Redis); env fallback
-shared/config/environment.js      # Mode detection, validateEnvironment
-shared/compatibility/             # Single vs distributed, setTelegram, processBatchLegacy
-httpChecker.js                    # HTTP login/check entry
-automation/http/*                 # httpFlow, httpClient, sessionManager, htmlAnalyzer, capture/, fingerprinting/
-automation/batch/processedStore.js# Processed cache (Redis/JSONL), 30-day TTL
-automation/batch/parse.js         # Batch file parsing, type filters
+shared/config/configService.js    # Centralized config (Redis pub/sub); env fallback
+shared/config/configSchema.js     # Schema: 15 hot-reloadable variables with type/range validation
+shared/config/environment.js      # Mode detection (COORDINATOR_MODE / POW_SERVICE_MODE), validateEnvironment
+shared/compatibility/             # GracefulDegradation.js, SingleNodeMode.js — fallback when Redis unavailable
+shared/redis/                     # client.js (Redis connection), keys.js (key prefixes)
+shared/logger/structured.js       # Structured JSON logger
+
+automation/http/                   # httpFlow, httpClient (proxy parsing), sessionManager, htmlAnalyzer
+automation/http/capture/           # apiCapture, htmlCapture, orderHistory, profileData, ssoFormHandler
+automation/http/fingerprinting/    # challengeGenerator, bioGenerator, ratGenerator,
+                                  # powServiceClient, powWorker, powWorkerPool, powCache
+automation/http/payloads/          # authorizeRequest, bioPayload, ratPayload
+automation/batch/processedStore.js # Processed cache (Redis/JSONL), 30-day TTL
+automation/batch/parse.js          # Batch file parsing, type filters (hotmail/ulp/jp/all)
+
+utils/                             # index.js, mapWithTtl.js, retryWithBackoff.js
 ```
 
 ## 2) Modes
@@ -71,8 +90,18 @@ automation/batch/parse.js         # Batch file parsing, type filters
 - Capture requirements for forwarding: latest order present and at least one card (`capture.profile.cards.length > 0`).
 
 ## 7) Environment Cheatsheet
-Required: `TELEGRAM_BOT_TOKEN`, `TARGET_LOGIN_URL`
-Common: `REDIS_URL`, `PROXY_SERVER`, `BATCH_CONCURRENCY`, `BATCH_DELAY_MS`, `BATCH_MAX_RETRIES`, `BATCH_HUMAN_DELAY_MS`, `FORWARD_CHANNEL_ID`, `LOG_LEVEL`, `TIMEOUT_MS`
+
+**Required**: `TELEGRAM_BOT_TOKEN`, `TARGET_LOGIN_URL`
+
+**Common**: `REDIS_URL`, `PROXY_SERVER`, `PROXY_POOL`, `BATCH_CONCURRENCY`, `BATCH_DELAY_MS`, `BATCH_MAX_RETRIES`, `BATCH_HUMAN_DELAY_MS`, `FORWARD_CHANNEL_ID`, `ALLOWED_USER_IDS`, `LOG_LEVEL`, `TIMEOUT_MS`, `PROCESSED_TTL_MS`
+
+**Coordinator**: `COORDINATOR_MODE=true`, `METRICS_PORT` (9090)
+
+**Worker**: `WORKER_ID` (auto), `WORKER_CONCURRENCY` (3), `WORKER_TASK_TIMEOUT` (120000), `WORKER_HEARTBEAT_INTERVAL` (10000), `WORKER_QUEUE_TIMEOUT` (30000), `POW_SERVICE_URL`
+
+**POW Service**: `POW_SERVICE_MODE=true`, `PORT` (3001), `POW_NUM_WORKERS` (auto = CPU-1), `POW_TASK_TIMEOUT` (30000)
+
+See `docs/ENVIRONMENT_VARIABLES.md` for the full reference.
 
 ## 8) Reliability & Shutdown
 - Graceful shutdown waits (up to 5m) for active regular + combine batches; flushes write buffer; closes Redis; stops bot.
