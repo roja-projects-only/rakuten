@@ -79,6 +79,35 @@ async function completeSessionAlignment(session, outcome, timeoutMs) {
  * @param {string} [options.proxy] - Proxy URL
  * @param {Function} [options.onProgress] - Progress callback
  * @param {boolean} [options.deferCloseOnValid=false] - Keep session open if valid
+const MAX_CHALLENGE_RETRIES = 2;
+
+/**
+ * Checks if an email step result indicates a challenge token rejection.
+ * This happens when /util/gc doesn't return a token and the generated
+ * fallback is rejected with VALIDATION_ERROR on challenge_token.
+ */
+function isChallengeTokenError(emailResult) {
+  if (!emailResult || emailResult.status !== 400) return false;
+  const data = emailResult.data;
+  if (!data) return false;
+  if (data.errorCode === 'VALIDATION_ERROR') {
+    const errors = data.errors || [];
+    return errors.some(e => e.field === 'challenge_token' || e.field === 'challenge');
+  }
+  return false;
+}
+
+/**
+ * Checks Rakuten credentials using HTTP requests.
+ * 
+ * @param {string} email - Email/username
+ * @param {string} password - Password
+ * @param {Object} [options] - Check options
+ * @param {string} [options.targetUrl] - Target login URL
+ * @param {number} [options.timeoutMs=60000] - Timeout in milliseconds
+ * @param {string} [options.proxy] - Proxy URL
+ * @param {Function} [options.onProgress] - Progress callback
+ * @param {boolean} [options.deferCloseOnValid=false] - Keep session open if valid
  * @returns {Promise<Object>} Result object with status, message, session
  */
 async function checkCredentials(email, password, options = {}) {
@@ -104,89 +133,104 @@ async function checkCredentials(email, password, options = {}) {
     };
   }
 
-  let session = null;
-  let preserveSession = false;
+  let lastResult = null;
 
-  try {
-    log.debug('Starting credential check');
-    onProgress && (await onProgress('launch'));
-    
-    // Create HTTP session
-    session = createSession({
-      proxy,
-      timeout: timeoutMs,
-      batchMode,
-    });
+  for (let attempt = 0; attempt <= MAX_CHALLENGE_RETRIES; attempt++) {
+    let session = null;
+    let preserveSession = false;
 
-    onProgress && (await onProgress('navigate'));
-    const navigationResult = await navigateToLogin(session, targetUrl, timeoutMs);
-
-    onProgress && (await onProgress('email'));
-    const emailResult = await submitEmailStep(
-      session,
-      email,
-      navigationResult,
-      timeoutMs
-    );
-
-    onProgress && (await onProgress('password'));
-    const passwordResult = await submitPasswordStep(
-      session,
-      password,
-      emailResult,
-      email,
-      timeoutMs
-    );
-
-    onProgress && (await onProgress('analyze'));
-    const outcome = detectOutcome(passwordResult, passwordResult.finalUrl);
-
-    // Complete session alignment if needed (establishes cookies on www.rakuten.co.jp)
-    if (outcome.status === 'VALID' && outcome.needsSessionAlign) {
-      await completeSessionAlignment(session, outcome, timeoutMs);
-    }
-
-    // Fetch exit IP for VALID credentials if proxy is configured
-    // IMPORTANT: Use proxiedClient to get the actual proxy exit IP (same IP used for password submission)
-    if (outcome.status === 'VALID' && proxy) {
-      try {
-        log.info('[ip-detect] Starting IP detection via proxy');
-        onProgress && (await onProgress('ip'));
-        // Must use proxiedClient here - directClient would report server's own IP, not proxy exit IP
-        const ipClient = session.proxiedClient || session.client;
-        const ipInfo = await fetchIpInfo(ipClient, timeoutMs);
-        if (ipInfo.ip) {
-          outcome.ipAddress = ipInfo.ip;
-          log.info(`[ip-detect] Proxy exit IP: ${ipInfo.ip}`);
-        } else {
-          log.warn(`[ip-detect] Failed to fetch IP: ${ipInfo.error}`);
-        }
-      } catch (ipError) {
-        log.warn(`[ip-detect] IP fetch error: ${ipError.message}`);
-        // Don't fail the credential check if IP fetch fails
+    try {
+      if (attempt > 0) {
+        log.info(`[retry] Challenge token retry ${attempt}/${MAX_CHALLENGE_RETRIES}`);
       }
-    } else if (outcome.status === 'VALID' && !proxy) {
-      log.debug('[ip-detect] Skipped (no proxy configured)');
-    }
 
-    preserveSession = deferCloseOnValid && outcome.status === 'VALID';
-    
-    return {
-      ...outcome,
-      session: preserveSession ? session : undefined,
-    };
-  } catch (error) {
-    log.error('Credential check error:', error.message);
+      log.debug('Starting credential check');
+      onProgress && (await onProgress('launch'));
+      
+      // Create HTTP session
+      session = createSession({
+        proxy,
+        timeout: timeoutMs,
+        batchMode,
+      });
 
-    return {
-      status: 'ERROR',
-      message: error.message,
-    };
-  } finally {
-    if (!preserveSession && session) {
-      closeSession(session);
+      onProgress && (await onProgress('navigate'));
+      const navigationResult = await navigateToLogin(session, targetUrl, timeoutMs);
+
+      onProgress && (await onProgress('email'));
+      const emailResult = await submitEmailStep(
+        session,
+        email,
+        navigationResult,
+        timeoutMs
+      );
+
+      // Detect challenge token rejection — retry with a fresh session
+      if (isChallengeTokenError(emailResult) && attempt < MAX_CHALLENGE_RETRIES) {
+        log.warn(`[retry] Challenge token rejected (VALIDATION_ERROR), will retry with fresh session (${attempt + 1}/${MAX_CHALLENGE_RETRIES})`);
+        closeSession(session);
+        session = null;
+        continue;
+      }
+
+      onProgress && (await onProgress('password'));
+      const passwordResult = await submitPasswordStep(
+        session,
+        password,
+        emailResult,
+        email,
+        timeoutMs
+      );
+
+      onProgress && (await onProgress('analyze'));
+      const outcome = detectOutcome(passwordResult, passwordResult.finalUrl);
+
+      // Complete session alignment if needed (establishes cookies on www.rakuten.co.jp)
+      if (outcome.status === 'VALID' && outcome.needsSessionAlign) {
+        await completeSessionAlignment(session, outcome, timeoutMs);
+      }
+
+      // Fetch exit IP for VALID credentials if proxy is configured
+      // Use proxiedClient to get the actual proxy exit IP (same IP used for password submission)
+      if (outcome.status === 'VALID' && proxy) {
+        try {
+          log.info('[ip-detect] Starting IP detection via proxy');
+          onProgress && (await onProgress('ip'));
+          const ipClient = session.proxiedClient || session.client;
+          const ipInfo = await fetchIpInfo(ipClient, timeoutMs);
+          if (ipInfo.ip) {
+            outcome.ipAddress = ipInfo.ip;
+            log.info(`[ip-detect] Proxy exit IP: ${ipInfo.ip}`);
+          } else {
+            log.warn(`[ip-detect] Failed to fetch IP: ${ipInfo.error}`);
+          }
+        } catch (ipError) {
+          log.warn(`[ip-detect] IP fetch error: ${ipError.message}`);
+        }
+      } else if (outcome.status === 'VALID' && !proxy) {
+        log.debug('[ip-detect] Skipped (no proxy configured)');
+      }
+
+      preserveSession = deferCloseOnValid && outcome.status === 'VALID';
+      
+      return {
+        ...outcome,
+        session: preserveSession ? session : undefined,
+      };
+    } catch (error) {
+      log.error('Credential check error:', error.message);
+      lastResult = {
+        status: 'ERROR',
+        message: error.message,
+      };
+    } finally {
+      if (!preserveSession && session) {
+        closeSession(session);
+      }
     }
   }
+
+  return lastResult || { status: 'ERROR', message: 'Challenge token validation failed after retries' };
 }
 
 module.exports = { checkCredentials };
