@@ -79,6 +79,8 @@ async function completeSessionAlignment(session, outcome, timeoutMs) {
  * @param {string} [options.proxy] - Proxy URL
  * @param {Function} [options.onProgress] - Progress callback
  * @param {boolean} [options.deferCloseOnValid=false] - Keep session open if valid
+ */
+
 const MAX_CHALLENGE_RETRIES = 2;
 
 /**
