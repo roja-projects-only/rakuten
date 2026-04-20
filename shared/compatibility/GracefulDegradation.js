@@ -96,11 +96,10 @@ class GracefulDegradation {
     }
     
     try {
-      // Test POW service health endpoint
-      const fetch = require('node-fetch');
+      // Test POW service health endpoint using Node.js native fetch.
       const response = await fetch(`${powServiceUrl}/health`, {
-        timeout: 5000,
-        method: 'GET'
+        method: 'GET',
+        signal: AbortSignal.timeout(5000)
       });
       
       if (!response.ok) {

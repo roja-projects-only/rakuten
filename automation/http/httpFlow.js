@@ -34,6 +34,7 @@ const log = createLogger('http-flow');
 // #region agent log
 /** @param {Record<string, unknown>} data */
 function agentDebugLog(location, message, hypothesisId, data) {
+  const ingestUrl = process.env.AGENT_DEBUG_INGEST_URL;
   const payload = {
     sessionId: 'a0bffa',
     location,
@@ -44,12 +45,17 @@ function agentDebugLog(location, message, hypothesisId, data) {
   };
   try {
     fs.appendFileSync(path.join(process.cwd(), 'debug-a0bffa.log'), `${JSON.stringify(payload)}\n`);
-  } catch (_) {}
-  fetch('http://127.0.0.1:7882/ingest/c6d14903-38a4-4b72-9af8-586afb1d9a0b', {
+  } catch (_) {
+    // Debug log writes should never break credential checking flow.
+  }
+  if (!ingestUrl) return;
+  fetch(ingestUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'a0bffa' },
     body: JSON.stringify(payload),
-  }).catch(() => {});
+  }).catch(() => {
+    // Ingest is best-effort and optional.
+  });
 }
 // #endregion
 
