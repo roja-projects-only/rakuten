@@ -74,6 +74,64 @@ const LOGIN_INIT_PATH = '/v2/login';
 const LOGIN_START_PATH = '/v2/login/start';
 const LOGIN_COMPLETE_PATH = '/v2/login/complete';
 
+/** Max attempts for POST /util/gc (403/429 observed under concurrent worker load). */
+const UTIL_GC_MAX_ATTEMPTS = 4;
+
+function utilGcStatusRetryable(status) {
+  if (status === 403 || status === 429 || status === 408) return true;
+  return status >= 500 && status <= 599;
+}
+
+function sleepMs(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * POST /util/gc with retries when Rakuten returns throttling / edge errors without a token.
+ * @param {import('axios').AxiosInstance} client
+ */
+async function postUtilGcWithRetries(client, { gcUrl, gcPayload, timeoutMs, headers, logPrefix }) {
+  for (let attempt = 1; attempt <= UTIL_GC_MAX_ATTEMPTS; attempt++) {
+    try {
+      const gcResponse = await client.post(gcUrl, gcPayload, {
+        timeout: timeoutMs,
+        headers,
+      });
+      const hasToken = gcResponse.status === 200 && gcResponse.data?.token;
+      if (hasToken) {
+        if (attempt > 1) {
+          log.info(`[${logPrefix}] /util/gc succeeded on attempt ${attempt}/${UTIL_GC_MAX_ATTEMPTS}`);
+        }
+        return gcResponse;
+      }
+      const st = gcResponse.status;
+      if (utilGcStatusRetryable(st) && attempt < UTIL_GC_MAX_ATTEMPTS) {
+        const backoff = 300 * attempt + Math.floor(Math.random() * 400);
+        log.warn(`[${logPrefix}] /util/gc status=${st} (no token), retry ${attempt}/${UTIL_GC_MAX_ATTEMPTS} in ${backoff}ms`);
+        await sleepMs(backoff);
+        continue;
+      }
+      return gcResponse;
+    } catch (err) {
+      const st = err.response?.status;
+      const retryable =
+        attempt < UTIL_GC_MAX_ATTEMPTS &&
+        (!err.response ||
+          utilGcStatusRetryable(st) ||
+          err.code === 'ECONNRESET' ||
+          err.code === 'ECONNABORTED' ||
+          err.code === 'ETIMEDOUT');
+      if (retryable) {
+        const backoff = 400 * attempt + Math.floor(Math.random() * 500);
+        log.warn(`[${logPrefix}] /util/gc error (${err.message}) attempt ${attempt}/${UTIL_GC_MAX_ATTEMPTS}, retry in ${backoff}ms`);
+        await sleepMs(backoff);
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
 /**
  * Compute cres using POW service with enhanced error handling
  * @param {Object} mdata - Mdata from /util/gc response
@@ -233,18 +291,22 @@ async function submitEmailStep(session, email, context, timeoutMs) {
     });
     // #endregion
     
-    const gcResponse = await client.post(gcUrl, gcPayload, {
-      timeout: timeoutMs,
-      headers: {
-        'Accept': '*/*',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Content-Type': 'application/json',
-        'Origin': LOGIN_BASE,
-        'Referer': `${LOGIN_BASE}/`,
-        'Sec-Fetch-Dest': 'empty',
-        'Sec-Fetch-Mode': 'cors',
-        'Sec-Fetch-Site': 'same-origin',
-      },
+    const gcHeaders = {
+      'Accept': '*/*',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Content-Type': 'application/json',
+      'Origin': LOGIN_BASE,
+      'Referer': `${LOGIN_BASE}/`,
+      'Sec-Fetch-Dest': 'empty',
+      'Sec-Fetch-Mode': 'cors',
+      'Sec-Fetch-Site': 'same-origin',
+    };
+    const gcResponse = await postUtilGcWithRetries(client, {
+      gcUrl,
+      gcPayload,
+      timeoutMs,
+      headers: gcHeaders,
+      logPrefix: 'email-step',
     });
     
     log.debug(`[email-step] /util/gc response: ${gcResponse.status}`);
@@ -443,19 +505,22 @@ async function submitPasswordStep(session, password, emailStepResult, username, 
       rat: ratData,
     };
     
-    // Use proxy client for util/gc (consistent IP)
-    const gcResponse = await client.post(gcUrl, gcPayload, {
-      timeout: timeoutMs,
-      headers: {
-        'Accept': '*/*',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Content-Type': 'application/json',
-        'Origin': LOGIN_BASE,
-        'Referer': `${LOGIN_BASE}/`,
-        'Sec-Fetch-Dest': 'empty',
-        'Sec-Fetch-Mode': 'cors',
-        'Sec-Fetch-Site': 'same-origin',
-      },
+    const gcHeaders = {
+      'Accept': '*/*',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Content-Type': 'application/json',
+      'Origin': LOGIN_BASE,
+      'Referer': `${LOGIN_BASE}/`,
+      'Sec-Fetch-Dest': 'empty',
+      'Sec-Fetch-Mode': 'cors',
+      'Sec-Fetch-Site': 'same-origin',
+    };
+    const gcResponse = await postUtilGcWithRetries(client, {
+      gcUrl,
+      gcPayload,
+      timeoutMs,
+      headers: gcHeaders,
+      logPrefix: 'password-step',
     });
     
     log.debug(`[password-step] /util/gc response: ${gcResponse.status}`);
