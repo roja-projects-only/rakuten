@@ -350,8 +350,17 @@ async function submitEmailStep(session, email, context, timeoutMs) {
         })(),
       });
       // #endregion
-      log.warn('[email-step] /util/gc did not return a token, using generated token');
-      challengeToken = generateSessionToken('St.ott-v2');
+      log.warn(
+        `[email-step] /util/gc no usable token after retries (http=${gcResponse.status}) — session retry instead of synthetic token`
+      );
+      return {
+        status: 503,
+        error: true,
+        gcRetryExhausted: true,
+        correlationId,
+        startTime,
+        data: { errorCode: 'GC_TOKEN_UNAVAILABLE', gcHttpStatus: gcResponse.status },
+      };
     }
   } catch (err) {
     // #region agent log
@@ -364,8 +373,19 @@ async function submitEmailStep(session, email, context, timeoutMs) {
         : [],
     });
     // #endregion
-    log.warn('[email-step] /util/gc call failed, using generated token:', err.message);
-    challengeToken = generateSessionToken('St.ott-v2');
+    log.warn('[email-step] /util/gc failed after retries:', err.message);
+    return {
+      status: 503,
+      error: true,
+      gcRetryExhausted: true,
+      correlationId,
+      startTime,
+      data: {
+        errorCode: 'GC_TOKEN_UNAVAILABLE',
+        gcHttpStatus: err.response?.status ?? null,
+        cause: 'request_failed',
+      },
+    };
   }
   
   // Fallback to random cres if not computed from mdata
@@ -534,12 +554,26 @@ async function submitPasswordStep(session, password, emailStepResult, username, 
         cres = await computeCresWithService(gcResponse.data.mdata, 'password-step');
       }
     } else {
-      log.warn('[password-step] /util/gc did not return a token, using generated token');
-      challengeToken = generateSessionToken('St.ott-v2');
+      log.warn(
+        `[password-step] /util/gc no usable token after retries (http=${gcResponse.status}) — session retry instead of synthetic token`
+      );
+      return {
+        status: 503,
+        data: { errorCode: 'GC_TOKEN_UNAVAILABLE', gcHttpStatus: gcResponse.status },
+        gcRetryExhausted: true,
+      };
     }
   } catch (err) {
-    log.warn('[password-step] /util/gc call failed, using generated token:', err.message);
-    challengeToken = generateSessionToken('St.ott-v2');
+    log.warn('[password-step] /util/gc failed after retries:', err.message);
+    return {
+      status: 503,
+      data: {
+        errorCode: 'GC_TOKEN_UNAVAILABLE',
+        gcHttpStatus: err.response?.status ?? null,
+        cause: 'request_failed',
+      },
+      gcRetryExhausted: true,
+    };
   }
   
   if (!cres) {

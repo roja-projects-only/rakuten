@@ -99,6 +99,11 @@ function isChallengeTokenError(emailResult) {
   return false;
 }
 
+/** /util/gc exhausted client retries (e.g. 403) — retry whole session, do not use synthetic challenge token. */
+function isGcRetryExhausted(result) {
+  return !!(result && result.gcRetryExhausted);
+}
+
 /**
  * Checks Rakuten credentials using HTTP requests.
  * 
@@ -167,6 +172,23 @@ async function checkCredentials(email, password, options = {}) {
         timeoutMs
       );
 
+      if (isGcRetryExhausted(emailResult)) {
+        if (attempt < MAX_CHALLENGE_RETRIES) {
+          log.warn(
+            `[retry] Email step /util/gc unavailable after client retries, fresh session (${attempt + 1}/${MAX_CHALLENGE_RETRIES})`
+          );
+          closeSession(session);
+          session = null;
+          continue;
+        }
+        closeSession(session);
+        session = null;
+        return {
+          status: 'ERROR',
+          message: 'Login challenge endpoint unavailable (/util/gc) after session retries',
+        };
+      }
+
       // Detect challenge token rejection — retry with a fresh session
       if (isChallengeTokenError(emailResult) && attempt < MAX_CHALLENGE_RETRIES) {
         log.warn(`[retry] Challenge token rejected (VALIDATION_ERROR), will retry with fresh session (${attempt + 1}/${MAX_CHALLENGE_RETRIES})`);
@@ -183,6 +205,23 @@ async function checkCredentials(email, password, options = {}) {
         email,
         timeoutMs
       );
+
+      if (isGcRetryExhausted(passwordResult)) {
+        if (attempt < MAX_CHALLENGE_RETRIES) {
+          log.warn(
+            `[retry] Password step /util/gc unavailable after client retries, fresh session (${attempt + 1}/${MAX_CHALLENGE_RETRIES})`
+          );
+          closeSession(session);
+          session = null;
+          continue;
+        }
+        closeSession(session);
+        session = null;
+        return {
+          status: 'ERROR',
+          message: 'Login challenge endpoint unavailable (/util/gc) on password step after session retries',
+        };
+      }
 
       onProgress && (await onProgress('analyze'));
       const outcome = detectOutcome(passwordResult, passwordResult.finalUrl);
