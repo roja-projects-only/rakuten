@@ -1,18 +1,13 @@
 node_modules/
-.env
-.env.*
-*.log
-data/
-rakuten.pem
-rakuten2.pem
-rakuten.pub
-ssh-logs.bat
-test-credentials.txtles
+
+# Environment files (keep templates tracked)
 .env
 .env.local
 .env.*.local
-package-lock.json
-tools/
+.env.*
+!.env.example
+!config/.env.local
+!config/.env.coordinator
 
 # Logs
 logs/
@@ -20,8 +15,20 @@ logs/
 npm-debug.log*
 yarn-debug.log*
 
-# Screenshots and evidence
+# Runtime/output data
+data/
 screenshots/
+tmp/
+temp/
+*.tmp
+
+# Secrets and local key material
+*.pem
+*.pub
+ssh-logs.bat
+
+# Misc local files
+test-credentials.txt
 
 # IDE and editor
 .vscode/
@@ -33,12 +40,3 @@ screenshots/
 # OS
 .DS_Store
 Thumbs.db
-
-# Temporary files
-tmp/
-temp/
-*.tmp
-data/
-*.pem
-ssh-logs.bat
-*.pub
