@@ -16,6 +16,8 @@
  * =============================================================================
  */
 
+const fs = require('fs');
+const path = require('path');
 const { extractFormFields, isRedirect, getRedirectUrl } = require('./htmlAnalyzer');
 const { generateCorrelationId, generateFingerprint } = require('./fingerprinting/ratGenerator');
 const { humanDelay } = require('./fingerprinting/bioGenerator');
@@ -28,6 +30,28 @@ const { createLogger } = require('../../logger');
 const { buildAuthorizeRequest, generateFullRatData, generateRealBioData } = require('./payloads');
 
 const log = createLogger('http-flow');
+
+// #region agent log
+/** @param {Record<string, unknown>} data */
+function agentDebugLog(location, message, hypothesisId, data) {
+  const payload = {
+    sessionId: 'a0bffa',
+    location,
+    message,
+    hypothesisId,
+    data: { ...data, timestamp: Date.now() },
+    timestamp: Date.now(),
+  };
+  try {
+    fs.appendFileSync(path.join(process.cwd(), 'debug-a0bffa.log'), `${JSON.stringify(payload)}\n`);
+  } catch (_) {}
+  fetch('http://127.0.0.1:7882/ingest/c6d14903-38a4-4b72-9af8-586afb1d9a0b', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'a0bffa' },
+    body: JSON.stringify(payload),
+  }).catch(() => {});
+}
+// #endregion
 
 // Check POW service availability on module load
 let powServiceAvailable = false;
@@ -189,6 +213,7 @@ async function submitEmailStep(session, email, context, timeoutMs) {
   // Call /util/gc to get challenge token
   let challengeToken = null;
   let cres = null;
+  let gcTokenFromServer = false;
   
   try {
     log.debug('[email-step] Calling /util/gc to get challenge token');
@@ -198,6 +223,15 @@ async function submitEmailStep(session, email, context, timeoutMs) {
       lang: 'en-US',
       rat: ratData,
     };
+    // #region agent log
+    agentDebugLog('httpFlow.js:submitEmailStep', 'before util/gc', 'D', {
+      batchMode: !!session.batchMode,
+      hasProxiedClient: !!session.proxiedClient,
+      sessionId: session.id,
+      correlationPrefix: String(correlationId).slice(0, 8),
+      userIdLen: typeof email === 'string' ? email.length : 0,
+    });
+    // #endregion
     
     const gcResponse = await client.post(gcUrl, gcPayload, {
       timeout: timeoutMs,
@@ -214,9 +248,25 @@ async function submitEmailStep(session, email, context, timeoutMs) {
     });
     
     log.debug(`[email-step] /util/gc response: ${gcResponse.status}`);
+    const gcData = gcResponse.data;
+    const gcKeys = gcData && typeof gcData === 'object' ? Object.keys(gcData) : [];
+    const tokenShape = gcData && typeof gcData === 'object'
+      ? ['token', 'Token', 'challenge_token', 'challengeToken'].filter((k) => k in gcData)
+      : [];
+    // #region agent log
+    agentDebugLog('httpFlow.js:submitEmailStep', 'after util/gc', 'A', {
+      status: gcResponse.status,
+      hasTokenField: !!(gcData && typeof gcData === 'object' && 'token' in gcData && gcData.token),
+      gcKeys,
+      tokenShapeHints: tokenShape,
+      hasMdata: !!(gcData && gcData.mdata),
+      errorCode: gcData && gcData.errorCode,
+    });
+    // #endregion
     
     if (gcResponse.status === 200 && gcResponse.data?.token) {
       challengeToken = gcResponse.data.token;
+      gcTokenFromServer = true;
       log.debug(`[email-step] Got challenge token from /util/gc: ${challengeToken.substring(0, 50)}...`);
       
       // Compute cres from mdata using POW service client
@@ -224,10 +274,34 @@ async function submitEmailStep(session, email, context, timeoutMs) {
         cres = await computeCresWithService(gcResponse.data.mdata, 'email-step');
       }
     } else {
+      // #region agent log
+      agentDebugLog('httpFlow.js:submitEmailStep', 'util/gc no token branch', 'E', {
+        status: gcResponse.status,
+        gcKeys,
+        bodySnippet: (() => {
+          try {
+            const s = JSON.stringify(gcData);
+            return s.length > 600 ? `${s.slice(0, 600)}…` : s;
+          } catch (_) {
+            return 'unserializable';
+          }
+        })(),
+      });
+      // #endregion
       log.warn('[email-step] /util/gc did not return a token, using generated token');
       challengeToken = generateSessionToken('St.ott-v2');
     }
   } catch (err) {
+    // #region agent log
+    agentDebugLog('httpFlow.js:submitEmailStep', 'util/gc threw', 'B', {
+      errMessage: err.message,
+      errCode: err.code,
+      axStatus: err.response?.status,
+      axDataKeys: err.response?.data && typeof err.response.data === 'object'
+        ? Object.keys(err.response.data)
+        : [],
+    });
+    // #endregion
     log.warn('[email-step] /util/gc call failed, using generated token:', err.message);
     challengeToken = generateSessionToken('St.ott-v2');
   }
@@ -256,6 +330,13 @@ async function submitEmailStep(session, email, context, timeoutMs) {
     
     log.debug(`[email-step] cres=${cres} fingerprint=${fingerprint}`);
     log.debug(`[email-step] payload size=${JSON.stringify(payload).length} bytes`);
+    // #region agent log
+    agentDebugLog('httpFlow.js:submitEmailStep', 'before login/start', 'C', {
+      gcTokenFromServer,
+      hasCres: !!cres,
+      cresLen: typeof cres === 'string' ? cres.length : 0,
+    });
+    // #endregion
     
     const url = `${LOGIN_BASE}${LOGIN_START_PATH}`;
     
@@ -277,6 +358,15 @@ async function submitEmailStep(session, email, context, timeoutMs) {
     log.debug(`Email step: ${response.status}`);
     
     if (response.status === 400) {
+      // #region agent log
+      agentDebugLog('httpFlow.js:submitEmailStep', 'login/start 400', 'C', {
+        gcTokenFromServer,
+        errorCode: response.data?.errorCode,
+        errFields: Array.isArray(response.data?.errors)
+          ? response.data.errors.map((e) => e.field)
+          : [],
+      });
+      // #endregion
       log.warn(`[email-step] 400 Response: ${JSON.stringify(response.data)}`);
     }
     
