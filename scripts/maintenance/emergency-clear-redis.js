@@ -6,13 +6,15 @@
 
 const Redis = require('ioredis');
 
-const REDIS_URL = 'redis://default:AxyIJiltXdrbkgpvhoexVgNBIRzlrXpU@hopper.proxy.rlwy.net:36224';
+if (!process.env.REDIS_URL) {
+  throw new Error('REDIS_URL is required. Set process.env.REDIS_URL before running this script.');
+}
 
 async function emergencyClear() {
   console.log('🚨 Emergency Redis Queue Cleaner');
   console.log('Connecting to Redis...');
   
-  const redis = new Redis(REDIS_URL, {
+  const redis = new Redis(process.env.REDIS_URL, {
     maxRetriesPerRequest: 3,
     retryDelayOnFailover: 100,
     lazyConnect: true,
