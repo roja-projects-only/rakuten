@@ -1,0 +1,65 @@
+# Rakuten Manager - Instance Configuration
+# SSH keys relative to this config file or absolute path
+
+instances:
+  - name: worker-1
+    host: 52.197.138.132
+    user: ubuntu
+    key: ../../rakuten.pem
+    type: worker
+    container: rakuten-worker
+
+  - name: worker-2
+    host: 13.231.114.62
+    user: ubuntu
+    key: ../../rakuten.pem
+    type: worker
+    container: rakuten-worker
+
+  - name: worker-3
+    host: 3.26.12.153
+    user: ubuntu
+    key: ../../rakuten2.pem
+    type: worker
+    container: rakuten-worker
+
+  - name: worker-4
+    host: 3.106.209.122
+    user: ubuntu
+    key: ../../rakuten2.pem
+    type: worker
+    container: rakuten-worker
+
+  - name: worker-5
+    host: 3.25.210.203
+    user: ubuntu
+    key: ../../rakuten2.pem
+    type: worker
+    container: rakuten-worker
+
+  - name: worker-6
+    host: 3.27.167.122
+    user: ubuntu
+    key: ../../rakuten2.pem
+    type: worker
+    container: rakuten-worker
+
+  - name: pow-service
+    host: 35.77.110.215
+    user: ubuntu
+    key: ../../rakuten.pem
+    type: pow
+    container: rakuten-pow
+
+  - name: coordinator
+    host: 43.207.4.202
+    user: ubuntu
+    key: ../../rakuten.pem
+    type: coordinator
+    container: rakuten-coordinator
+
+# Default settings
+defaults:
+  workdir: /home/ubuntu/rakuten
+  connectTimeout: 10s
+  commandTimeout: 300s
