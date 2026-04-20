@@ -136,16 +136,18 @@ async function postUtilGcWithRetries(client, { gcUrl, gcPayload, timeoutMs, head
  * Compute cres using POW service with enhanced error handling
  * @param {Object} mdata - Mdata from /util/gc response
  * @param {string} step - Step name for logging (e.g., 'email-step', 'password-step')
- * @returns {Promise<string>} Computed cres value
+ * @param {{ forbidFakeCres?: boolean }} [options]
+ * @returns {Promise<string|null>} cres, or null when forbidFakeCres and POW cannot run (no random fallback)
  */
-async function computeCresWithService(mdata, step) {
+async function computeCresWithService(mdata, step, options = {}) {
+  const { forbidFakeCres = false } = options;
   try {
     const mdataObj = typeof mdata === 'string' ? JSON.parse(mdata) : mdata;
     const body = mdataObj?.body;
     
     if (!body || !body.mask || !body.key || body.seed === undefined) {
-      log.warn(`[${step}] Invalid mdata structure, using fallback cres`);
-      return generateChallengeToken({ type: 'cres' });
+      log.warn(`[${step}] Invalid mdata structure${forbidFakeCres ? ' — no fake cres' : ', using fallback cres'}`);
+      return forbidFakeCres ? null : generateChallengeToken({ type: 'cres' });
     }
     
     const cres = await powServiceClient.computeCres({
@@ -160,14 +162,14 @@ async function computeCresWithService(mdata, step) {
   } catch (powErr) {
     // Check if this is a service unavailability error
     if (powErr.code === 'ECONNREFUSED' || powErr.code === 'ENOTFOUND') {
-      log.warn(`[${step}] POW service unavailable - using local fallback (processing will be slower)`);
+      log.warn(`[${step}] POW service unavailable${forbidFakeCres ? ' — no fake cres' : ' - using local fallback (processing will be slower)'}`);
     } else if (powErr.message.includes('timeout')) {
-      log.warn(`[${step}] POW service timeout - using local fallback`);
+      log.warn(`[${step}] POW service timeout${forbidFakeCres ? ' — no fake cres' : ' - using local fallback'}`);
     } else {
-      log.warn(`[${step}] POW service error: ${powErr.message} - using local fallback`);
+      log.warn(`[${step}] POW service error: ${powErr.message}${forbidFakeCres ? ' — no fake cres' : ' - using local fallback'}`);
     }
     
-    return generateChallengeToken({ type: 'cres' });
+    return forbidFakeCres ? null : generateChallengeToken({ type: 'cres' });
   }
 }
 
@@ -331,9 +333,19 @@ async function submitEmailStep(session, email, context, timeoutMs) {
       gcTokenFromServer = true;
       log.debug(`[email-step] Got challenge token from /util/gc: ${challengeToken.substring(0, 50)}...`);
       
-      // Compute cres from mdata using POW service client
       if (gcResponse.data?.mdata) {
-        cres = await computeCresWithService(gcResponse.data.mdata, 'email-step');
+        cres = await computeCresWithService(gcResponse.data.mdata, 'email-step', { forbidFakeCres: true });
+      }
+      if (!cres) {
+        log.warn('[email-step] No cres from POW/mdata after real challenge token — session retry (no fake cres)');
+        return {
+          status: 503,
+          error: true,
+          gcRetryExhausted: true,
+          correlationId,
+          startTime,
+          data: { errorCode: 'GC_TOKEN_UNAVAILABLE', cause: 'no_cres' },
+        };
       }
     } else {
       // #region agent log
@@ -386,11 +398,6 @@ async function submitEmailStep(session, email, context, timeoutMs) {
         cause: 'request_failed',
       },
     };
-  }
-  
-  // Fallback to random cres if not computed from mdata
-  if (!cres) {
-    cres = generateChallengeToken({ type: 'cres' });
   }
   
   try {
@@ -549,9 +556,16 @@ async function submitPasswordStep(session, password, emailStepResult, username, 
       challengeToken = gcResponse.data.token;
       log.debug(`[password-step] Got challenge token from /util/gc: ${challengeToken.substring(0, 50)}...`);
       
-      // Compute cres from mdata using POW service client
       if (gcResponse.data?.mdata) {
-        cres = await computeCresWithService(gcResponse.data.mdata, 'password-step');
+        cres = await computeCresWithService(gcResponse.data.mdata, 'password-step', { forbidFakeCres: true });
+      }
+      if (!cres) {
+        log.warn('[password-step] No cres from POW/mdata after real challenge token — session retry (no fake cres)');
+        return {
+          status: 503,
+          data: { errorCode: 'GC_TOKEN_UNAVAILABLE', cause: 'no_cres' },
+          gcRetryExhausted: true,
+        };
       }
     } else {
       log.warn(
@@ -574,10 +588,6 @@ async function submitPasswordStep(session, password, emailStepResult, username, 
       },
       gcRetryExhausted: true,
     };
-  }
-  
-  if (!cres) {
-    cres = generateChallengeToken({ type: 'cres' });
   }
   
   try {
