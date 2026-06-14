@@ -28,6 +28,7 @@ const {
   WORKER_HEARTBEAT,
   WORKER_INFO,
   BATCH_CANCELLED,
+  MESSAGE_TRACKING,
   PUBSUB_CHANNELS,
   generateWorkerId 
 } = require('../shared/redis/keys');
@@ -943,7 +944,7 @@ class WorkerNode {
       
       // If credential was previously forwarded and is now INVALID/BLOCKED, publish update_event
       if (result.status === 'INVALID' || result.status === 'BLOCKED') {
-        const trackingCode = await this.redis.executeCommand('get', `msg:cred:${result.username}:${result.password}`);
+        const trackingCode = await this.redis.executeCommand('get', MESSAGE_TRACKING.generateReverse(result.username, result.password));
         if (trackingCode) {
           const updateEvent = {
             username: result.username,

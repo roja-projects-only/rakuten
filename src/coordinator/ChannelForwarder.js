@@ -18,6 +18,12 @@ const { reserveForwarded, releaseForwarded } = require('../telegram/channelForwa
 const { buildCheckAndCaptureResult } = require('../telegram/messages');
 const { escapeV2, codeV2, boldV2 } = require('../telegram/messages/helpers');
 const { validateCaptureForForwarding } = require('../shared/capture/validateCaptureForForwarding');
+const {
+  MESSAGE_TRACKING,
+  FORWARD_PENDING,
+  KEY_PATTERNS,
+  PUBSUB_CHANNELS,
+} = require('../shared/redis/keys');
 
 const log = createLogger('channel-forwarder');
 
@@ -50,7 +56,7 @@ class ChannelForwarder {
       await this.pubSubRedis.connect();
 
       // Subscribe to forward and update events
-      await this.pubSubRedis.executeCommand('subscribe', 'forward_events', 'update_events');
+      await this.pubSubRedis.executeCommand('subscribe', PUBSUB_CHANNELS.forwardEvents, PUBSUB_CHANNELS.updateEvents);
       
       // Set up message handlers
       const pubSubClient = this.pubSubRedis.getClient();
@@ -58,9 +64,9 @@ class ChannelForwarder {
         try {
           const event = JSON.parse(message);
           
-          if (channel === 'forward_events') {
+          if (channel === PUBSUB_CHANNELS.forwardEvents) {
             await this.handleForwardEvent(event);
-          } else if (channel === 'update_events') {
+          } else if (channel === PUBSUB_CHANNELS.updateEvents) {
             await this.handleUpdateEvent(event);
           }
         } catch (error) {
@@ -92,7 +98,7 @@ class ChannelForwarder {
 
     try {
       if (this.pubSubRedis) {
-        await this.pubSubRedis.executeCommand('unsubscribe', 'forward_events', 'update_events');
+        await this.pubSubRedis.executeCommand('unsubscribe', PUBSUB_CHANNELS.forwardEvents, PUBSUB_CHANNELS.updateEvents);
         await this.pubSubRedis.close();
         this.pubSubRedis = null;
       }
@@ -147,8 +153,8 @@ class ChannelForwarder {
     try {
       // Phase 1: SET forward:pending:{trackingCode} with event data (2-min TTL)
       await this.redis.executeCommand('setex', 
-        `forward:pending:${trackingCode}`, 
-        120, // 2 minutes
+        FORWARD_PENDING.generate(trackingCode), 
+        FORWARD_PENDING.ttl,
         JSON.stringify({
           ...event,
           trackingCode,
@@ -182,8 +188,8 @@ class ChannelForwarder {
       };
       
       await this.redis.executeCommand('setex',
-        `msg:${trackingCode}`,
-        30 * 24 * 60 * 60, // 30 days
+        MESSAGE_TRACKING.generate(trackingCode),
+        MESSAGE_TRACKING.ttl,
         JSON.stringify(messageRef)
       );
 
@@ -191,15 +197,15 @@ class ChannelForwarder {
 
       // Phase 4: Store reverse lookup: msg:cred:{username}:{password}
       await this.redis.executeCommand('setex',
-        `msg:cred:${username}:${password}`,
-        30 * 24 * 60 * 60, // 30 days
+        MESSAGE_TRACKING.generateReverse(username, password),
+        MESSAGE_TRACKING.ttl,
         trackingCode
       );
 
       log.debug('Two-phase commit Phase 4: Reverse lookup stored', { trackingCode });
 
       // Phase 5: DEL forward:pending:{trackingCode}
-      await this.redis.executeCommand('del', `forward:pending:${trackingCode}`);
+      await this.redis.executeCommand('del', FORWARD_PENDING.generate(trackingCode));
 
       log.info('Two-phase commit completed successfully', {
         username: username.substring(0, 5) + '***',
@@ -216,7 +222,7 @@ class ChannelForwarder {
       
       // Clean up pending state on error
       try {
-        await this.redis.executeCommand('del', `forward:pending:${trackingCode}`);
+        await this.redis.executeCommand('del', FORWARD_PENDING.generate(trackingCode));
         log.debug('Cleaned up pending state after error', { trackingCode });
       } catch (cleanupError) {
         log.warn('Failed to clean up pending state', { 
@@ -259,7 +265,7 @@ class ChannelForwarder {
 
     try {
       // Query reverse lookup: GET msg:cred:{username}:{password}
-      const trackingCode = event.trackingCode || await this.redis.executeCommand('get', `msg:cred:${username}:${password}`);
+      const trackingCode = event.trackingCode || await this.redis.executeCommand('get', MESSAGE_TRACKING.generateReverse(username, password));
       
       if (!trackingCode) {
         log.debug('No tracking code found for credential', {
@@ -270,7 +276,7 @@ class ChannelForwarder {
       }
 
       // Get message reference
-      const messageRefData = await this.redis.executeCommand('get', `msg:${trackingCode}`);
+      const messageRefData = await this.redis.executeCommand('get', MESSAGE_TRACKING.generate(trackingCode));
       
       if (!messageRefData) {
         log.warn('Tracking code found but no message reference', {
@@ -305,8 +311,8 @@ class ChannelForwarder {
         }
 
         // Clean up Redis references
-        await this.redis.executeCommand('del', `msg:${trackingCode}`);
-        await this.redis.executeCommand('del', `msg:cred:${username}:${password}`);
+        await this.redis.executeCommand('del', MESSAGE_TRACKING.generate(trackingCode));
+        await this.redis.executeCommand('del', MESSAGE_TRACKING.generateReverse(username, password));
 
         // Allow future forwards if the credential becomes valid again
         try {
@@ -413,7 +419,7 @@ class ChannelForwarder {
       log.info('Scanning for pending forwards to retry');
 
       // Scan for all pending forward keys
-      const pendingKeys = await this.redis.scanAsync('forward:pending:*');
+      const pendingKeys = await this.redis.scanAsync(KEY_PATTERNS.allForwardPending);
       
       if (pendingKeys.length === 0) {
         log.debug('No pending forwards found');
