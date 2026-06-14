@@ -86,6 +86,19 @@ const ENV_DEFINITIONS = {
     }
   },
 
+  WORKER_HTTP_PORT: {
+    required: false,
+    default: 3010,
+    description: 'HTTP status endpoint port for the worker process',
+    validate: (value) => {
+      const port = parseInt(value, 10);
+      if (isNaN(port) || port < 1024 || port > 65535) {
+        throw new Error('WORKER_HTTP_PORT must be between 1024-65535');
+      }
+      return port;
+    }
+  },
+
   // POW Service Configuration
   POW_SERVICE_URL: {
     required: false,
@@ -99,14 +112,14 @@ const ENV_DEFINITIONS = {
     }
   },
 
-  POW_SERVICE_TIMEOUT: {
+  POW_CLIENT_TIMEOUT: {
     required: false,
-    default: 30000,
-    description: 'POW service request timeout in milliseconds',
+    default: 25000,
+    description: 'POW service HTTP client timeout in milliseconds (used by worker/coordinator)',
     validate: (value) => {
       const timeout = parseInt(value, 10);
-      if (isNaN(timeout) || timeout < 5000 || timeout > 60000) {
-        throw new Error('POW_SERVICE_TIMEOUT must be between 5000-60000ms');
+      if (isNaN(timeout) || timeout < 5000 || timeout > 120000) {
+        throw new Error('POW_CLIENT_TIMEOUT must be between 5000-120000ms');
       }
       return timeout;
     }
@@ -148,19 +161,6 @@ const ENV_DEFINITIONS = {
         throw new Error('BATCH_MAX_RETRIES must be between 0-10');
       }
       return retries;
-    }
-  },
-
-  BATCH_TIMEOUT_MS: {
-    required: false,
-    default: 120000,
-    description: 'Task timeout in milliseconds (2 minutes default)',
-    validate: (value) => {
-      const timeout = parseInt(value, 10);
-      if (isNaN(timeout) || timeout < 30000 || timeout > 600000) {
-        throw new Error('BATCH_TIMEOUT_MS must be between 30000-600000ms (30s-10min)');
-      }
-      return timeout;
     }
   },
 
@@ -212,20 +212,14 @@ const ENV_DEFINITIONS = {
     }
   },
 
-  HEALTH_CHECK_PORT: {
+  METRICS_HOST: {
     required: false,
-    default: 8080,
-    description: 'Port for health check endpoint',
-    validate: (value) => {
-      const port = parseInt(value, 10);
-      if (isNaN(port) || port < 1024 || port > 65535) {
-        throw new Error('HEALTH_CHECK_PORT must be between 1024-65535');
-      }
-      return port;
-    }
+    default: '0.0.0.0',
+    description: 'Host to bind the metrics HTTP server',
+    validate: (value) => value
   },
 
-  // Existing Telegram Bot Configuration (preserved for compatibility)
+  // Telegram Bot Configuration
   TELEGRAM_BOT_TOKEN: {
     required: false, // Only required in coordinator mode
     description: 'Telegram bot token from @BotFather',
@@ -291,19 +285,7 @@ const ENV_DEFINITIONS = {
     }
   },
 
-  JSON_LOGGING: {
-    required: false,
-    default: false,
-    description: 'Enable structured JSON logging',
-    validate: (value) => {
-      if (typeof value === 'string') {
-        return value.toLowerCase() === 'true' || value === '1';
-      }
-      return Boolean(value);
-    }
-  },
-
-  // Existing Environment Variables (preserved for backward compatibility)
+  // HTTP and Runtime Configuration
   TIMEOUT_MS: {
     required: false,
     default: 60000,
@@ -331,14 +313,11 @@ const ENV_DEFINITIONS = {
     }
   },
 
-  PROXY_PASSWORD_ONLY: {
+  AGENT_DEBUG_INGEST_URL: {
     required: false,
-    default: false,
-    description: 'Only use proxy for password submission step (reduces bandwidth, requires trusted network for other requests)',
-    validate: (value) => {
-      if (!value) return false;
-      return value === 'true' || value === '1' || value === true;
-    }
+    description: 'Optional URL to pipe debug HTTP flow data for instrumentation',
+    example: 'http://debug-ingest:8080',
+    validate: (value) => value
   },
 
   BATCH_CONCURRENCY: {
@@ -439,7 +418,7 @@ function validateEnvironment(mode = 'auto') {
   if (mode === 'auto') {
     if (process.env.COORDINATOR_MODE === 'true' || process.env.COORDINATOR_MODE === '1') {
       mode = 'coordinator';
-    } else if (process.env.POW_SERVICE_URL || process.env.POW_SERVICE_MODE === 'true') {
+    } else if (process.env.POW_SERVICE_MODE === 'true' || process.env.POW_SERVICE_MODE === '1') {
       mode = 'pow-service';
     } else {
       mode = 'worker';
