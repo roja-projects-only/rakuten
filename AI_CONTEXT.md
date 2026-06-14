@@ -22,9 +22,7 @@ src/pow-service/index.js            # POW HTTP service (port 3001, optional Redi
 
 src/telegram/telegramHandler.js     # Telegram bot setup, commands, callbacks
 src/telegram/messages/              # MarkdownV2 helpers + message builders (static, check, capture, batch)
-src/telegram/messages.js            # Re-export facade (backward compat)
 src/telegram/batch/                 # Batch processing (index, documentHandler, batchExecutor, batchState, circuitBreaker, filterUtils, handlers/)
-src/telegram/batchHandlers.js       # Batch handler registration
 src/telegram/combineHandler.js      # Combine mode UX (/combine → /done)
 src/telegram/combineBatchRunner.js  # Combine batch execution
 src/telegram/channelForwarder.js    # Channel forward dedupe
