@@ -4,7 +4,7 @@
 
 ### Core Config System
 1. **Schema** ([src/shared/config/configSchema.js](../src/shared/config/configSchema.js))
-   - 15 hot-reloadable environment variables
+   - 17 hot-reloadable environment variables
    - Type validation (int, float, bool, enum, url, csv, string)
    - Range constraints and custom validators
    - Default values and precedence handling

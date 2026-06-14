@@ -4,6 +4,7 @@ Use this as the deep reference for the current workspace. For quick rules, see [
 
 ## 1) Architecture Map
 ```
+src/coordinator/barrel.js           # Coordinator barrel export
 src/coordinator/index.js            # Coordinator entrypoint (env validation, Redis, Telegram bot, shutdown)
 src/coordinator/Coordinator.js      # Main orchestrator (heartbeats, pub/sub, metrics, crash recovery)
 src/coordinator/JobQueueManager.js  # Redis-based task queue
@@ -13,14 +14,17 @@ src/coordinator/ChannelForwarder.js # Distributed channel forwarding
 src/coordinator/MetricsManager.js   # Prometheus metrics
 src/coordinator/MetricsServer.js    # Metrics HTTP endpoint
 
+src/worker/barrel.js                # Worker barrel export
 src/worker/index.js                 # Worker entrypoint (Redis connection, task dequeue)
 src/worker/WorkerNode.js            # Worker execution loop
 
 src/pow-service/index.js            # POW HTTP service (port 3001, optional Redis cache)
 
-src/telegram/telegramHandler.js     # Telegram bot setup, commands (/start, /help, /stop, .chk, .proxy), callbacks
+src/telegram/telegramHandler.js     # Telegram bot setup, commands, callbacks
 src/telegram/messages/              # MarkdownV2 helpers + message builders (static, check, capture, batch)
+src/telegram/messages.js            # Re-export facade (backward compat)
 src/telegram/batch/                 # Batch processing (index, documentHandler, batchExecutor, batchState, circuitBreaker, filterUtils, handlers/)
+src/telegram/batchHandlers.js       # Batch handler registration
 src/telegram/combineHandler.js      # Combine mode UX (/combine → /done)
 src/telegram/combineBatchRunner.js  # Combine batch execution
 src/telegram/channelForwarder.js    # Channel forward dedupe
@@ -36,7 +40,7 @@ src/shared/config/environment.js    # validateEnvironment (coordinator/worker/po
 src/shared/redis/                   # client.js (Redis connection), keys.js (key prefixes)
 src/shared/logger/                  # Structured logger (createLogger)
 src/shared/http/                    # checker, client, flow, analyzer, sessionManager, ipFetcher, retryInterceptor, proxyTracker
-src/shared/batch/                   # parse, processedStore, constants, hotmail, ulp, http
+src/shared/batch/                   # parse, processedStore, processor, constants, hotmail, ulp, http
 src/shared/fingerprinting/          # challengeGenerator, powServiceClient, powWorkerPool, powWorker, powCache, bioGenerator, ratGenerator
 src/shared/capture/                 # apiCapture, htmlCapture, orderHistory, profileData, ssoFormHandler
 src/shared/payloads/                # authorizeRequest, bioPayload, ratPayload

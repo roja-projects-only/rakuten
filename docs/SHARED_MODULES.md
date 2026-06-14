@@ -12,7 +12,7 @@ All shared modules live under `src/shared/` and are used by multiple services. T
 ### Files
 - `environment.js` — Mode detection + env var validation
 - `configService.js` — Centralized config with Redis pub/sub hot-reload
-- `configSchema.js` — Schema: 15 hot-reloadable variables with type/range validation
+- `configSchema.js` — Schema: 17 hot-reloadable variables with type/range validation
 
 ### Who Imports It
 - Coordinator, Worker, POW Service (environment validation)
@@ -100,8 +100,10 @@ All shared modules live under `src/shared/` and are used by multiple services. T
 **Purpose**: Batch processing, parsing, processed store
 
 ### Files
+- `index.js` — Barrel export
 - `parse.js` — File parsing, type filters (hotmail/ulp/jp/all)
 - `processedStore.js` — Redis-only dedup cache with 30-day TTL
+- `processor.js` — Batch result processing
 - `constants.js` — Domain lists, size limits
 - `hotmail.js` — HOTMAIL batch preparation
 - `ulp.js` — ULP batch preparation
