@@ -66,6 +66,19 @@ const ENV_DEFINITIONS = {
     }
   },
 
+  REDIS_COMMAND_TIMEOUT: {
+    required: false,
+    default: 60000,
+    description: 'Redis command timeout in ms (must be > WORKER_QUEUE_TIMEOUT)',
+    validate: (value) => {
+      const timeout = parseInt(value, 10);
+      if (isNaN(timeout) || timeout < 5000 || timeout > 300000) {
+        throw new Error('REDIS_COMMAND_TIMEOUT must be between 5000-300000ms');
+      }
+      return timeout;
+    }
+  },
+
   // Worker Configuration
   WORKER_ID: {
     required: false,
@@ -122,31 +135,6 @@ const ENV_DEFINITIONS = {
         throw new Error('POW_CLIENT_TIMEOUT must be between 5000-120000ms');
       }
       return timeout;
-    }
-  },
-
-  // Coordinator Configuration
-  COORDINATOR_MODE: {
-    required: false,
-    default: false,
-    description: 'Enable coordinator mode (Telegram bot + job management)',
-    validate: (value) => {
-      if (typeof value === 'string') {
-        return value.toLowerCase() === 'true' || value === '1';
-      }
-      return Boolean(value);
-    }
-  },
-
-  BACKUP_COORDINATOR: {
-    required: false,
-    default: false,
-    description: 'Enable backup coordinator mode (standby for failover)',
-    validate: (value) => {
-      if (typeof value === 'string') {
-        return value.toLowerCase() === 'true' || value === '1';
-      }
-      return Boolean(value);
     }
   },
 
@@ -414,17 +402,6 @@ function validateEnvironment(mode = 'auto') {
   const errors = [];
   const warnings = [];
 
-  // Determine mode if auto
-  if (mode === 'auto') {
-    if (process.env.COORDINATOR_MODE === 'true' || process.env.COORDINATOR_MODE === '1') {
-      mode = 'coordinator';
-    } else if (process.env.POW_SERVICE_MODE === 'true' || process.env.POW_SERVICE_MODE === '1') {
-      mode = 'pow-service';
-    } else {
-      mode = 'worker';
-    }
-  }
-
   // Mode-specific required variables
   const modeRequirements = {
     coordinator: ['REDIS_URL', 'TELEGRAM_BOT_TOKEN', 'TARGET_LOGIN_URL'],
@@ -462,10 +439,6 @@ function validateEnvironment(mode = 'auto') {
   }
 
   // Mode-specific validation
-  if (mode === 'coordinator' && config.BACKUP_COORDINATOR) {
-    warnings.push('Running as backup coordinator - will only activate if primary fails');
-  }
-
   if (mode === 'worker' && !config.POW_SERVICE_URL) {
     warnings.push('POW_SERVICE_URL not set - will use local POW computation (slower)');
   }
@@ -509,19 +482,6 @@ function isDistributedMode() {
 }
 
 /**
- * Get deployment mode
- */
-function getDeploymentMode() {
-  if (process.env.COORDINATOR_MODE === 'true' || process.env.COORDINATOR_MODE === '1') {
-    return 'coordinator';
-  }
-  if (process.env.POW_SERVICE_MODE === 'true' || process.env.POW_SERVICE_MODE === '1') {
-    return 'pow-service';
-  }
-  return 'worker';
-}
-
-/**
  * Print configuration summary (masks sensitive values)
  */
 function printConfigSummary(config) {
@@ -544,6 +504,5 @@ module.exports = {
   validateEnvironment,
   getConfig,
   isDistributedMode,
-  getDeploymentMode,
   printConfigSummary
 };

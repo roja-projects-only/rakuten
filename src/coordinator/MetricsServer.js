@@ -186,7 +186,7 @@ res.setHeader('Content-Type', 'text/plain');
           healthy: status.workers.details.filter(w => w.healthy).length
         },
         queue: {
-          depth: status.queue.depth || 0
+          depth: status.queue.total || 0
         }
       };
       

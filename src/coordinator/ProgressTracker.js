@@ -692,64 +692,18 @@ class ProgressTracker {
   }
 
   /**
-   * Start tracking progress for a batch with polling
+   * No-op: progress polling is handled globally by startProgressPolling().
+   * The method is kept for backward compatibility with existing callers.
    * @param {string} batchId - Batch identifier  
    * @param {string} filename - Batch filename for display
-   * @returns {void}
    */
   startTracking(batchId, filename) {
-    this.logger.info('Started progress tracking with polling', { batchId, filename });
-    
-    // Store filename in tracker data
+    // Store filename in tracker data for display
     const data = this.activeTrackers.get(batchId);
     if (data) {
       data.filename = filename;
       this.activeTrackers.set(batchId, data);
     }
-    
-    // Start polling interval for this batch (every 1.5 seconds for more responsive updates)
-    const pollInterval = setInterval(async () => {
-      try {
-        const progressData = this.activeTrackers.get(batchId);
-        if (!progressData) {
-          clearInterval(pollInterval);
-          return;
-        }
-        
-        // Check if batch is complete or aborted
-        if (progressData.aborted || progressData.completed >= progressData.total) {
-          clearInterval(pollInterval);
-          this.logger.info('Polling stopped - batch complete or aborted', { batchId });
-          
-          // If batch is complete (not aborted), send summary
-          if (!progressData.aborted && progressData.completed >= progressData.total) {
-            this.logger.info('Batch completed, sending summary', { batchId });
-            try {
-              await this.sendSummary(batchId);
-            } catch (error) {
-              this.logger.error('Failed to send completion summary', { 
-                batchId, 
-                error: error.message 
-              });
-            }
-          }
-          
-          return;
-        }
-        
-        // Trigger progress update
-        await this.handleProgressUpdate(batchId);
-        
-      } catch (error) {
-        this.logger.warn('Progress polling error', { batchId, error: error.message });
-      }
-    }, this.throttleMs); // Align polling interval to throttle to avoid 429s
-    
-    // Store interval reference for cleanup
-    if (!this.pollingIntervals) {
-      this.pollingIntervals = new Map();
-    }
-    this.pollingIntervals.set(batchId, pollInterval);
   }
 
   /**

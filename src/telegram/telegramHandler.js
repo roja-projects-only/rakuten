@@ -265,64 +265,43 @@ function initializeTelegramHandler(botToken, options = {}) {
   bot.command('stop', async (ctx) => {
     const chatId = ctx.chat.id;
     
-    // In coordinator mode, abort batch via Redis
-    if (options.compatibility && options.compatibility.isDistributed && options.compatibility.isDistributed()) {
-      const coordinator = options.compatibility.coordinator;
-      if (coordinator && coordinator.progressTracker) {
-        // Find active batch for this chat
-        const activeBatches = await coordinator.progressTracker.getActiveBatchesForChat(chatId);
-        if (activeBatches && activeBatches.length > 0) {
-          const batchId = activeBatches[0];
+    // Try coordinator-controlled batch first
+    if (options.coordinator && options.coordinator.progressTracker) {
+      const activeBatches = await options.coordinator.progressTracker.getActiveBatchesForChat(chatId);
+      if (activeBatches && activeBatches.length > 0) {
+        const batchId = activeBatches[0];
+        const ackMsg = await ctx.reply(escapeV2(`⏹ Stopping batch ${batchId}...`), { parse_mode: 'MarkdownV2' });
+        
+        try {
+          const cancelResult = await options.coordinator.cancelBatch(batchId);
+          await options.coordinator.progressTracker.abortBatch(batchId);
           
-          // Send immediate acknowledgment
-          const ackMsg = await ctx.reply(escapeV2(`⏹ Stopping batch ${batchId}...`), { parse_mode: 'MarkdownV2' });
+          const details = cancelResult.drained > 0 || cancelResult.leasesCleared > 0
+            ? ` (cleared ${cancelResult.drained} queued, ${cancelResult.leasesCleared} in-progress)`
+            : '';
+          await ctx.telegram.editMessageText(
+            chatId, 
+            ackMsg.message_id, 
+            undefined, 
+            escapeV2(`⏹ Batch ${batchId} stopped successfully${details}`), 
+            { parse_mode: 'MarkdownV2' }
+          );
           
-          try {
-            // Cancel the batch in the job queue (stops workers from picking up new tasks, clears leases)
-            const cancelResult = await coordinator.cancelBatch(batchId);
-            
-            // Abort the batch in progress tracker (marks as aborted)
-            await coordinator.progressTracker.abortBatch(batchId);
-            
-            // Update the acknowledgment message with details
-            const details = cancelResult.drained > 0 || cancelResult.leasesCleared > 0
-              ? ` (cleared ${cancelResult.drained} queued, ${cancelResult.leasesCleared} in-progress)`
-              : '';
-            await ctx.telegram.editMessageText(
-              chatId, 
-              ackMsg.message_id, 
-              undefined, 
-              escapeV2(`⏹ Batch ${batchId} stopped successfully${details}`), 
-              { parse_mode: 'MarkdownV2' }
-            );
-            
-            log.info(`[stop] Coordinator batch cancelled chatId=${chatId} batchId=${batchId}`, cancelResult);
-            
-          } catch (error) {
-            log.error(`[stop] Failed to cancel coordinator batch`, {
-              chatId,
-              batchId,
-              error: error.message
-            });
-            
-            // Update acknowledgment with error
-            await ctx.telegram.editMessageText(
-              chatId, 
-              ackMsg.message_id, 
-              undefined, 
-              escapeV2(`❌ Failed to stop batch: ${error.message}`), 
-              { parse_mode: 'MarkdownV2' }
-            );
-          }
-          
-          return;
+          log.info(`[stop] Coordinator batch cancelled chatId=${chatId} batchId=${batchId}`, cancelResult);
+        } catch (error) {
+          log.error(`[stop] Failed to cancel coordinator batch`, { chatId, batchId, error: error.message });
+          await ctx.telegram.editMessageText(
+            chatId, ackMsg.message_id, undefined,
+            escapeV2(`❌ Failed to stop batch: ${error.message}`),
+            { parse_mode: 'MarkdownV2' }
+          );
         }
+        return;
       }
-      await ctx.reply(escapeV2('No active batches to stop.'), { parse_mode: 'MarkdownV2' });
-      return;
     }
     
-    // Check for active combine batch first (highest priority)
+    // Fallback to local (in-process) batch runners
+    // Check for active combine batch first
     if (hasCombineBatch(chatId)) {
       const combineBatch = getActiveCombineBatch(chatId);
       abortCombineBatch(chatId);
@@ -374,30 +353,27 @@ function initializeTelegramHandler(botToken, options = {}) {
   // Handle .proxy command - show proxy configuration status
   bot.hears(/^\.proxy$/i, async (ctx) => {
     const runtimeConfig = getRuntimeConfig();
-    const isDistributed = options.compatibility?.isDistributed?.() || false;
-    
     let lines = ['*Proxy Configuration*', ''];
+    
+    const coordinator = options.coordinator;
     
     // Proxy configuration (PROXY_SERVER)
     if (runtimeConfig.proxy) {
-      // Mask proxy URL for security (show protocol and last part of host)
       const maskedProxy = maskProxyUrl(runtimeConfig.proxy);
       lines.push(`✅ *Coordinator Proxy:* ${escapeV2(maskedProxy)}`);
     } else {
       lines.push('❌ *Coordinator Proxy:* not configured');
     }
     
-    // In distributed mode, show proxy pool info
-    if (isDistributed && options.compatibility?.coordinator?.proxyPool) {
-      const proxyPool = options.compatibility.coordinator.proxyPool;
-      const poolSize = proxyPool.proxies?.length || 0;
+    // Show proxy pool info
+    if (coordinator && coordinator.proxyPool) {
+      const poolSize = coordinator.proxyPool.proxies?.length || 0;
       
       if (poolSize > 0) {
         lines.push(`✅ *Proxy Pool:* ${poolSize} proxy\\(ies\\) loaded`);
-        // Show first few proxies (masked)
         const showCount = Math.min(3, poolSize);
         for (let i = 0; i < showCount; i++) {
-          const masked = maskProxyUrl(proxyPool.proxies[i]);
+          const masked = maskProxyUrl(coordinator.proxyPool.proxies[i]);
           lines.push(`   ${i + 1}\\. ${escapeV2(masked)}`);
         }
         if (poolSize > showCount) {
@@ -407,13 +383,12 @@ function initializeTelegramHandler(botToken, options = {}) {
         lines.push('❌ *Proxy Pool:* empty \\(workers use direct connections\\)');
       }
       
-      // Show worker count if available
-      const coordinator = options.compatibility.coordinator;
-      if (coordinator?.activeWorkers) {
-        const workerCount = coordinator.activeWorkers.size;
+      if (coordinator.activeWorkers && typeof coordinator.activeWorkers.size === 'number') {
         lines.push('');
-        lines.push(`👷 *Active Workers:* ${workerCount}`);
+        lines.push(`👷 *Active Workers:* ${coordinator.activeWorkers.size}`);
       }
+    } else {
+      lines.push('ℹ️ *Proxy Pool:* not available \\(coordinator not fully initialized\\)');
     }
     
     lines.push('');
@@ -452,9 +427,9 @@ function initializeTelegramHandler(botToken, options = {}) {
     log.info('Config handler not registered (config service not initialized)');
   }
 
-  // Register /status when running as coordinator (distributed mode)
-  if (options.compatibility?.coordinator) {
-    registerStatusHandler(bot, options.compatibility.coordinator);
+  // Register /status command (distributed mode coordinator)
+  if (options.coordinator) {
+    registerStatusHandler(bot, options.coordinator);
   }
 
   // Handle .chk command
@@ -506,11 +481,10 @@ function initializeTelegramHandler(botToken, options = {}) {
 
       // Check credentials
       const runtimeConfig = getRuntimeConfig();
-      const isDistributed = options.compatibility?.isDistributed?.() || false;
       
       // Build processor info for result display
       const processorInfo = {
-        name: isDistributed ? 'coordinator' : 'local',
+        name: 'coordinator',
         proxy: runtimeConfig.proxy ? maskProxyUrl(runtimeConfig.proxy) : 'direct'
       };
 

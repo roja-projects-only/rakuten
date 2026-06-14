@@ -145,6 +145,27 @@ const JOB_QUEUE = {
 };
 
 /**
+ * Batch cancellation keys
+ * Pattern: batch:{batchId}:cancelled
+ * TTL: 1 hour
+ * Purpose: Mark a batch as cancelled so workers skip its tasks
+ */
+const BATCH_CANCELLED = {
+  generate: (batchId) => `batch:${batchId}:cancelled`,
+  ttl: 3600 // 1 hour in seconds
+};
+
+/**
+ * Worker registration info keys
+ * Pattern: worker:{workerId}:info
+ * TTL: None (cleaned up on shutdown)
+ * Purpose: Store worker metadata (hostname, pid, version)
+ */
+const WORKER_INFO = {
+  generate: (workerId) => `worker:${workerId}:info`
+};
+
+/**
  * Pub/Sub channel names
  */
 const PUBSUB_CHANNELS = {
@@ -266,6 +287,8 @@ module.exports = {
   COORDINATOR_LOCK,
   WORKER_HEARTBEAT,
   FORWARD_PENDING,
+  BATCH_CANCELLED,
+  WORKER_INFO,
   POW_CACHE,
   JOB_QUEUE,
   PUBSUB_CHANNELS,

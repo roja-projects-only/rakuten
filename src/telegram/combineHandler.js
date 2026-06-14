@@ -277,7 +277,7 @@ async function processSessionFiles(ctx, session) {
  */
 function registerCombineHandlers(bot, options, helpers) {
   const checkCredentials = options.checkCredentials;
-  const compatibility = options.compatibility;
+  const coordinator = options.coordinator;
 
   // /combine command - start combine mode
   bot.command('combine', async (ctx) => {
@@ -505,15 +505,8 @@ function registerCombineHandlers(bot, options, helpers) {
     log.info(`[combine] session cleared, starting batch chatId=${chatId}`);
     
     try {
-      const isDistributed = compatibility?.isDistributed && compatibility.isDistributed();
-
-      if (isDistributed) {
-        const coordinator = compatibility?.coordinator;
-        if (!coordinator || !coordinator.jobQueue || !coordinator.progressTracker) {
-          throw new Error('Coordinator not initialized for distributed combine mode');
-        }
-
-        // Queue to Redis so workers process combined batch
+      // Use distributed queue when coordinator is available, fall back to local in-process
+      if (coordinator && coordinator.jobQueue && coordinator.progressTracker) {
         const batchId = generateBatchId();
         const statusMsg = await ctx.reply(
           escapeV2('⏳ Queuing combined batch...'),
@@ -575,7 +568,6 @@ function registerCombineHandlers(bot, options, helpers) {
   bot.action(/^combine_abort_dist_(.+)$/, async (ctx) => {
     await ctx.answerCbQuery('Aborting...');
     const batchId = ctx.match[1];
-    const coordinator = compatibility?.coordinator;
 
     if (!coordinator) {
       await ctx.reply(escapeV2('⚠️ Coordinator not available to abort batch.'), {

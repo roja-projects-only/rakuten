@@ -12,6 +12,7 @@ const {
   JOB_QUEUE, 
   RESULT_CACHE, 
   PROGRESS_TRACKER,
+  BATCH_CANCELLED,
   generateTaskId 
 } = require('../shared/redis/keys');
 const { getConfigService } = require('../shared/config/configService');
@@ -456,8 +457,8 @@ class JobQueueManager {
 
     try {
       // 1. Mark batch as cancelled in Redis
-      const cancelKey = `batch:${batchId}:cancelled`;
-      await this.redis.executeCommand('setex', cancelKey, 3600, Date.now().toString()); // 1 hour TTL
+      const cancelKey = BATCH_CANCELLED.generate(batchId);
+      await this.redis.executeCommand('setex', cancelKey, BATCH_CANCELLED.ttl, Date.now().toString());
 
       // 2. Remove all tasks matching batchId from both queues
       drainedCount += await this.drainQueueByBatchId(JOB_QUEUE.tasks, batchId);
@@ -609,7 +610,7 @@ class JobQueueManager {
     try {
       // Find all task leases for this batch using pattern job:{batchId}:*
       const pattern = `job:${batchId}:*`;
-      const leaseKeys = await this.redis.executeCommand('keys', pattern);
+      const leaseKeys = await this.redis.scanAsync(pattern);
       
       if (leaseKeys.length === 0) {
         log.debug(`No task leases found for batch ${batchId}`);
@@ -641,7 +642,7 @@ class JobQueueManager {
    */
   async isBatchCancelled(batchId) {
     try {
-      const cancelKey = `batch:${batchId}:cancelled`;
+      const cancelKey = BATCH_CANCELLED.generate(batchId);
       const result = await this.redis.executeCommand('get', cancelKey);
       return result !== null;
     } catch (error) {

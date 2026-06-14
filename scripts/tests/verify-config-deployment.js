@@ -13,7 +13,7 @@
  */
 
 require('dotenv').config();
-const { createLogger } = require('../../logger');
+const { createLogger } = require('../../src/shared/logger');
 
 const log = createLogger('config-verify');
 
@@ -25,8 +25,8 @@ async function verify() {
   try {
     // Check 1: Required modules load
     log.info('\n📦 Checking modules...');
-    const { getConfigService } = require('../../shared/config/configService');
-    const { getConfigKeys } = require('../../shared/config/configSchema');
+    const { getConfigService } = require('../../src/shared/config/configService');
+    const { getConfigKeys } = require('../../src/shared/config/configSchema');
     log.info('✅ Config modules loaded');
     
     // Check 2: Schema is valid
@@ -81,7 +81,7 @@ async function verify() {
     log.info('\n🌍 Environment check...');
     log.info(`   NODE_ENV: ${process.env.NODE_ENV || 'not set'}`);
     log.info(`   REDIS_URL: ${process.env.REDIS_URL ? 'configured' : 'not set'}`);
-    log.info(`   COORDINATOR_MODE: ${process.env.COORDINATOR_MODE || 'false'}`);
+    log.info(`   Mode: coordinator (always — each service has its own entrypoint)`);
     
     // Summary
     log.info('\n═══════════════════════════════════════════════════════════');

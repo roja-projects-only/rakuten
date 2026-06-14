@@ -266,6 +266,31 @@ class RedisClient {
   }
 
   /**
+   * Scan Redis for keys matching a pattern (SCAN-based, not KEYS).
+   * Safe for production — does not block Redis like KEYS does.
+   * @param {string} pattern - Glob pattern to match (e.g., 'job:*')
+   * @param {number} [count=100] - Number of keys to attempt per iteration
+   * @returns {Promise<string[]>} Array of matching key names
+   */
+  async scanAsync(pattern, count = 100) {
+    const keys = [];
+    let cursor = '0';
+
+    try {
+      do {
+        const result = await this.client.scan(cursor, 'MATCH', pattern, 'COUNT', count);
+        cursor = result[0];
+        keys.push(...result[1]);
+      } while (cursor !== '0');
+    } catch (error) {
+      log.error('Redis scan failed', { pattern, error: error.message });
+      throw error;
+    }
+
+    return keys;
+  }
+
+  /**
    * Create a Redis pipeline for batch operations
    * @returns {Pipeline} Redis pipeline instance
    */
@@ -414,5 +439,5 @@ module.exports = {
   initRedisClient,
   initPubSubClient,
   closeRedisClient,
-  closePubSubClient
+  closePubSubClient,
 };

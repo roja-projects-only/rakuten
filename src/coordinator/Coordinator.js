@@ -547,7 +547,7 @@ class Coordinator {
       
       // Scan Redis for all task lease keys matching pattern: job:*
       const { KEY_PATTERNS, TASK_LEASE } = require('../shared/redis/keys');
-      const leaseKeys = await this.redis.executeCommand('keys', KEY_PATTERNS.allTaskLeases);
+      const leaseKeys = await this.redis.scanAsync(KEY_PATTERNS.allTaskLeases);
       
       if (leaseKeys.length === 0) {
         this.logger.debug('No task leases found');
@@ -727,7 +727,7 @@ class Coordinator {
 
       try {
         // Scan for in-progress batches
-        const progressKeys = await this.redis.executeCommand('keys', PROGRESS_TRACKER.pattern.replace('{batchId}', '*'));
+        const progressKeys = await this.redis.scanAsync(PROGRESS_TRACKER.pattern.replace('{batchId}', '*'));
 
         // Only the base progress key (progress:{batchId}) stores JSON string data.
         // Other progress keys (progress:{batchId}:counts|valid|count) are hashes/lists,

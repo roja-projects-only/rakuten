@@ -702,7 +702,6 @@ Spot instances can be reclaimed. If it happens:
 | `TELEGRAM_BOT_TOKEN` | **Yes** | — | Bot token from @BotFather |
 | `TARGET_LOGIN_URL` | **Yes** | — | Rakuten OAuth URL |
 | `REDIS_URL` | **Yes** | — | Railway Redis URL |
-| `COORDINATOR_MODE` | No | `false` | Not needed — coordinator entrypoint sets mode automatically |
 | `POW_SERVICE_URL` | Recommended | — | POW service endpoint |
 | `FORWARD_CHANNEL_ID` | No | — | Channel ID to forward VALID results |
 | `ALLOWED_USER_IDS` | No | — | Comma-separated allowed user IDs |

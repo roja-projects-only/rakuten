@@ -5,8 +5,8 @@
  * Simplified version of the timeout test for deployment verification
  */
 
-const { initRedisClient } = require('../../shared/redis/client');
-const { createLogger } = require('../../logger');
+const { initRedisClient } = require('../../src/shared/redis/client');
+const { createLogger } = require('../../src/shared/logger');
 
 const log = createLogger('redis-deploy-test');
 

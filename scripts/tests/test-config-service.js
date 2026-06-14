@@ -14,10 +14,10 @@
  */
 
 require('dotenv').config();
-const { createLogger } = require('../../logger');
-const { initRedisClient, getPubSubClient, closeRedisClient, closePubSubClient } = require('../../shared/redis/client');
-const { initConfigService, getConfigService, CONFIG_CHANNEL } = require('../../shared/config/configService');
-const { validateValue, getEnvDefault, getConfigKeys } = require('../../shared/config/configSchema');
+const { createLogger } = require('../../src/shared/logger');
+const { initRedisClient, getPubSubClient, closeRedisClient, closePubSubClient } = require('../../src/shared/redis/client');
+const { initConfigService, getConfigService, CONFIG_CHANNEL } = require('../../src/shared/config/configService');
+const { validateValue, getEnvDefault, getConfigKeys } = require('../../src/shared/config/configSchema');
 
 const log = createLogger('config-test');
 
@@ -134,7 +134,7 @@ async function runTests() {
     await pubSubClient1.connect();
     
     // Initialize config service
-    const { ConfigService } = require('../../shared/config/configService');
+    const { ConfigService } = require('../../src/shared/config/configService');
     configService1 = new ConfigService();
     await configService1.initialize(redisClient, pubSubClient1);
     

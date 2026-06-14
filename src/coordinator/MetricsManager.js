@@ -177,7 +177,7 @@ class MetricsManager {
     try {
       // Scan for worker heartbeat keys
       const pattern = WORKER_HEARTBEAT.pattern;
-      const keys = await this.redis.executeCommand('keys', pattern);
+      const keys = await this.redis.scanAsync(pattern);
       
       this.metrics.activeWorkers = keys ? keys.length : 0;
       

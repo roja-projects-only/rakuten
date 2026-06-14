@@ -107,10 +107,8 @@ services:
         condition: service_healthy
       pow-service:
         condition: service_healthy
-      coordinator:
-        condition: service_healthy
     healthcheck:
-      test: ["CMD", "node", "-e", "const redis = require('./src/shared/redis/client'); redis.ping().then(() => process.exit(0)).catch(() => process.exit(1));"]
+      test: ["CMD", "node", "-e", "const { initRedisClient } = require('./src/shared/redis/client'); initRedisClient().then(c => c.ping().then(() => process.exit(0))).catch(() => process.exit(1));"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -141,10 +139,8 @@ services:
         condition: service_healthy
       pow-service:
         condition: service_healthy
-      coordinator:
-        condition: service_healthy
     healthcheck:
-      test: ["CMD", "node", "-e", "const redis = require('./src/shared/redis/client'); redis.ping().then(() => process.exit(0)).catch(() => process.exit(1));"]
+      test: ["CMD", "node", "-e", "const { initRedisClient } = require('./src/shared/redis/client'); initRedisClient().then(c => c.ping().then(() => process.exit(0))).catch(() => process.exit(1));"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -175,10 +171,8 @@ services:
         condition: service_healthy
       pow-service:
         condition: service_healthy
-      coordinator:
-        condition: service_healthy
     healthcheck:
-      test: ["CMD", "node", "-e", "const redis = require('./src/shared/redis/client'); redis.ping().then(() => process.exit(0)).catch(() => process.exit(1));"]
+      test: ["CMD", "node", "-e", "const { initRedisClient } = require('./src/shared/redis/client'); initRedisClient().then(c => c.ping().then(() => process.exit(0))).catch(() => process.exit(1));"]
       interval: 30s
       timeout: 10s
       retries: 3

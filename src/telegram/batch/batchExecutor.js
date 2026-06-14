@@ -66,7 +66,7 @@ function getBatchConfig() {
  * @param {Object} batch - Batch object with creds, filename, count
  * @param {string} msgId - Source message ID
  * @param {Object} statusMsg - Status message to update
- * @param {Object} options - Check options (timeoutMs, proxy, targetUrl, compatibility)
+ * @param {Object} options - Check options (timeoutMs, proxy, targetUrl, coordinator)
  * @param {Object} helpers - Helper functions (escapeV2, formatDurationMs)
  * @param {string} key - Batch key for state management
  * @param {Function} checkCredentials - Credential checking function
@@ -81,15 +81,6 @@ function runBatchExecution(ctx, batch, msgId, statusMsg, options, helpers, key, 
   const REQUEST_DELAY_MS = batchConfig.delayMs;
   const PROCESSED_TTL_MS = batchConfig.processedTtlMs;
   
-  // Debug logging to see what we have
-  log.info('Batch execution options:', {
-    hasCompatibility: !!options.compatibility,
-    compatibilityKeys: options.compatibility ? Object.keys(options.compatibility) : [],
-    concurrency: BATCH_CONCURRENCY,
-    maxRetries: MAX_RETRIES,
-    delayMs: REQUEST_DELAY_MS
-  });
-  
   // Always queue to Redis for distributed worker processing
   log.info(`Queuing ${batch.count} tasks to Redis for distributed processing`);
   return runDistributedBatch(ctx, batch, msgId, statusMsg, options, helpers, key);
@@ -102,13 +93,11 @@ async function runDistributedBatch(ctx, batch, msgId, statusMsg, options, helper
   const chatId = ctx.chat.id;
   
   try {
-    // Access coordinator from compatibility layer (spread at top level)
-    const compatibility = options.compatibility;
-    const coordinator = compatibility.coordinator;
+    const coordinator = options.coordinator;
     
     if (!coordinator || !coordinator.jobQueue) {
-      log.error('Coordinator structure:', Object.keys(compatibility || {}));
-      throw new Error('Coordinator not initialized - jobQueue not available');
+      log.error('Coordinator not available — options keys:', Object.keys(options));
+      throw new Error('Coordinator not initialized — jobQueue not available');
     }
     
     log.info(`Queuing ${batch.count} credentials to job queue`);

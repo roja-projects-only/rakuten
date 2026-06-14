@@ -46,11 +46,11 @@ ENV BATCH_MAX_RETRIES=2
 
 # Health check - verify worker can connect to Redis
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-  CMD node -e "const redis = require('./src/shared/redis/client'); \
-    redis.ping().then(() => { \
+  CMD node -e "const { initRedisClient } = require('./src/shared/redis/client'); \
+    initRedisClient().then((c) => c.ping().then(() => { \
       console.log('Redis connection healthy'); \
       process.exit(0); \
-    }).catch((err) => { \
+    })).catch((err) => { \
       console.error('Redis connection failed:', err.message); \
       process.exit(1); \
     });"

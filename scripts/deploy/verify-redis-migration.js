@@ -7,7 +7,7 @@
  */
 
 const Redis = require('ioredis');
-const { createLogger } = require('../../logger');
+const { createLogger } = require('../../src/shared/logger');
 
 const log = createLogger('redis-verify');
 
