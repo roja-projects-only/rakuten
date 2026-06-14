@@ -1,17 +1,7 @@
-const MAX_BYTES_HOTMAIL = 50 * 1024 * 1024; // 50MB
-const MAX_BYTES_ULP = 1500 * 1024 * 1024; // 1.5GB
-
-const ALLOWED_DOMAINS = [
-  'live.jp',
-  'hotmail.co.jp',
-  'hotmail.jp',
-  'outlook.jp',
-  'outlook.co.jp',
-  'msn.co.jp',
-];
-
-module.exports = {
-  MAX_BYTES_HOTMAIL,
-  MAX_BYTES_ULP,
-  ALLOWED_DOMAINS,
-};
+/**
+ * COMPATIBILITY BRIDGE — re-exports from new location.
+ * Original: automation/batch/constants.js
+ * New: src/shared/batch/constants
+ * This file will be removed in Phase 6.
+ */
+module.exports = require('../../src/shared/batch/constants');

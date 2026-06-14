@@ -1,16 +1,7 @@
 /**
- * =============================================================================
- * PAYLOADS - Re-export all payload builders
- * =============================================================================
+ * COMPATIBILITY BRIDGE — re-exports from new location.
+ * Original: automation/http/payloads/index.js
+ * New: src/shared/payloads/index
+ * This file will be removed in Phase 6.
  */
-
-const { buildAuthorizeRequest } = require('./authorizeRequest');
-const { generateFullRatData } = require('./ratPayload');
-const { generateRealBioData } = require('./bioPayload');
-
-module.exports = {
-  buildAuthorizeRequest,
-  generateFullRatData,
-  generateRealBioData,
-};
-
+module.exports = require('../../../src/shared/payloads/index');
