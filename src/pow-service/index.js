@@ -2,7 +2,7 @@
  * POW Service Entrypoint
  *
  * Starts the standalone Proof-of-Work HTTP microservice.
- * Always runs as pow-service — no single-node fallback.
+ * Always runs as pow-service.
  *
  * Optional env:
  *   PORT (default 3001), REDIS_URL (for caching), POW_NUM_WORKERS, POW_TASK_TIMEOUT

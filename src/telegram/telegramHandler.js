@@ -378,7 +378,7 @@ function initializeTelegramHandler(botToken, options = {}) {
     
     let lines = ['*Proxy Configuration*', ''];
     
-    // Single-node proxy (PROXY_SERVER)
+    // Proxy configuration (PROXY_SERVER)
     if (runtimeConfig.proxy) {
       // Mask proxy URL for security (show protocol and last part of host)
       const maskedProxy = maskProxyUrl(runtimeConfig.proxy);

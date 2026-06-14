@@ -2,7 +2,7 @@
  * Worker Service Entrypoint
  *
  * Starts a distributed credential-checking worker node.
- * Always runs as worker — no single-node fallback.
+ * Always runs as worker.
  *
  * Required env:
  *   REDIS_URL

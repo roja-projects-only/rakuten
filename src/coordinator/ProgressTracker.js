@@ -214,7 +214,7 @@ class ProgressTracker {
         return;
       }
 
-      // Use the same progress message format as single-node mode
+      // Use the standard progress message format
       const { buildBatchProgress } = require('../telegram/messages');
       const progressMessage = buildBatchProgress({
         filename: progressData.filename,
@@ -463,7 +463,7 @@ class ProgressTracker {
       // Calculate elapsed time
       const elapsed = Date.now() - progressData.startTime;
       
-      // Use the same summary format as single-node mode
+      // Use the standard summary format
       const { buildBatchSummary } = require('../telegram/messages');
       const summaryMessage = buildBatchSummary({
         filename: progressData.filename,
@@ -843,7 +843,7 @@ class ProgressTracker {
         }
       }).filter(Boolean);
       
-      // Use the same aborted message format as single-node mode
+      // Use the standard aborted message format
       const { buildBatchAborted } = require('../telegram/messages');
       const abortedMessage = buildBatchAborted({
         filename: progressData.filename,

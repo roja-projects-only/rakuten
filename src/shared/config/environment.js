@@ -227,7 +227,7 @@ const ENV_DEFINITIONS = {
 
   // Existing Telegram Bot Configuration (preserved for compatibility)
   TELEGRAM_BOT_TOKEN: {
-    required: false, // Only required in coordinator mode or single-node mode
+    required: false, // Only required in coordinator mode
     description: 'Telegram bot token from @BotFather',
     sensitive: true,
     validate: (value) => {
@@ -239,7 +239,7 @@ const ENV_DEFINITIONS = {
   },
 
   TARGET_LOGIN_URL: {
-    required: false, // Only required in coordinator mode or single-node mode
+    required: false, // Only required in coordinator mode
     description: 'Target OAuth login URL',
     validate: (value) => {
       if (value && !value.startsWith('http')) {
@@ -344,7 +344,7 @@ const ENV_DEFINITIONS = {
   BATCH_CONCURRENCY: {
     required: false,
     default: 1,
-    description: 'Number of parallel credential checks in single-node mode',
+    description: 'Number of parallel credential checks in batch mode',
     validate: (value) => {
       const concurrency = parseInt(value, 10);
       if (isNaN(concurrency) || concurrency < 1 || concurrency > 20) {
@@ -451,7 +451,6 @@ function validateEnvironment(mode = 'auto') {
     coordinator: ['REDIS_URL', 'TELEGRAM_BOT_TOKEN', 'TARGET_LOGIN_URL'],
     worker: ['REDIS_URL'],
     'pow-service': [], // Redis is optional for POW service (runs without cache)
-    single: ['TELEGRAM_BOT_TOKEN', 'TARGET_LOGIN_URL'] // Single-node mode (existing behavior)
   };
 
   const requiredForMode = modeRequirements[mode] || [];
@@ -531,13 +530,6 @@ function isDistributedMode() {
 }
 
 /**
- * Check if running in single-node mode (existing behavior)
- */
-function isSingleNodeMode() {
-  return !isDistributedMode();
-}
-
-/**
  * Get deployment mode
  */
 function getDeploymentMode() {
@@ -547,10 +539,7 @@ function getDeploymentMode() {
   if (process.env.POW_SERVICE_MODE === 'true' || process.env.POW_SERVICE_MODE === '1') {
     return 'pow-service';
   }
-  if (isDistributedMode()) {
-    return 'worker';
-  }
-  return 'single';
+  return 'worker';
 }
 
 /**
@@ -576,7 +565,6 @@ module.exports = {
   validateEnvironment,
   getConfig,
   isDistributedMode,
-  isSingleNodeMode,
   getDeploymentMode,
   printConfigSummary
 };

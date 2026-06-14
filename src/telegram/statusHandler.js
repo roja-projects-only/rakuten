@@ -15,16 +15,16 @@ const log = createLogger('status-handler');
 /**
  * Register /status command handler with the Telegram bot
  * @param {Telegraf} bot - Telegram bot instance
- * @param {Coordinator} coordinator - Coordinator instance (optional for distributed mode)
+ * @param {Coordinator} coordinator - Coordinator instance (required)
  */
-function registerStatusHandler(bot, coordinator = null) {
+function registerStatusHandler(bot, coordinator) {
   bot.command('status', async (ctx) => {
     try {
       const chatId = ctx.chat.id;
       
-      // If no coordinator provided, show single-node mode status
+      // Coordinator is required for status
       if (!coordinator) {
-        await ctx.reply(buildSingleNodeStatus(), { parse_mode: 'MarkdownV2' });
+        await ctx.reply(escapeV2('⚠️ Status command requires a coordinator instance'), { parse_mode: 'MarkdownV2' });
         return;
       }
       
@@ -89,32 +89,7 @@ function registerStatusHandler(bot, coordinator = null) {
     }
   });
   
-  log.info('Status command handler registered', {
-    distributedMode: !!coordinator
-  });
-}
-
-/**
- * Build status message for single-node mode (no coordinator)
- */
-function buildSingleNodeStatus() {
-  const { boldV2, codeV2 } = require('./messages/helpers');
-  
-  const parts = [];
-  
-  parts.push(`📊 ${boldV2('SYSTEM STATUS')}`);
-  parts.push('');
-  parts.push(boldV2('🎛️ Mode'));
-  parts.push(`└ ${codeV2('Single-node (Railway)')}`);
-  parts.push('');
-  parts.push(boldV2('ℹ️ Info'));
-  parts.push(`├ ${escapeV2('Distributed mode not enabled')}`);
-  parts.push(`├ ${escapeV2('Processing: Sequential (5 workers max)')}`);
-  parts.push(`└ ${escapeV2('Storage: Local JSONL + Redis cache')}`);
-  parts.push('');
-  parts.push(`💡 ${escapeV2('To enable distributed mode, deploy with Redis and worker nodes.')}`);
-  
-  return parts.join('\n');
+  log.info('Status command handler registered');
 }
 
 module.exports = {

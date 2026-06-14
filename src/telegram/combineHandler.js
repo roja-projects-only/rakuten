@@ -603,7 +603,7 @@ function registerCombineHandlers(bot, options, helpers) {
     }
   });
 
-  // Handle abort for combine batch (single-node; callback_data is combine_abort_<chatId>)
+  // Handle abort for combine batch (callback_data is combine_abort_<chatId>)
   bot.action(/^combine_abort_(\d+)$/, async (ctx) => {
     await ctx.answerCbQuery('Aborting...');
     const chatId = parseInt(ctx.match[1], 10);

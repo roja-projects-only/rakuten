@@ -2,7 +2,7 @@
  * Coordinator Service Entrypoint
  *
  * Starts the Telegram bot with distributed coordination mode.
- * Always runs as coordinator — no single-node fallback.
+ * Always runs as coordinator.
  *
  * Required env:
  *   TELEGRAM_BOT_TOKEN, TARGET_LOGIN_URL, REDIS_URL

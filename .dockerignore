@@ -15,4 +15,3 @@ scripts/tests
 *.pem
 *.pub
 .env
-config/.env.*

@@ -6,8 +6,6 @@ node_modules/
 .env.*.local
 .env.*
 !.env.example
-!config/.env.local
-!config/.env.coordinator
 
 # Logs
 logs/
