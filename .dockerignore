@@ -9,9 +9,27 @@ data
 coverage
 
 docs
-deployment
 scripts/tests
 
 *.pem
 *.pub
 .env
+
+# Old bridge files (will be removed in Phase 6)
+main.js
+worker.js
+pow-service.js
+telegramHandler.js
+httpChecker.js
+logger.js
+automation/
+shared/
+telegram/
+utils/
+
+# Deployment files (not needed in Docker image)
+deployment/docker/
+deployment/railway/
+deployment/*.service
+deployment/*.sh
+deployment/*.example

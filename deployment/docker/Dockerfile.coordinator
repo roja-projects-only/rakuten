@@ -23,20 +23,11 @@ WORKDIR /app
 # Copy production dependencies from builder
 COPY --from=builder --chown=coordinator:nodejs /app/node_modules ./node_modules
 
-# Copy application files (exclude tests and development files)
-COPY --chown=coordinator:nodejs main.js ./
-COPY --chown=coordinator:nodejs telegramHandler.js ./
-COPY --chown=coordinator:nodejs httpChecker.js ./
-COPY --chown=coordinator:nodejs logger.js ./
+# Copy application files
 COPY --chown=coordinator:nodejs package*.json ./
+COPY --chown=coordinator:nodejs src/ ./src/
 
-# Copy shared modules
-COPY --chown=coordinator:nodejs shared/ ./shared/
-COPY --chown=coordinator:nodejs telegram/ ./telegram/
-COPY --chown=coordinator:nodejs automation/ ./automation/
-COPY --chown=coordinator:nodejs utils/ ./utils/
-
-# Copy deployment scripts
+# Copy deployment scripts (for redis.conf etc.)
 COPY --chown=coordinator:nodejs deployment/ ./deployment/
 
 # Switch to non-root user
@@ -64,4 +55,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     req.end();"
 
 # Start the coordinator
-CMD ["node", "main.js"]
+CMD ["node", "src/coordinator/index.js"]

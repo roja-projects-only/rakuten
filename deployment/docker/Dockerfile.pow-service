@@ -55,10 +55,7 @@ COPY --from=builder --chown=powservice:powservice /app/node_modules ./node_modul
 COPY --from=builder --chown=powservice:powservice /app/package*.json ./
 
 # Copy application files
-COPY --chown=powservice:powservice pow-service.js ./
-COPY --chown=powservice:powservice logger.js ./
-COPY --chown=powservice:powservice shared/ ./shared/
-COPY --chown=powservice:powservice automation/http/fingerprinting/ ./automation/http/fingerprinting/
+COPY --chown=powservice:powservice src/ ./src/
 
 # Set environment variables
 ENV NODE_ENV=production
@@ -80,4 +77,4 @@ USER powservice
 ENTRYPOINT ["dumb-init", "--"]
 
 # Start the POW service
-CMD ["node", "pow-service.js"]
+CMD ["node", "src/pow-service/index.js"]

@@ -2,14 +2,16 @@
   "name": "rakuten-telegram-bot",
   "version": "1.0.0",
   "description": "Telegram bot for validating Rakuten credentials",
-  "main": "main.js",
+  "main": "src/coordinator/index.js",
   "engines": {
     "node": ">=20.0.0"
   },
   "scripts": {
-    "start": "node main.js",
-    "dev": "node main.js",
-    "start:pow-service": "node pow-service.js",
+    "start": "node src/coordinator/index.js",
+    "dev": "node src/coordinator/index.js",
+    "start:coordinator": "node src/coordinator/index.js",
+    "start:worker": "node src/worker/index.js",
+    "start:pow-service": "node src/pow-service/index.js",
     "test:pow-integration": "node scripts/tests/test-pow-integration.js",
     "test:integration": "node scripts/tests/run-all-integration-tests.js",
     "test:e2e-batch": "node scripts/tests/test-end-to-end-batch-processing.js",

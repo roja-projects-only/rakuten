@@ -65,21 +65,21 @@ function exec(command, options = {}) {
 // Service configurations
 const SERVICES = {
   'coordinator': {
-    dockerfile: 'Dockerfile.coordinator',
+    dockerfile: 'deployment/docker/Dockerfile.coordinator',
     image: 'rakuten-coordinator',
     container: 'rakuten-coordinator',
     envFile: '.env.coordinator',
     ports: ['-p', '9090:9090']
   },
   'worker': {
-    dockerfile: 'Dockerfile.worker',
+    dockerfile: 'deployment/docker/Dockerfile.worker',
     image: 'rakuten-worker',
     container: 'rakuten-worker',
     envFile: '.env.worker',
     ports: []
   },
   'pow-service': {
-    dockerfile: 'Dockerfile.pow-service',
+    dockerfile: 'deployment/docker/Dockerfile.pow-service',
     image: 'rakuten-pow',
     container: 'rakuten-pow',
     envFile: '.env.pow-service',
