@@ -46,7 +46,7 @@ HTTP client for communicating with the POW service.
 
 **Usage:**
 ```javascript
-const powServiceClient = require('./automation/http/fingerprinting/powServiceClient');
+const powServiceClient = require('./src/shared/fingerprinting/powServiceClient');
 
 // Compute cres with automatic fallback
 const cres = await powServiceClient.computeCres({
@@ -71,7 +71,7 @@ The HTTP flow has been updated to use the POW service client instead of direct l
 - Added POW service availability check on module load
 - Enhanced logging for service unavailability warnings
 
-### 3. POW Service (`pow-service.js`)
+### 3. POW Service (`src/pow-service/index.js`)
 
 Standalone HTTP service for POW computation (already implemented in task 2).
 

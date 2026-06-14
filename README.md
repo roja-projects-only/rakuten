@@ -294,7 +294,7 @@ See `deployment/DEPLOYMENT.md` for detailed AWS setup instructions.
 
 - [AGENTS.md](AGENTS.md) — Agent playbook (quick start, entry points, patterns, commands)
 - [AI_CONTEXT.md](AI_CONTEXT.md) — Architecture, data flows, storage, and how-tos
-- [docs/](docs/) — Migration records and implementation documentation
+- [docs/README.md](docs/README.md) — Documentation index and organization
 
 ## 📄 License
 

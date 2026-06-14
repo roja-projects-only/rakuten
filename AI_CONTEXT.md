@@ -45,7 +45,6 @@ src/shared/utils/                   # retryWithBackoff, mapWithTtl
 ```
 
 ## 2) Modes
-- **Single-node**: `.chk` and batches run inline.
 - **Distributed (coordinator/worker)**: coordinator queues tasks to Redis; workers process. Progress/forwarding use Redis keys and pub/sub.
 
 ## 3) Key Data Flows
@@ -97,7 +96,7 @@ src/shared/utils/                   # retryWithBackoff, mapWithTtl
 
 **POW Service optional**: `PORT` (3001), `POW_NUM_WORKERS` (auto = CPU-1), `POW_TASK_TIMEOUT` (30000), `REDIS_URL` (for caching)
 
-See `docs/ENVIRONMENT_VARIABLES.md` for the full reference.
+See `docs/ENVIRONMENT.md` for the full reference.
 
 ## 8) Reliability & Shutdown
 - Graceful shutdown waits (up to 5m) for active regular + combine batches; flushes write buffer; closes Redis; stops bot.
@@ -105,7 +104,7 @@ See `docs/ENVIRONMENT_VARIABLES.md` for the full reference.
 
 ## 9) Common Issues
 - Bot stops responding after heavy callback: ensure heavy work is detached with `setTimeout` and errors are caught (`bot.catch`, polling_error handlers).
-- Duplicate channel forwards: verify `channelForwardStore` is consulted (single) and `shared/coordinator/ChannelForwarder` marks/reads the same store.
+- Duplicate channel forwards: verify `channelForwardStore` is consulted (single) and `src/coordinator/ChannelForwarder` marks/reads the same store.
 - Missing summaries in distributed mode: check `ProgressTracker` throttle vs completion path; summaries send immediately when `completed >= total`.
 
 ## 10) Quick How-Tos

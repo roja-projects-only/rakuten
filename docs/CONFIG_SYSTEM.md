@@ -3,19 +3,19 @@
 ## Overview
 
 ### Core Config System
-1. **Schema** ([shared/config/configSchema.js](../shared/config/configSchema.js))
+1. **Schema** ([src/shared/config/configSchema.js](../src/shared/config/configSchema.js))
    - 15 hot-reloadable environment variables
    - Type validation (int, float, bool, enum, url, csv, string)
    - Range constraints and custom validators
    - Default values and precedence handling
 
-2. **Service** ([shared/config/configService.js](../shared/config/configService.js))
+2. **Service** ([src/shared/config/configService.js](../src/shared/config/configService.js))
    - Redis-backed storage with local caching
    - Pub/sub propagation to all instances
    - Get, set, reset, list operations
    - Subscription system for change notifications
 
-3. **Telegram Handler** ([telegram/configHandler.js](../telegram/configHandler.js))
+3. **Telegram Handler** ([src/telegram/configHandler.js](../src/telegram/configHandler.js))
    - `/config` - List all settings
    - `/config get <KEY>` - Get details for a key
    - `/config set <KEY> <VALUE>` - Update a setting
@@ -29,18 +29,18 @@
 - [src/telegram/combineBatchRunner.js](../src/telegram/combineBatchRunner.js) - Uses `getBatchConfig()`
 - [src/telegram/channelForwarder.js](../src/telegram/channelForwarder.js) - Uses `getChannelId()`
 - [src/worker/WorkerNode.js](../src/worker/WorkerNode.js) - Uses `getWorkerConfig()`
-- [shared/coordinator/ProxyPoolManager.js](../shared/coordinator/ProxyPoolManager.js) - Uses `getProxyConfig()`
-- [shared/coordinator/JobQueueManager.js](../shared/coordinator/JobQueueManager.js) - Uses config getter
+- [src/coordinator/ProxyPoolManager.js](../src/coordinator/ProxyPoolManager.js) - Uses `getProxyConfig()`
+- [src/coordinator/JobQueueManager.js](../src/coordinator/JobQueueManager.js) - Uses config getter
 
 ### Testing
 - [scripts/tests/test-config-service.js](../scripts/tests/test-config-service.js) - 48 comprehensive tests
 - [scripts/tests/verify-config-deployment.js](../scripts/tests/verify-config-deployment.js) - Deployment smoke test
-- [docs/TESTING_CONFIG.md](TESTING_CONFIG.md) - Complete testing guide
+- [docs/TESTING.md](TESTING.md) - Complete testing guide
 
 ### Deployment Tools
 - [scripts/deploy/update-instance.js](../scripts/deploy/update-instance.js) - Cross-platform update script
 - [scripts/deploy/quick-update.sh](../scripts/deploy/quick-update.sh) - Bash update script
-- [docs/QUICK_UPDATE.md](QUICK_UPDATE.md) - Deployment guide
+- [docs/OPERATIONS.md](OPERATIONS.md) - Deployment guide
 
 ---
 

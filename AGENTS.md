@@ -8,8 +8,7 @@ Commit locally after each task (no push unless asked). Do not generate extra doc
 - Debug logging: `$env:LOG_LEVEL="debug"; npm start`
 
 ## Modes
-- Single-node: processes batches inline.
-- Coordinator/worker: coordinator queues tasks to Redis; workers execute.
+- Coordinator/worker: coordinator queues tasks to Redis; workers execute (coordination-mode only).
 
 ## Key Entry Points
 - Coordinator: `src/coordinator/index.js`
@@ -51,7 +50,7 @@ Commit locally after each task (no push unless asked). Do not generate extra doc
 - Fast deploy: `scripts/deploy/quick-update.sh <service> --fast` (docker cp + restart, ~5s).
 - Full rebuild: `scripts/deploy/quick-update.sh <service>` (docker build cycle).
 - Graceful shutdown waits for active batches; max 5 minutes.
-- See `docs/AWS_SETUP_GUIDE.md` for full AWS deployment walkthrough.
+- See `docs/AWS_SETUP.md` for full AWS deployment walkthrough.
 
 ## Troubleshooting
 - Bot unresponsive after batch: ensure batch runners are detached with `setTimeout`.
