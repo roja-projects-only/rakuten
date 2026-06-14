@@ -1,60 +1,35 @@
-Commit locally after each task (no push unless asked). Do not generate extra docs unless requested.
+# Rakuten Telegram Credential Checker — AI Agent Entry Point
 
-# Rakuten Telegram Credential Checker — Agent Playbook
+Distributed Node.js/Docker system for validating Rakuten account credentials via Telegram. Architecture: Coordinator + Worker(s) + PoW Service + Redis + Telegram bot.
 
-## Quick Start
-- Install deps: `npm install`
-- Run bot: `npm start`
-- Debug logging: `$env:LOG_LEVEL="debug"; npm start`
+## What to Read First
 
-## Modes
-- Coordinator/worker: coordinator queues tasks to Redis; workers execute (coordination-mode only).
+| Topic | Doc |
+|-------|-----|
+| Architecture & services | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| Deep data flows & storage | [AI_CONTEXT.md](AI_CONTEXT.md) |
+| Shared modules (config, HTTP, Redis, etc.) | [docs/SHARED_MODULES.md](docs/SHARED_MODULES.md) |
+| Environment variables | [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md) |
+| Centralized config system | [docs/CONFIG_SYSTEM.md](docs/CONFIG_SYSTEM.md) |
+| Testing (local harness + integration) | [docs/TESTING.md](docs/TESTING.md) |
+| Deployment (AWS setup) | [docs/AWS_SETUP.md](docs/AWS_SETUP.md) |
+| Operations (update scripts) | [docs/OPERATIONS.md](docs/OPERATIONS.md) |
+| PoW service API | [docs/POW_SERVICE.md](docs/POW_SERVICE.md) |
 
-## Key Entry Points
-- Coordinator: `src/coordinator/index.js`
-- Telegram bot: `src/telegram/telegramHandler.js`
-- Worker entry: `src/worker/index.js`
-- POW service: `src/pow-service/index.js` (HTTP on port 3001)
-- HTTP checker: `src/shared/http/checker.js`
-- Batch UX: `src/telegram/batch/index.js`, `src/telegram/batch/documentHandler.js`
-- Batch execution: `src/telegram/batch/batchExecutor.js` (progress/retries), `src/telegram/batch/circuitBreaker.js` (auto-pause)
-- Combine UX: `src/telegram/combineHandler.js`, `src/telegram/combineBatchRunner.js`
-- Channel forwarding: `src/telegram/channelForwarder.js` and `src/coordinator/ChannelForwarder.js`
-- Progress tracking: `src/coordinator/ProgressTracker.js`
-- Config/export: `src/telegram/configHandler.js`, `src/telegram/exportHandler.js`; `/status`: `src/telegram/statusHandler.js` (wire with coordinator)
-- Compatibility: coordination-mode only (no fallback)
+## Rules
 
-## Critical Patterns
-- For long work in Telegram callbacks, wrap with `setTimeout(() => { ... }, 0)` to avoid Telegraf timeouts.
-- Always use `parse_mode: 'MarkdownV2'` with `escapeV2/codeV2/boldV2` helpers.
-- Close sessions (`closeSession`) in `.chk` even on errors.
-- Use Redis-backed dedupe: `processedStore` for processed creds, `channelForwardStore` for forwarded creds.
+- **Production is coordination-mode-only**: Coordinator (Telegram + queue), Workers, PoW Service, Redis. No single-node production mode.
+- **Never reintroduce**: `SingleNodeMode`, JSONL/`processed.jsonl` fallback, old root bridge files, legacy `automation/`/`shared/`/`telegram/`/`utils/` folders, compatibility layer.
+- **Telegram**: Always use `{ parse_mode: 'MarkdownV2' }` with `escapeV2`/`codeV2`/`boldV2` helpers. Wrap long callback work in `setTimeout(() => ..., 0)` to avoid Telegraf timeouts.
+- **Redis**: All keys defined in `src/shared/redis/keys.js`. Dedup via `processedStore` (processed creds) and `channelForwardStore` (forwarded creds). No JSONL fallback.
+- **Shutdown**: Close sessions (`.chk`) and Redis connections on all code paths. Graceful shutdown waits up to 5 minutes for active batches.
+- **Dependencies**: Do not upgrade without explicit instruction. Do not add unrelated features.
 
-## Common Commands
-- `/start` — welcome message with quick-action buttons (Check Now, Guide, Help).
-- `.chk user:pass` — single check (auto capture on VALID).
-- `.proxy` — show current proxy status.
-- `.ulp <url>` — process ULP data from URL instead of file upload.
-- `/stop` — abort active batch/combine; in coordinator mode cancels via progress tracker.
-- `/combine` → upload files → `/done` → choose type → confirm.
-- `/config` — view/set centralized config (when config service initialized).
-- `/export` — export VALID creds via export handler (Telegram).
-- `/status` — system health (when `registerStatusHandler(bot, coordinator)` is wired in coordinator mode).
+## How to Validate Changes
 
-## Deployment Notes
-- Required env: `TELEGRAM_BOT_TOKEN`, `TARGET_LOGIN_URL`; add `REDIS_URL` for distributed.
-- Coordinator: exposes port 9090 (metrics).
-- Worker: `WORKER_CONCURRENCY` (default 3), `POW_SERVICE_URL`, `WORKER_TASK_TIMEOUT`.
-- POW service: internal port 3001, mapped to host 8080 (`-p 8080:3001`).
-- Dockerfiles use `--chown` on COPY (no `RUN chown -R`); npm install layer cached across code changes.
-- Fast deploy: `scripts/deploy/quick-update.sh <service> --fast` (docker cp + restart, ~5s).
-- Full rebuild: `scripts/deploy/quick-update.sh <service>` (docker build cycle).
-- Graceful shutdown waits for active batches; max 5 minutes.
-- See `docs/AWS_SETUP.md` for full AWS deployment walkthrough.
-
-## Troubleshooting
-- Bot unresponsive after batch: ensure batch runners are detached with `setTimeout`.
-- Duplicate channel forwards: dedupe via `channelForwardStore` (both single and distributed).
-- No final summary in coordinator mode: check `ProgressTracker.sendSummary` path and throttle settings.
-
-See [AI_CONTEXT.md](AI_CONTEXT.md) for deep architecture and data-flow details.
+1. Syntax check: `node -c src/path/to/file.js`
+2. Local full-flow test: `npm run test:flow` (exercises production modules in a single process)
+3. Config system test: `npm run test:config` (48 tests)
+4. Integration tests: `npm run test:integration` (requires Redis)
+5. Verify changed module with `LOG_LEVEL=debug` for HTTP flow output
+6. Grep the codebase for stale references to removed patterns

@@ -2,7 +2,7 @@
 
 ## Overview
 
-The POW (Proof-of-Work) service has been refactored to support a distributed architecture. The system now uses an HTTP-based POW service with automatic fallback to local computation when the service is unavailable.
+The POW (Proof-of-Work) service provides HTTP-based POW computation with automatic fallback to local computation when the service is unavailable.
 
 ## Architecture
 
@@ -38,9 +38,9 @@ The POW (Proof-of-Work) service has been refactored to support a distributed arc
 HTTP client for communicating with the POW service.
 
 **Features:**
-- 5-second timeout for HTTP requests (Requirement 3.1, 3.5)
-- Automatic fallback to local computation on timeout/error (Requirement 3.6)
-- Local memory cache for fallback results (not Redis) (Requirement 3.7)
+- 5-second timeout for HTTP requests
+- Automatic fallback to local computation on timeout/error
+- Local memory cache for fallback results (not Redis)
 - Exponential backoff retry logic
 - Statistics tracking
 
@@ -73,7 +73,7 @@ The HTTP flow has been updated to use the POW service client instead of direct l
 
 ### 3. POW Service (`src/pow-service/index.js`)
 
-Standalone HTTP service for POW computation (already implemented in task 2).
+Standalone HTTP service for POW computation.
 
 **Endpoints:**
 - `POST /compute` - Compute POW cres value
@@ -197,7 +197,7 @@ curl https://pow-service-production.up.railway.app/metrics
 ```
 
 **Monitor cache hit rates:**
-- Target: >60% cache hit rate (Requirement 3.8)
+- Target: >60% cache hit rate
 - Check logs every 100 requests for cache statistics
 
 ## Fallback Behavior
@@ -289,26 +289,17 @@ To completely revert to old behavior:
 1. Remove `POW_SERVICE_URL` environment variable
 2. System will use local computation exclusively
 
-## Requirements Satisfied
+## Verification
 
-- ✅ **3.1**: Worker requests cres from POW service via HTTP with 5-second timeout
-- ✅ **3.5**: Worker triggers local fallback on timeout
-- ✅ **3.6**: Local fallback caches in local memory only (not Redis)
-- ✅ **3.7**: System logs warning when POW service unavailable
-- ✅ **3.8**: POW service logs cache statistics every 100 requests when hit rate >60%
+```bash
+# Check POW service health
+curl http://localhost:3001/health
 
-## Next Steps
+# Test POW computation
+curl -X POST http://localhost:3001/compute \
+  -H "Content-Type: application/json" \
+  -d '{"mask":"0000","key":"abc123","seed":42}'
 
-1. Deploy POW service to EC2 (Task 2.5)
-2. Update Railway deployment with POW_SERVICE_URL
-3. Monitor cache hit rates and response times
-4. Implement worker nodes (Task 7)
-5. Scale POW service based on load
-
-## Support
-
-For issues or questions:
-1. Check Railway logs: `railway logs`
-2. Run verification script: `npm run verify:pow-deployment`
-3. Review POW service health: `curl $POW_SERVICE_URL/health`
-4. Check client statistics in application logs
+# Run deployment verification
+npm run verify:pow-deployment
+```

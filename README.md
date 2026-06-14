@@ -288,13 +288,12 @@ docker compose -f deployment/docker/docker-compose.yml down
 Config file: `deployment/railway/railway.json`
 
 ### AWS EC2
-See `deployment/DEPLOYMENT.md` for detailed AWS setup instructions.
+See [docs/AWS_SETUP.md](docs/AWS_SETUP.md) for detailed AWS setup instructions.
 
 ## 📚 Developer docs
 
-- [AGENTS.md](AGENTS.md) — Agent playbook (quick start, entry points, patterns, commands)
-- [AI_CONTEXT.md](AI_CONTEXT.md) — Architecture, data flows, storage, and how-tos
-- [docs/README.md](docs/README.md) — Documentation index and organization
+- [AGENTS.md](AGENTS.md) — AI agent entry point
+- [docs/README.md](docs/README.md) — Documentation index (architecture, services, testing, deployment)
 
 ## 📄 License
 

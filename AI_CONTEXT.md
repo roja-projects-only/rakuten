@@ -82,19 +82,11 @@ src/shared/utils/                   # retryWithBackoff, mapWithTtl
 - Proxy support: multiple URI/colon forms handled in `httpClient.parseProxy`.
 - Capture requirements for forwarding: latest order present and at least one card (`capture.profile.cards.length > 0`).
 
-## 7) Environment Cheatsheet
+## 7) Environment Quick Reference
 
-**Coordinator required**: `TELEGRAM_BOT_TOKEN`, `TARGET_LOGIN_URL`, `REDIS_URL`
-
-**Worker required**: `REDIS_URL`
-
-**Common**: `REDIS_URL`, `TARGET_LOGIN_URL`, `LOG_LEVEL`, `TIMEOUT_MS`, `REDIS_COMMAND_TIMEOUT`
-
-**Coordinator optional**: `FORWARD_CHANNEL_ID`, `ALLOWED_USER_IDS`, `METRICS_PORT` (9090), `BATCH_CONCURRENCY`, `BATCH_DELAY_MS`, `BATCH_MAX_RETRIES`, `BATCH_HUMAN_DELAY_MS`, `PROXY_SERVER`, `PROXY_POOL`, `PROCESSED_TTL_MS`, `FORWARD_TTL_MS`
-
-**Worker optional**: `WORKER_ID` (auto), `WORKER_CONCURRENCY` (3), `WORKER_TASK_TIMEOUT` (120000), `WORKER_HEARTBEAT_INTERVAL` (10000), `WORKER_QUEUE_TIMEOUT` (30000), `POW_SERVICE_URL`
-
-**POW Service optional**: `PORT` (3001), `POW_NUM_WORKERS` (auto = CPU-1), `POW_TASK_TIMEOUT` (30000), `REDIS_URL` (for caching)
+- **Coordinator**: `TELEGRAM_BOT_TOKEN`, `TARGET_LOGIN_URL`, `REDIS_URL` (required)
+- **Worker**: `REDIS_URL` (required)
+- **POW Service**: `PORT` (3001), `REDIS_URL` (for caching)
 
 See `docs/ENVIRONMENT.md` for the full reference.
 

@@ -2,51 +2,42 @@
 
 ## For AI Agents
 
-- [AGENTS.md](../AGENTS.md) — Playbook: commands, patterns, entry points
-- [AI_CONTEXT.md](../AI_CONTEXT.md) — Deep architecture, data flows, storage
+- [AGENTS.md](../AGENTS.md) — Entry point: rules, reading order, validation steps
+- [AI_CONTEXT.md](../AI_CONTEXT.md) — Deep architecture, data flows, storage, how-tos
 
-## For Developers
+## Active Docs
 
 ### Architecture & Services
-- [ARCHITECTURE.md](ARCHITECTURE.md) — System architecture, data flow, service boundaries, Redis design
-- [SERVICES.md](SERVICES.md) — Coordinator, worker, POW service, Telegram bot responsibilities
+- [ARCHITECTURE.md](ARCHITECTURE.md) — System architecture, service boundaries, data flows, Redis design, module rules
 - [SHARED_MODULES.md](SHARED_MODULES.md) — Config, logger, Redis, HTTP, batch, fingerprinting, capture, payloads, errors, constants, utils
 
 ### Configuration & Environment
 - [ENVIRONMENT.md](ENVIRONMENT.md) — Full environment variable reference
-- [CONFIG_SYSTEM.md](CONFIG_SYSTEM.md) — Centralized /config command system
+- [CONFIG_SYSTEM.md](CONFIG_SYSTEM.md) — Centralized `/config` command system
 
 ### Deployment
-- [DEPLOYMENT.md](DEPLOYMENT.md) — Docker, Railway, AWS EC2, systemd, env files
-- [QUICKSTART.md](QUICKSTART.md) — Local development setup
-- [AWS_SETUP.md](AWS_SETUP.md) — AWS console walkthrough
-- [POW_SERVICE_DEPLOYMENT.md](POW_SERVICE_DEPLOYMENT.md) — POW service deployment guide
+- [AWS_SETUP.md](AWS_SETUP.md) — AWS EC2 console walkthrough (coordinator, worker, POW service)
+- [OPERATIONS.md](OPERATIONS.md) — Docker-based update scripts and manual commands
 
-### Operations
-- [OPERATIONS.md](OPERATIONS.md) — Quick update guide, deployment scripts
-- [POW_SERVICE.md](POW_SERVICE.md) — POW API reference and integration
+### Services
+- [POW_SERVICE.md](POW_SERVICE.md) — POW service API reference and integration
 
 ### Testing
-- [TESTING.md](TESTING.md) — Config system testing guide
+- [TESTING.md](TESTING.md) — Local full-flow harness, integration tests, config system testing
 
-## Archive
+## Archived Docs
 
-### Rewrite History
-- [archive/rewrite/phase-2-shared-migration.md](archive/rewrite/phase-2-shared-migration.md) — Phase 2: Shared module migration
-- [archive/rewrite/phase-3-service-migration.md](archive/rewrite/phase-3-service-migration.md) — Phase 3: Service module migration
-- [archive/rewrite/phase-4-deprecated-cleanup.md](archive/rewrite/phase-4-deprecated-cleanup.md) — Phase 4: Deprecated code cleanup
-- [archive/rewrite/phase-5-root-deployment-plan.md](archive/rewrite/phase-5-root-deployment-plan.md) — Phase 5: Root and deployment plan
-- [archive/rewrite/phase-6-final-cleanup.md](archive/rewrite/phase-6-final-cleanup.md) — Phase 6: Final cleanup
-- [archive/rewrite/phase-7-deployment-env-cleanup.md](archive/rewrite/phase-7-deployment-env-cleanup.md) — Phase 7: Deployment folder cleanup
-- [archive/rewrite/phase-7-post-rewrite-verification.md](archive/rewrite/phase-7-post-rewrite-verification.md) — Phase 7: Post-rewrite verification
+The following docs have been merged or superseded. They remain in `docs/archive/` for reference:
 
-### Legacy Documentation
-- [archive/legacy/old-cleanup-report.md](archive/legacy/old-cleanup-report.md) — Historical cleanup notes
-- [archive/legacy/deprecated-audit.md](archive/legacy/deprecated-audit.md) — Workspace audit
-- [archive/legacy/deprecated-cleanup-plan.md](archive/legacy/deprecated-cleanup-plan.md) — Cleanup and rewrite plan
-- [archive/legacy/deprecated-deprecation-map.md](archive/legacy/deprecated-deprecation-map.md) — Deprecation catalog
-- [archive/legacy/deprecated-folder-structure.md](archive/legacy/deprecated-folder-structure.md) — Folder structure design
-- [archive/legacy/deprecated-rewrite-foundation.md](archive/legacy/deprecated-rewrite-foundation.md) — Rewrite foundation
+| File | Reason |
+|------|--------|
+| `archive/SERVICES.md` | Content merged into ARCHITECTURE.md |
+| `archive/DEPLOYMENT.md` | Superseded by AWS_SETUP.md |
+| `archive/POW_SERVICE_DEPLOYMENT.md` | Content covered in AWS_SETUP.md |
+| `archive/QUICKSTART.md` | Content folded into TESTING.md |
+| `archive/DEPENDENCY_MODERNIZATION_REPORT.md` | One-time audit report |
+| `archive/rewrite/*` | Historical rewrite phase docs |
+| `archive/legacy/*` | Pre-rewrite legacy docs |
 
 ## Quick Reference
 
@@ -60,10 +51,7 @@
 npm run start:coordinator    # Start coordinator
 npm run start:worker         # Start worker
 npm run start:pow-service    # Start POW service
-npm run test:integration     # Run integration tests
-```
-
-### Docker
-```bash
-docker compose -f deployment/docker/docker-compose.yml up -d
+npm run test:flow            # Local full-flow test (single process)
+npm run test:integration     # Integration tests (requires Redis)
+npm run test:config          # Config system tests
 ```

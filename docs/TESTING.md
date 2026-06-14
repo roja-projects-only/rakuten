@@ -1,315 +1,92 @@
-# Testing the Centralized Config System
+# Testing Guide
 
-## Quick Tests (Local)
+## Local Full-Flow Test (Single-Process Harness)
 
-### 1. Schema Validation Test
+The local full-flow test (`scripts/test-full-flow.js`) exercises the complete credential-check pipeline in a single local process using real production modules — no mocking, no external services, no Docker required.
+
+**What it tests:**
+1. Environment loading (`.env`)
+2. Redis connectivity (optional — used for result storage if available)
+3. Simulated coordinator job creation
+4. Worker task execution via `processTaskDirect()`
+5. PoW/CRES computation (internal modules, automatic local fallback)
+6. HTTP credential check flow (navigate → email → password → outcome)
+7. Account data capture (if VALID)
+
+**What it does NOT test:**
+- Telegram bot
+- Coordinator/worker HTTP servers
+- Distributed queue (Redis pub/sub)
+- POW service HTTP API
+- AWS infrastructure or multi-instance coordination
+
+**Usage:**
 ```bash
-node scripts/tests/test-config-service.js
-```
-**Expected**: All 48 tests pass (schema validation, Redis ops, pub/sub)
+# Basic — requires TARGET_LOGIN_URL in .env, prompts for credentials
+npm run test:flow
+# or
+npm run smoke:local
 
-### 2. Deployment Verification
-```bash
-node scripts/tests/verify-config-deployment.js
+# With inline credentials
+npm run test:flow -- --email user@example.com --password secret
 ```
-**Expected**: Config service loads, reads values from env/defaults
+
+**Required env:** `TARGET_LOGIN_URL` (from `.env`)
+
+**Optional env:** `REDIS_URL`, `POW_SERVICE_URL`, `PROXY_SERVER`, `TIMEOUT_MS`, `LOG_LEVEL`
+
+This harness is the fastest way to validate changes to the shared modules (HTTP flow, POW, capture) without starting any infrastructure. It is a test-only tool — not a production mode.
 
 ---
 
-## Testing on AWS/Railway Instances
+## Integration Tests
 
-### Option 1: Via Railway CLI
+The integration test suite exercises the distributed architecture with real Redis, coordinator, worker, and POW service components.
 
-1. **Check coordinator status:**
 ```bash
-railway run --service coordinator node scripts/tests/verify-config-deployment.js
+# Run all integration tests
+npm run test:integration
+
+# Specific integration tests
+npm run test:e2e-batch            # End-to-end batch processing
+npm run test:coordinator-failover # Coordinator crash recovery
+npm run test:worker-crash          # Worker crash recovery
+npm run test:deduplication        # Cross-batch deduplication
+npm run test:pow-degradation      # POW service fallback behavior
+npm run test:proxy-health          # Proxy rotation health checks
 ```
 
-2. **Check worker status:**
-```bash
-railway run --service worker node scripts/tests/verify-config-deployment.js
-```
-
-**Expected output:**
-- ✅ Config modules loaded
-- ✅ Config service initialized (if Redis connected)
-- ✅ Config values readable with sources (redis/env/default)
-
-### Option 2: Via SSH (AWS EC2)
-
-1. **SSH into coordinator instance:**
-```bash
-ssh user@coordinator-ip
-cd /app
-node scripts/tests/verify-config-deployment.js
-```
-
-2. **SSH into worker instance:**
-```bash
-ssh user@worker-ip
-cd /app
-node scripts/tests/verify-config-deployment.js
-```
+Integration test scripts live in `scripts/tests/`. They require a local Redis instance and the appropriate environment configuration.
 
 ---
 
-## Testing Config Commands via Telegram
+## Config System Tests
 
-### 1. List all configs
-Send to bot:
-```
-/config
-```
-or
-```
-/config list
-```
+### Quick Tests (Local)
 
-**Expected**: Formatted list grouped by category (batch, proxy, forward, worker, logging) with sources (🔴Redis | 🟡Env | ⚪Default)
-
-### 2. Get specific config
-```
-/config get BATCH_CONCURRENCY
-```
-
-**Expected**: 
-```
-⚙️ BATCH_CONCURRENCY
-
-Value: `1`
-Source: default
-Type: int
-Range: 1 - 50
-Default: `1`
-
-Parallel credential checks
-```
-
-### 3. Set a config value
-```
-/config set BATCH_CONCURRENCY 10
-```
-
-**Expected**:
-```
-✅ Config Updated
-
-Key: `BATCH_CONCURRENCY`
-Value: `10`
-
-Change propagated to all instances.
-```
-
-### 4. Verify propagation (check on another instance)
-In another terminal, check worker logs:
 ```bash
-railway logs --service worker
+# Schema validation + Redis ops + pub/sub (48 tests)
+npm run test:config
+
+# Deployment smoke test (loads modules, reads values from env/defaults)
+npm run verify:config
 ```
 
-**Expected log line**:
-```
-Config set: BATCH_CONCURRENCY = 10
-```
+### Via Telegram
 
-### 5. Reset to default
 ```
-/config reset BATCH_CONCURRENCY
-```
-
-**Expected**:
-```
-✅ Config Reset
-
-Key: `BATCH_CONCURRENCY`
-Value: `1`
-
-Reverted to env/default value.
+/config              — List all settings grouped by category
+/config get <KEY>    — Get details for a specific key
+/config set <KEY> <VALUE> — Update a setting (propagates via pub/sub)
+/config reset <KEY>  — Revert to env/default
 ```
 
----
+**Hot-reload test:** Start a batch, then change `BATCH_CONCURRENCY` via `/config set` — the next batch chunk picks it up without restart.
 
-## End-to-End Test Scenario
+### Troubleshooting
 
-### Test Hot-Reload Without Restart
+**Config service not initialized:** Check `REDIS_URL`, verify Redis connectivity (`redis-cli ping`), check logs for `"config service"`.
 
-1. **Check current concurrency:**
-```
-/config get BATCH_CONCURRENCY
-```
+**Changes not propagating:** Verify pub/sub subscription in logs, monitor `redis-cli SUBSCRIBE config_updates`.
 
-2. **Start a batch check** (upload a file via Telegram)
-
-3. **While batch is running, change concurrency:**
-```
-/config set BATCH_CONCURRENCY 5
-```
-
-4. **Next batch** should use new concurrency (check logs for "concurrency=5")
-
-5. **Verify on all instances:**
-```bash
-# Coordinator
-railway logs --service coordinator | grep "Config set"
-
-# Worker
-railway logs --service worker | grep "Config set"
-```
-
-**Expected**: Both see the config update without restart
-
----
-
-## Testing Different Configurations
-
-### Batch Processing
-```
-/config set BATCH_CONCURRENCY 5
-/config set BATCH_DELAY_MS 100
-/config set BATCH_MAX_RETRIES 3
-```
-
-### Proxy Configuration
-```
-/config set PROXY_POOL http://p1:8080,http://p2:8080,http://p3:8080
-/config set PROXY_HEALTH_CHECK_INTERVAL 60000
-```
-
-### Forwarding
-```
-/config set FORWARD_CHANNEL_ID -1001234567890
-/config set FORWARD_TTL_MS 7776000000
-```
-
-### Worker Tuning
-```
-/config set WORKER_CONCURRENCY 10
-/config set BATCH_TIMEOUT_MS 180000
-```
-
-### Logging
-```
-/config set LOG_LEVEL debug
-/config set JSON_LOGGING true
-```
-
----
-
-## Troubleshooting
-
-### Config service not initialized
-**Symptom**: `/config` command not available or shows "not initialized"
-
-**Check**:
-1. Redis connectivity: `railway run redis-cli ping`
-2. Environment variable: `railway variables | grep REDIS_URL`
-3. Logs: `railway logs | grep "config service"`
-
-**Fix**: Ensure `REDIS_URL` is set in Railway shared variables
-
-### Changes not propagating
-**Symptom**: Set config on coordinator but worker doesn't see it
-
-**Check**:
-1. Pub/sub subscription: Look for "Subscribed to config updates" in logs
-2. Redis pub/sub: `redis-cli PUBSUB CHANNELS` should show `config_updates`
-
-**Debug**:
-```bash
-# Monitor pub/sub channel
-redis-cli SUBSCRIBE config_updates
-
-# In another terminal
-/config set BATCH_CONCURRENCY 7
-```
-
-### Values reverting after restart
-**Symptom**: Config changes lost after instance restart
-
-**Expected behavior**: This is normal! Redis values persist, env values don't.
-- Redis values: Persist across restarts ✅
-- Env values: Reset to Railway variables ✅
-- Use `/config set` for persistent changes
-
----
-
-## Monitoring Config Usage
-
-### Check what's in Redis
-```bash
-railway run redis-cli --scan --pattern "config:*"
-```
-
-### Get all config values from Redis
-```bash
-for key in $(railway run redis-cli --scan --pattern "config:*"); do
-  echo "$key: $(railway run redis-cli GET $key)"
-done
-```
-
-### Monitor config changes in real-time
-```bash
-# On coordinator
-railway logs --service coordinator -f | grep "Config"
-
-# On worker
-railway logs --service worker -f | grep "Config"
-```
-
----
-
-## Performance Notes
-
-- Config reads are **instant** (local cache)
-- Config writes take ~100-500ms (Redis + pub/sub)
-- Pub/sub propagation: typically < 500ms
-- No performance impact on batch processing
-
----
-
-## Rollback Procedure
-
-If config changes cause issues:
-
-1. **Quick reset single value:**
-```
-/config reset <KEY>
-```
-
-2. **Reset all to defaults:**
-```bash
-railway run redis-cli --scan --pattern "config:*" | xargs railway run redis-cli DEL
-```
-
-3. **Full rollback to previous commit:**
-```bash
-git revert HEAD
-git push
-railway up
-```
-
----
-
-## Next Steps After Testing
-
-Once all tests pass:
-
-1. **Merge to main:**
-```bash
-git checkout main
-git merge feature/centralized-config
-git push
-```
-
-2. **Deploy to Railway:**
-```bash
-railway up
-```
-
-3. **Monitor first deployment:**
-```bash
-railway logs -f
-```
-
-4. **Test /config command** in production Telegram bot
-
-5. **Document** any Railway-specific config in project README
+**Values reverting after restart:** Expected. Redis values persist; env values reset. Use `/config set` for persistent changes.
