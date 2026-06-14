@@ -28,7 +28,6 @@ const {
 } = require('../messages');
 const { captureAccountData } = require('../../shared/capture');
 const { closeSession } = require('../../shared/http/sessionManager');
-const { forwardValidToChannel } = require('../channelForwarder');
 const { setActiveBatch, clearActiveBatch, deletePendingBatch } = require('./batchState');
 const { createCircuitBreaker } = require('./circuitBreaker');
 const { getConfigService } = require('../../shared/config/configService');
