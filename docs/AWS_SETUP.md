@@ -216,7 +216,7 @@ newgrp docker
 ```bash
 git clone https://github.com/roja-projects-only/rakuten.git
 cd rakuten
-docker build -f Dockerfile.pow-service -t rakuten-pow-service .
+docker build -f deployment/docker/Dockerfile.pow-service -t rakuten-pow-service .
 ```
 Takes ~2-3 minutes. Wait for `Successfully tagged rakuten-pow-service:latest`.
 
@@ -226,6 +226,9 @@ cat > .env.pow-service << 'EOF'
 PORT=3001
 LOG_LEVEL=info
 REDIS_URL=PASTE_YOUR_RAILWAY_REDIS_URL_HERE
+# Optional tuning:
+# POW_NUM_WORKERS=   (default: CPU-1)
+# POW_TASK_TIMEOUT=  (default: 30000 ms)
 EOF
 ```
 
@@ -251,7 +254,7 @@ docker run -d \
 ```bash
 curl http://localhost:8080/health
 ```
-Expected: `{"status":"ok"}`
+Expected: `{"status":"healthy","timestamp":"...","uptime":...}`
 
 If it fails, check logs:
 ```bash
@@ -299,7 +302,7 @@ newgrp docker
 ```bash
 git clone https://github.com/roja-projects-only/rakuten.git
 cd rakuten
-docker build -f Dockerfile.coordinator -t rakuten-coordinator .
+docker build -f deployment/docker/Dockerfile.coordinator -t rakuten-coordinator .
 ```
 Wait for `Successfully tagged rakuten-coordinator:latest`.
 
@@ -309,7 +312,6 @@ cat > .env.coordinator << 'EOF'
 TELEGRAM_BOT_TOKEN=PASTE_BOT_TOKEN
 TARGET_LOGIN_URL=https://login.account.rakuten.com/sso/authorize?client_id=rakuten_ichiba_top_web&service_id=s245&response_type=code&scope=openid&redirect_uri=https%3A%2F%2Fwww.rakuten.co.jp%2F
 REDIS_URL=PASTE_YOUR_RAILWAY_REDIS_URL_HERE
-COORDINATOR_MODE=true
 POW_SERVICE_URL=http://PASTE_POW_PRIVATE_IP:8080
 FORWARD_CHANNEL_ID=
 ALLOWED_USER_IDS=
@@ -358,9 +360,9 @@ docker logs -f rakuten-coordinator
 ```
 You should see:
 ```
-Bot started
-Connected to Redis
-Coordinator mode enabled
+Environment validated for coordinator mode
+Redis connected
+Coordinator started
 ```
 Press **Ctrl+C** to exit log view.
 
@@ -404,7 +406,7 @@ newgrp docker
 ```bash
 git clone https://github.com/roja-projects-only/rakuten.git
 cd rakuten
-docker build -f Dockerfile.worker -t rakuten-worker .
+docker build -f deployment/docker/Dockerfile.worker -t rakuten-worker .
 ```
 Wait for `Successfully tagged rakuten-worker:latest`.
 
@@ -449,8 +451,10 @@ docker logs -f rakuten-worker
 ```
 Should show:
 ```
-Worker registered
-Waiting for tasks...
+Starting distributed worker node
+Redis connected
+Worker node initialized
+Worker {id} starting up with concurrency 3
 ```
 Press **Ctrl+C** to exit.
 
@@ -467,7 +471,7 @@ Repeat this entire Phase 4 on new EC2 instances. Each worker auto-registers with
 **From POW instance:**
 ```bash
 curl http://localhost:8080/health
-# → {"status":"ok"}
+# → {"status":"healthy","timestamp":"...","uptime":...}
 ```
 
 **From Coordinator instance:**
@@ -500,7 +504,7 @@ When you push new code to the repo:
 ```bash
 cd ~/rakuten
 git pull
-docker build -f Dockerfile.pow-service -t rakuten-pow-service .
+docker build -f deployment/docker/Dockerfile.pow-service -t rakuten-pow-service .
 docker stop rakuten-pow-service
 docker rm rakuten-pow-service
 docker run -d \
@@ -515,7 +519,7 @@ docker run -d \
 ```bash
 cd ~/rakuten
 git pull
-docker build -f Dockerfile.coordinator -t rakuten-coordinator .
+docker build -f deployment/docker/Dockerfile.coordinator -t rakuten-coordinator .
 docker stop rakuten-coordinator
 docker rm rakuten-coordinator
 docker run -d \
@@ -530,7 +534,7 @@ docker run -d \
 ```bash
 cd ~/rakuten
 git pull
-docker build -f Dockerfile.worker -t rakuten-worker .
+docker build -f deployment/docker/Dockerfile.worker -t rakuten-worker .
 docker stop rakuten-worker
 docker rm rakuten-worker
 docker run -d \
@@ -619,7 +623,7 @@ redis-cli -u "RAILWAY_REDIS_URL" KEYS "progress:*"            # active batches
    docker logs --tail 50 rakuten-coordinator
    ```
 2. Verify `TELEGRAM_BOT_TOKEN` is correct in `.env.coordinator`
-3. Verify Redis connection — look for `Connected to Redis` in logs
+3. Verify Redis connection — look for `Redis connected` in logs
 4. Make sure another bot instance isn't running elsewhere (only one can poll at a time)
 
 ### Workers Not Connecting
@@ -698,7 +702,7 @@ Spot instances can be reclaimed. If it happens:
 | `TELEGRAM_BOT_TOKEN` | **Yes** | — | Bot token from @BotFather |
 | `TARGET_LOGIN_URL` | **Yes** | — | Rakuten OAuth URL |
 | `REDIS_URL` | **Yes** | — | Railway Redis URL |
-| `COORDINATOR_MODE` | **Yes** | `false` | Must be `true` for distributed mode |
+| `COORDINATOR_MODE` | No | `false` | Not needed — coordinator entrypoint sets mode automatically |
 | `POW_SERVICE_URL` | Recommended | — | POW service endpoint |
 | `FORWARD_CHANNEL_ID` | No | — | Channel ID to forward VALID results |
 | `ALLOWED_USER_IDS` | No | — | Comma-separated allowed user IDs |

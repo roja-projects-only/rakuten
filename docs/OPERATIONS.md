@@ -73,7 +73,7 @@ node scripts/deploy/update-instance.js all
 ```bash
 docker stop rakuten-pow-service
 docker rm rakuten-pow-service
-docker build -f Dockerfile.pow-service -t rakuten-pow-service .
+docker build -f deployment/docker/Dockerfile.pow-service -t rakuten-pow-service .
 docker run -d \
   --name rakuten-pow-service \
   --restart unless-stopped \
@@ -88,7 +88,7 @@ docker logs -f rakuten-pow-service
 ```bash
 docker stop rakuten-coordinator
 docker rm rakuten-coordinator
-docker build -f Dockerfile.coordinator -t rakuten-coordinator .
+docker build -f deployment/docker/Dockerfile.coordinator -t rakuten-coordinator .
 docker run -d \
   --name rakuten-coordinator \
   --restart unless-stopped \
@@ -103,7 +103,7 @@ docker logs -f rakuten-coordinator
 ```bash
 docker stop rakuten-worker
 docker rm rakuten-worker
-docker build -f Dockerfile.worker -t rakuten-worker .
+docker build -f deployment/docker/Dockerfile.worker -t rakuten-worker .
 docker run -d \
   --name rakuten-worker \
   --restart unless-stopped \
