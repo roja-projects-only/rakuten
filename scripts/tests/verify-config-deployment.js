@@ -41,7 +41,7 @@ async function verify() {
     
     if (!configService.isInitialized()) {
       log.warn('⚠️  Config service not initialized (no Redis?)');
-      log.warn('   This is OK for single-node mode');
+      log.warn('   Config service will use env fallback (distributed mode requires Redis)');
       log.warn('   For distributed mode, ensure REDIS_URL is set');
     } else {
       log.info('✅ Config service initialized');

@@ -171,4 +171,12 @@ async function main() {
   }
 }
 
-main();
+if (require.main === module) {
+  main().catch((error) => {
+    log.error('Fatal error', { error: error.message });
+    process.exit(1);
+  });
+}
+
+module.exports = { main, Coordinator };
+

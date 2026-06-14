@@ -12,13 +12,14 @@ The system supports three services, each with its own entrypoint under `src/`:
 
 ## Core Configuration
 
-### Required for All Modes
+### Common Variables
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `NODE_ENV` | No | `production` | Node.js environment (development, production, test) |
 | `LOG_LEVEL` | No | `info` | Logging level (error, warn, info, debug, trace) |
 | `TARGET_LOGIN_URL` | **Yes*** | — | Rakuten OAuth login URL |
+| `TIMEOUT_MS` | No | `60000` | HTTP request timeout for credential checks (ms) |
 
 *Required for coordinator and worker
 
@@ -29,6 +30,7 @@ The system supports three services, each with its own entrypoint under `src/`:
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `REDIS_URL` | **Yes*** | — | Redis connection URL |
+| `REDIS_COMMAND_TIMEOUT` | No | `60000` | Redis command timeout (ms) |
 
 *Required for coordinator and worker; optional for pow-service (caching)
 
@@ -40,7 +42,9 @@ The system supports three services, each with its own entrypoint under `src/`:
 | `FORWARD_CHANNEL_ID` | No | — | Channel ID for forwarding VALID credentials |
 | `ALLOWED_USER_IDS` | No | — | Comma-separated allowed user IDs |
 | `METRICS_PORT` | No | `9090` | Port for Prometheus metrics endpoint |
+| `METRICS_HOST` | No | `0.0.0.0` | Host to bind the metrics HTTP server |
 | `BATCH_CONCURRENCY` | No | `1` | Parallel checks (1 = sequential) |
+| `BATCH_MAX_RETRIES` | No | `2` | Max retry attempts per credential |
 | `BATCH_DELAY_MS` | No | `50` | Delay between request chunks (ms) |
 | `BATCH_HUMAN_DELAY_MS` | No | `0` | Human delay multiplier |
 | `PROXY_SERVER` | No | — | Single proxy URL |
@@ -57,13 +61,16 @@ The system supports three services, each with its own entrypoint under `src/`:
 | `WORKER_TASK_TIMEOUT` | No | `120000` | Task timeout (ms) |
 | `WORKER_HEARTBEAT_INTERVAL` | No | `10000` | Heartbeat interval (ms) |
 | `WORKER_QUEUE_TIMEOUT` | No | `30000` | Queue timeout (ms) |
+| `WORKER_HTTP_PORT` | No | `3010` | Optional HTTP status endpoint port |
 | `POW_SERVICE_URL` | No | — | POW service HTTP endpoint |
+| `POW_CLIENT_TIMEOUT` | No | `25000` | POW service HTTP client timeout (ms) |
 
 ### POW Service
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `PORT` | No | `3001` | HTTP server port |
+| `REDIS_URL` | No | — | Redis URL (optional, for result caching) |
 | `POW_NUM_WORKERS` | No | *CPU-1* | Worker thread count |
 | `POW_TASK_TIMEOUT` | No | `30000` | Task timeout (ms) |
 

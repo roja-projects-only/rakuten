@@ -47,7 +47,7 @@ async function testRedisConnection() {
     console.log('');
     console.log('❌ Redis connection failed:', error.message);
     console.log('');
-    console.log('This explains why the coordinator falls back to single-node mode.');
+    console.log('This explains why the coordinator cannot start (distributed mode requires Redis).');
     console.log('Possible solutions:');
     console.log('1. Check if Railway Redis instance is accessible from your EC2');
     console.log('2. Verify Redis credentials are correct');

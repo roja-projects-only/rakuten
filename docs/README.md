@@ -25,20 +25,6 @@
 ### Testing
 - [TESTING.md](TESTING.md) — Local full-flow harness, integration tests, config system testing
 
-## Archived Docs
-
-The following docs have been merged or superseded. They remain in `docs/archive/` for reference:
-
-| File | Reason |
-|------|--------|
-| `archive/SERVICES.md` | Content merged into ARCHITECTURE.md |
-| `archive/DEPLOYMENT.md` | Superseded by AWS_SETUP.md |
-| `archive/POW_SERVICE_DEPLOYMENT.md` | Content covered in AWS_SETUP.md |
-| `archive/QUICKSTART.md` | Content folded into TESTING.md |
-| `archive/DEPENDENCY_MODERNIZATION_REPORT.md` | One-time audit report |
-| `archive/rewrite/*` | Historical rewrite phase docs |
-| `archive/legacy/*` | Pre-rewrite legacy docs |
-
 ## Quick Reference
 
 ### Entrypoints
