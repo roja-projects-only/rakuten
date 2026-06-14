@@ -7,14 +7,11 @@ Requires=network.target
 
 [Service]
 Type=simple
-User=pow-service
-Group=pow-service
+User=rakuten
+Group=rakuten
 WorkingDirectory=/opt/rakuten-checker
-ExecStart=/usr/bin/docker run --rm --name pow-service \
-  --network host \
-  --env-file /opt/rakuten-checker/.env.pow-service \
-  --volume /opt/rakuten-checker/logs:/app/logs \
-  rakuten-pow-service:latest
+ExecStart=/usr/bin/node src/pow-service/index.js
+EnvironmentFile=/opt/rakuten-checker/.env
 
 # Restart policy
 Restart=always
@@ -25,7 +22,7 @@ StartLimitBurst=3
 # Resource limits (POW service is CPU intensive)
 LimitNOFILE=65536
 LimitNPROC=8192
-CPUQuota=800%  # Allow up to 8 CPU cores
+CPUQuota=800%
 
 # Security settings
 NoNewPrivileges=true
@@ -47,7 +44,7 @@ KillSignal=SIGTERM
 # Environment
 Environment=NODE_ENV=production
 Environment=LOG_LEVEL=info
-Environment=PORT=8080
+Environment=PORT=3001
 
 [Install]
 WantedBy=multi-user.target

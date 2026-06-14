@@ -7,15 +7,11 @@ Requires=network.target
 
 [Service]
 Type=simple
-User=coordinator
-Group=coordinator
+User=rakuten
+Group=rakuten
 WorkingDirectory=/opt/rakuten-checker
-ExecStart=/usr/bin/docker run --rm --name coordinator \
-  --network host \
-  --env-file /opt/rakuten-checker/.env.coordinator \
-  --volume /opt/rakuten-checker/logs:/app/logs \
-  --volume /opt/rakuten-checker/data:/app/data \
-  rakuten-coordinator:latest
+ExecStart=/usr/bin/node src/coordinator/index.js
+EnvironmentFile=/opt/rakuten-checker/.env
 
 # Restart policy
 Restart=always

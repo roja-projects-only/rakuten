@@ -163,7 +163,7 @@ aws ec2 create-launch-template \
     "InstanceType": "t3.small",
     "SecurityGroupIds": ["sg-coordinator"],
     "IamInstanceProfile": {"Name": "coordinator-role"},
-    "UserData": "'$(base64 -w 0 deployment/user-data-coordinator.sh)'",
+    "UserData": "'$(base64 -w 0 deployment/scripts/user-data-coordinator.sh)'",
     "TagSpecifications": [{
       "ResourceType": "instance",
       "Tags": [
@@ -184,7 +184,7 @@ aws ec2 create-launch-template \
     "InstanceType": "t3.micro",
     "SecurityGroupIds": ["sg-workers"],
     "IamInstanceProfile": {"Name": "worker-role"},
-    "UserData": "'$(base64 -w 0 deployment/user-data-worker.sh)'",
+    "UserData": "'$(base64 -w 0 deployment/scripts/user-data-worker.sh)'",
     "InstanceMarketOptions": {
       "MarketType": "spot",
       "SpotOptions": {
@@ -207,7 +207,7 @@ aws ec2 create-launch-template \
 
 ### Coordinator Environment Variables
 
-Create `/opt/rakuten-checker/.env.coordinator`:
+Copy `deployment/env/coordinator.env.example` to `/opt/rakuten-checker/.env.coordinator`:
 
 ```bash
 # Required
@@ -234,7 +234,7 @@ METRICS_PORT=9090
 
 ### Worker Environment Variables
 
-Create `/opt/rakuten-checker/.env.worker`:
+Copy `deployment/env/worker.env.example` to `/opt/rakuten-checker/.env.worker`:
 
 ```bash
 # Required
@@ -243,7 +243,6 @@ POW_SERVICE_URL=http://pow-service-private-ip:8080
 TARGET_LOGIN_URL=https://login.account.rakuten.com/sso/authorize?client_id=rakuten_ichiba_top_web&service_id=s245&response_type=code&scope=openid&redirect_uri=https%3A%2F%2Fwww.rakuten.co.jp%2F
 
 # Performance
-WORKER_CONCURRENCY=3  # Concurrent tasks per worker (1-50, default: 3)
 TIMEOUT_MS=60000
 BATCH_MAX_RETRIES=2
 LOG_LEVEL=info
@@ -251,12 +250,12 @@ LOG_LEVEL=info
 
 ### POW Service Environment Variables
 
-Create `/opt/rakuten-checker/.env.pow-service`:
+Copy `deployment/env/pow-service.env.example` to `/opt/rakuten-checker/.env.pow-service`:
 
 ```bash
 # Required
 REDIS_URL=redis://your-redis-endpoint:6379
-PORT=8080
+PORT=3001
 
 # Performance
 LOG_LEVEL=info
@@ -297,15 +296,15 @@ sudo usermod -a -G docker ec2-user
 # Clone repository and build
 git clone https://github.com/your-org/rakuten-checker.git
 cd rakuten-checker
-docker build -f Dockerfile.pow-service -t rakuten-pow-service .
+npm ci --omit=dev
 
 # Create environment file
 sudo mkdir -p /opt/rakuten-checker
-sudo cp deployment/.env.pow-service.example /opt/rakuten-checker/.env.pow-service
+sudo cp deployment/env/pow-service.env.example /opt/rakuten-checker/.env.pow-service
 sudo nano /opt/rakuten-checker/.env.pow-service  # Edit with your values
 
 # Install and start systemd service
-sudo cp deployment/pow-service.service /etc/systemd/system/
+sudo cp deployment/systemd/pow-service.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable pow-service
 sudo systemctl start pow-service
@@ -334,14 +333,14 @@ ssh -i your-key.pem ec2-user@coordinator-ip
 
 # Install Docker (same as POW service)
 # Clone repository and build
-docker build -f Dockerfile.coordinator -t rakuten-coordinator .
+npm ci --omit=dev
 
 # Create environment file
-sudo cp deployment/.env.coordinator.example /opt/rakuten-checker/.env.coordinator
+sudo cp deployment/env/coordinator.env.example /opt/rakuten-checker/.env.coordinator
 sudo nano /opt/rakuten-checker/.env.coordinator  # Edit with your values
 
 # Install and start systemd service
-sudo cp deployment/coordinator.service /etc/systemd/system/
+sudo cp deployment/systemd/coordinator.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable coordinator
 sudo systemctl start coordinator
@@ -379,14 +378,14 @@ done
 ssh -i your-key.pem ec2-user@worker-ip
 
 # Install Docker and clone repository (same as above)
-docker build -f Dockerfile.worker -t rakuten-worker .
+npm ci --omit=dev
 
 # Create environment file
-sudo cp deployment/.env.worker.example /opt/rakuten-checker/.env.worker
+sudo cp deployment/env/worker.env.example /opt/rakuten-checker/.env.worker
 sudo nano /opt/rakuten-checker/.env.worker  # Edit with your values
 
 # Install and start systemd service
-sudo cp deployment/worker.service /etc/systemd/system/
+sudo cp deployment/systemd/worker.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable worker@1  # Use unique instance number
 sudo systemctl start worker@1

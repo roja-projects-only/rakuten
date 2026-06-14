@@ -96,7 +96,7 @@ class POWServiceDegradationTest {
       };
       
       // Start POW service
-      this.powServiceProcess = spawn('node', ['pow-service.js'], {
+      this.powServiceProcess = spawn('node', ['src/pow-service/index.js'], {
         env,
         stdio: ['pipe', 'pipe', 'pipe'],
         detached: false
@@ -195,7 +195,7 @@ class POWServiceDegradationTest {
       let localPOWCallCount = 0;
       
       // Mock POW service client to track calls
-      const powServiceClient = require('../automation/http/fingerprinting/powServiceClient');
+      const powServiceClient = require('../../src/shared/fingerprinting/powServiceClient');
       const originalComputeCres = powServiceClient.computeCres;
       
       powServiceClient.computeCres = async (mdata) => {
@@ -205,7 +205,7 @@ class POWServiceDegradationTest {
       };
       
       // Mock local POW computation to track fallback calls
-      const challengeGenerator = require('../automation/http/fingerprinting/challengeGenerator');
+      const challengeGenerator = require('../../src/shared/fingerprinting/challengeGenerator');
       const originalComputeCresFromMdata = challengeGenerator.computeCresFromMdata;
       
       challengeGenerator.computeCresFromMdata = (mdata) => {
@@ -337,7 +337,7 @@ class POWServiceDegradationTest {
       let fallbackTriggered = false;
       
       // Mock POW service client to track failed calls
-      const powServiceClient = require('../automation/http/fingerprinting/powServiceClient');
+      const powServiceClient = require('../../src/shared/fingerprinting/powServiceClient');
       const originalComputeCres = powServiceClient.computeCres;
       
       powServiceClient.computeCres = async (mdata) => {
@@ -347,7 +347,7 @@ class POWServiceDegradationTest {
       };
       
       // Mock local POW computation to track fallback calls
-      const challengeGenerator = require('../automation/http/fingerprinting/challengeGenerator');
+      const challengeGenerator = require('../../src/shared/fingerprinting/challengeGenerator');
       const originalComputeCresFromMdata = challengeGenerator.computeCresFromMdata;
       
       challengeGenerator.computeCresFromMdata = (mdata) => {
@@ -509,7 +509,7 @@ class POWServiceDegradationTest {
         LOG_LEVEL: 'info'
       };
       
-      this.powServiceProcess = spawn('node', ['pow-service.js'], {
+      this.powServiceProcess = spawn('node', ['src/pow-service/index.js'], {
         env,
         stdio: ['pipe', 'pipe', 'pipe'],
         detached: false
@@ -540,7 +540,7 @@ class POWServiceDegradationTest {
       if (serviceRestarted) {
         try {
           // Mock a POW computation request
-          const powServiceClient = require('../automation/http/fingerprinting/powServiceClient');
+          const powServiceClient = require('../../src/shared/fingerprinting/powServiceClient');
           
           const testResult = await powServiceClient.computeCres({
             mask: '0000',

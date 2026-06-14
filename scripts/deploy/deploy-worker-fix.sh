@@ -51,7 +51,7 @@ if ! command -v docker &> /dev/null; then
 fi
 
 # Check if we're in the right directory
-if [[ ! -f "package.json" ]] || [[ ! -f "worker.js" ]]; then
+if [[ ! -f "package.json" ]] || [[ ! -f "src/worker/index.js" ]]; then
     error "Please run this script from the rakuten project root directory"
     exit 1
 fi
@@ -73,8 +73,8 @@ log "Step 2: Updating environment configuration..."
 
 # Ensure .env.worker exists
 if [[ ! -f ".env.worker" ]]; then
-    if [[ -f "deployment/.env.worker.example" ]]; then
-        cp deployment/.env.worker.example .env.worker
+    if [[ -f "deployment/env/worker.env.example" ]]; then
+        cp deployment/env/worker.env.example .env.worker
         success "Created .env.worker from example"
     else
         error "No .env.worker.example found in deployment directory"

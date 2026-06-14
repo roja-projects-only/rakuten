@@ -4,50 +4,44 @@ Use this as the deep reference for the current workspace. For quick rules, see [
 
 ## 1) Architecture Map
 ```
-main.js                           # Bootstrap, env validation, config service, shutdown
-telegramHandler.js                # Telegram bot setup, commands (/start, /help, /stop, .chk, .proxy), callbacks
-worker.js                         # Worker entry point (distributed mode)
-pow-service.js                    # Standalone POW HTTP service (port 3001)
-httpChecker.js                    # HTTP login/check entry
-logger.js                         # Application logger
+src/coordinator/index.js            # Coordinator entrypoint (env validation, Redis, Telegram bot, shutdown)
+src/coordinator/Coordinator.js      # Main orchestrator (heartbeats, pub/sub, metrics, crash recovery)
+src/coordinator/JobQueueManager.js  # Redis-based task queue
+src/coordinator/ProgressTracker.js  # Batch progress tracking
+src/coordinator/ProxyPoolManager.js # Proxy rotation
+src/coordinator/ChannelForwarder.js # Distributed channel forwarding
+src/coordinator/MetricsManager.js   # Prometheus metrics
+src/coordinator/MetricsServer.js    # Metrics HTTP endpoint
 
-telegram/messages/                # MarkdownV2 helpers (helpers.js) + message builders (static, check, capture, batch)
-telegram/batchHandlers.js         # Facade → telegram/batch/ (regular batch UX)
-telegram/batch/index.js           # registerBatchHandlers, document + type handlers
-telegram/batch/documentHandler.js # Document upload, inline keyboard (HOTMAIL/ULP/JP/ALL)
-telegram/batch/batchExecutor.js   # Batch execution logic with progress/retries
-telegram/batch/batchState.js      # Active/pending batch state management
-telegram/batch/circuitBreaker.js  # Error rate monitoring, auto-pause at 60% threshold
-telegram/batch/filterUtils.js     # Credential dedup filtering
-telegram/batch/handlers/          # common (confirm/cancel/abort), hotmail, ulp (.ulp <url>), jp, all
-telegram/combineHandler.js        # Combine mode UX (/combine → /done)
-telegram/combineBatchRunner.js    # Combine batch execution (setTimeout wrapper)
-telegram/channelForwarder.js      # Single-node channel forward dedupe
-telegram/channelForwardStore.js   # Forward dedupe (Redis/JSONL), shared by single + distributed
-telegram/configHandler.js         # Centralized config via Telegram (/config)
-telegram/exportHandler.js         # Export VALID credentials from Redis (/export)
-telegram/statusHandler.js         # /status command (system health; pass coordinator when distributed)
-telegram/messageTracker.js        # Forwarded message tracking for updates
+src/worker/index.js                 # Worker entrypoint (Redis connection, task dequeue)
+src/worker/WorkerNode.js            # Worker execution loop
 
-shared/coordinator/               # Coordinator, JobQueueManager, ProxyPoolManager, ProgressTracker,
-                                 # ChannelForwarder, MetricsManager, MetricsServer
-shared/worker/WorkerNode.js       # Worker execution loop
-shared/config/configService.js    # Centralized config (Redis pub/sub); env fallback
-shared/config/configSchema.js     # Schema: 15 hot-reloadable variables with type/range validation
-shared/config/environment.js      # Mode detection (COORDINATOR_MODE / POW_SERVICE_MODE), validateEnvironment
-shared/compatibility/             # GracefulDegradation.js, SingleNodeMode.js — fallback when Redis unavailable
-shared/redis/                     # client.js (Redis connection), keys.js (key prefixes)
-shared/logger/structured.js       # Structured JSON logger
+src/pow-service/index.js            # POW HTTP service (port 3001, optional Redis cache)
 
-automation/http/                   # httpFlow, httpClient (proxy parsing), sessionManager, htmlAnalyzer
-automation/http/capture/           # apiCapture, htmlCapture, orderHistory, profileData, ssoFormHandler
-automation/http/fingerprinting/    # challengeGenerator, bioGenerator, ratGenerator,
-                                  # powServiceClient, powWorker, powWorkerPool, powCache
-automation/http/payloads/          # authorizeRequest, bioPayload, ratPayload
-automation/batch/processedStore.js # Processed cache (Redis/JSONL), 30-day TTL
-automation/batch/parse.js          # Batch file parsing, type filters (hotmail/ulp/jp/all)
+src/telegram/telegramHandler.js     # Telegram bot setup, commands (/start, /help, /stop, .chk, .proxy), callbacks
+src/telegram/messages/              # MarkdownV2 helpers + message builders (static, check, capture, batch)
+src/telegram/batch/                 # Batch processing (index, documentHandler, batchExecutor, batchState, circuitBreaker, filterUtils, handlers/)
+src/telegram/combineHandler.js      # Combine mode UX (/combine → /done)
+src/telegram/combineBatchRunner.js  # Combine batch execution
+src/telegram/channelForwarder.js    # Channel forward dedupe
+src/telegram/channelForwardStore.js # Forward dedupe (Redis)
+src/telegram/configHandler.js       # Centralized config via Telegram (/config)
+src/telegram/exportHandler.js       # Export VALID credentials (/export)
+src/telegram/statusHandler.js       # /status command
+src/telegram/messageTracker.js      # Forwarded message tracking
 
-utils/                             # index.js, mapWithTtl.js, retryWithBackoff.js
+src/shared/config/configService.js  # Centralized config (Redis pub/sub); env fallback
+src/shared/config/configSchema.js   # Schema: hot-reloadable variables with type/range validation
+src/shared/config/environment.js    # validateEnvironment (coordinator/worker/pow-service modes)
+src/shared/redis/                   # client.js (Redis connection), keys.js (key prefixes)
+src/shared/logger/                  # Structured logger (createLogger)
+src/shared/http/                    # checker, client, flow, analyzer, sessionManager, ipFetcher, retryInterceptor, proxyTracker
+src/shared/batch/                   # parse, processedStore, constants, hotmail, ulp, http
+src/shared/fingerprinting/          # challengeGenerator, powServiceClient, powWorkerPool, powWorker, powCache, bioGenerator, ratGenerator
+src/shared/capture/                 # apiCapture, htmlCapture, orderHistory, profileData, ssoFormHandler
+src/shared/payloads/                # authorizeRequest, bioPayload, ratPayload
+src/shared/errors/                  # Custom error classes
+src/shared/utils/                   # retryWithBackoff, mapWithTtl
 ```
 
 ## 2) Modes
@@ -75,7 +69,7 @@ utils/                             # index.js, mapWithTtl.js, retryWithBackoff.j
 - Worker: `WorkerNode` pops tasks, increments progress, publishes forward/update events.
 
 ## 4) Storage & Dedup
-- **Processed creds**: `processedStore` (`proc:{user}:{pass}`), 30-day TTL, Redis or JSONL fallback.
+- **Processed creds**: `processedStore` (`proc:{user}:{pass}`), 30-day TTL, Redis-only.
 - **Forwarded creds**: `channelForwardStore` (`fwd:{user}:{pass}`), 30-day TTL, shared by single + distributed forwarders.
 - **Message tracking**: `messageTracker` (`msg:{trackingCode}`, `msg:cred:{user}:{pass}`) for delete/update.
 
@@ -85,21 +79,23 @@ utils/                             # index.js, mapWithTtl.js, retryWithBackoff.j
 - Progress throttling lives in `ProgressTracker` (distributed) and batch runners (single/combine).
 
 ## 6) HTTP Flow Highlights
-- POW (`cres`) from `/util/gc` mdata {mask,key,seed}; computed via `automation/http/fingerprinting/challengeGenerator.js` (native murmur if available, worker pool + cache; see also `powServiceClient`, `powWorker`, `powCache`, `powWorkerPool`).
+- POW (`cres`) from `/util/gc` mdata {mask,key,seed}; computed via `src/shared/fingerprinting/challengeGenerator.js` (native murmur if available, worker pool + cache; see also `powServiceClient`, `powWorker`, `powCache`, `powWorkerPool`).
 - Proxy support: multiple URI/colon forms handled in `httpClient.parseProxy`.
 - Capture requirements for forwarding: latest order present and at least one card (`capture.profile.cards.length > 0`).
 
 ## 7) Environment Cheatsheet
 
-**Required**: `TELEGRAM_BOT_TOKEN`, `TARGET_LOGIN_URL`
+**Coordinator required**: `TELEGRAM_BOT_TOKEN`, `TARGET_LOGIN_URL`, `REDIS_URL`
 
-**Common**: `REDIS_URL`, `PROXY_SERVER`, `PROXY_POOL`, `BATCH_CONCURRENCY`, `BATCH_DELAY_MS`, `BATCH_MAX_RETRIES`, `BATCH_HUMAN_DELAY_MS`, `FORWARD_CHANNEL_ID`, `ALLOWED_USER_IDS`, `LOG_LEVEL`, `TIMEOUT_MS`, `PROCESSED_TTL_MS`
+**Worker required**: `REDIS_URL`
 
-**Coordinator**: `COORDINATOR_MODE=true`, `METRICS_PORT` (9090)
+**Common**: `REDIS_URL`, `TARGET_LOGIN_URL`, `LOG_LEVEL`, `TIMEOUT_MS`, `REDIS_COMMAND_TIMEOUT`
 
-**Worker**: `WORKER_ID` (auto), `WORKER_CONCURRENCY` (3), `WORKER_TASK_TIMEOUT` (120000), `WORKER_HEARTBEAT_INTERVAL` (10000), `WORKER_QUEUE_TIMEOUT` (30000), `POW_SERVICE_URL`
+**Coordinator optional**: `FORWARD_CHANNEL_ID`, `ALLOWED_USER_IDS`, `METRICS_PORT` (9090), `BATCH_CONCURRENCY`, `BATCH_DELAY_MS`, `BATCH_MAX_RETRIES`, `BATCH_HUMAN_DELAY_MS`, `PROXY_SERVER`, `PROXY_POOL`, `PROCESSED_TTL_MS`, `FORWARD_TTL_MS`
 
-**POW Service**: `POW_SERVICE_MODE=true`, `PORT` (3001), `POW_NUM_WORKERS` (auto = CPU-1), `POW_TASK_TIMEOUT` (30000)
+**Worker optional**: `WORKER_ID` (auto), `WORKER_CONCURRENCY` (3), `WORKER_TASK_TIMEOUT` (120000), `WORKER_HEARTBEAT_INTERVAL` (10000), `WORKER_QUEUE_TIMEOUT` (30000), `POW_SERVICE_URL`
+
+**POW Service optional**: `PORT` (3001), `POW_NUM_WORKERS` (auto = CPU-1), `POW_TASK_TIMEOUT` (30000), `REDIS_URL` (for caching)
 
 See `docs/ENVIRONMENT_VARIABLES.md` for the full reference.
 
@@ -113,10 +109,10 @@ See `docs/ENVIRONMENT_VARIABLES.md` for the full reference.
 - Missing summaries in distributed mode: check `ProgressTracker` throttle vs completion path; summaries send immediately when `completed >= total`.
 
 ## 10) Quick How-Tos
-- Add Telegram command: register in `telegramHandler.js`, update help text if needed.
-- Add batch type: add filter in `automation/batch/parse.js`, add handler under `telegram/batch/handlers/`, register in `telegram/batch/index.js`, wire button in `telegram/batch/documentHandler.js`.
-- Modify login flow: edit `automation/http/httpFlow.js` + payloads; adjust `htmlAnalyzer` detection; test with LOG_LEVEL=debug.
-- Extend capture: add module under `automation/http/capture/` and include in orchestrator; update message builder.
-- Wire /status in coordinator mode: call `registerStatusHandler(bot, options.compatibility?.coordinator)` in `telegramHandler.js` when coordinator is available.
+- Add Telegram command: register in `src/telegram/telegramHandler.js`, update help text if needed.
+- Add batch type: add filter in `src/shared/batch/parse.js`, add handler under `src/telegram/batch/handlers/`, register in `src/telegram/batch/index.js`, wire button in `src/telegram/batch/documentHandler.js`.
+- Modify login flow: edit `src/shared/http/flow.js` + payloads; adjust `htmlAnalyzer` detection; test with LOG_LEVEL=debug.
+- Extend capture: add module under `src/shared/capture/` and include in orchestrator; update message builder.
+- Wire /status in coordinator mode: call `registerStatusHandler(bot, coordinator)` in `src/telegram/telegramHandler.js` when coordinator is available.
 
 

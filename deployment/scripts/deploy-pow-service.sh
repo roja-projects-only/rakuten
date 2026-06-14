@@ -132,8 +132,8 @@ copy_config() {
     log_info "Copying configuration files..."
     
     # Copy environment file template
-    if [[ -f "deployment/.env.pow-service.example" ]]; then
-        cp "deployment/.env.pow-service.example" "$SERVICE_DIR/.env"
+    if [[ -f "deployment/env/pow-service.env.example" ]]; then
+        cp "deployment/env/pow-service.env.example" "$SERVICE_DIR/.env"
         chown "$SERVICE_USER:$SERVICE_USER" "$SERVICE_DIR/.env"
         chmod 600 "$SERVICE_DIR/.env"
         
@@ -141,8 +141,8 @@ copy_config() {
     fi
     
     # Copy systemd service file
-    if [[ -f "deployment/pow-service.service" ]]; then
-        cp "deployment/pow-service.service" "/etc/systemd/system/"
+    if [[ -f "deployment/systemd/pow-service.service" ]]; then
+        cp "deployment/systemd/pow-service.service" "/etc/systemd/system/"
         chmod 644 "/etc/systemd/system/pow-service.service"
     fi
     

@@ -113,10 +113,22 @@ deployment/
 │   └── docker-compose.yml
 ├── railway/              # Railway configuration
 │   └── railway.json
-├── redis.conf            # Redis configuration
-├── *.service             # Systemd service files
-├── *.sh                  # User-data scripts
-└── *.example             # Environment templates
+├── systemd/              # Systemd service files
+│   ├── coordinator.service
+│   ├── worker.service
+│   └── pow-service.service
+├── env/                  # Environment templates
+│   ├── common.env.example
+│   ├── coordinator.env.example
+│   ├── worker.env.example
+│   └── pow-service.env.example
+├── scripts/              # Deployment scripts
+│   ├── deploy-pow-service.sh
+│   ├── user-data-coordinator.sh
+│   ├── user-data-worker.sh
+│   └── user-data-pow-service.sh
+└── redis/                # Redis configuration
+    └── redis.conf
 
 scripts/
 ├── deploy/               # Deployment scripts

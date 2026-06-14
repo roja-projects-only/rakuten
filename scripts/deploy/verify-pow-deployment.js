@@ -14,8 +14,8 @@
  * =============================================================================
  */
 
-const { createLogger } = require('../logger');
-const powServiceClient = require('../automation/http/fingerprinting/powServiceClient');
+const { createLogger } = require('../../src/shared/logger');
+const powServiceClient = require('../../src/shared/fingerprinting/powServiceClient');
 
 const log = createLogger('pow-deployment-verify');
 
@@ -68,7 +68,7 @@ async function verifyDeployment() {
     
     // Test 4: Verify fallback works
     log.info('4. Testing fallback behavior...');
-    const { POWServiceClient } = require('../automation/http/fingerprinting/powServiceClient');
+    const { POWServiceClient } = require('../../src/shared/fingerprinting/powServiceClient');
     const fallbackClient = new POWServiceClient({
       serviceUrl: 'http://invalid-url:9999',
       timeout: 1000

@@ -1,15 +1,14 @@
 # Environment Variables Documentation
 
-This document describes all environment variables supported by the Rakuten Credential Checker system, including both the original single-node deployment and the new distributed worker architecture.
+This document describes all environment variables supported by the Rakuten Credential Checker distributed architecture.
 
 ## Deployment Modes
 
-The system automatically detects the deployment mode based on environment variables:
+The system supports three services, each with its own entrypoint under `src/`:
 
-- **Single-Node Mode**: When `REDIS_URL` is not set (original Railway deployment)
-- **Coordinator Mode**: When `COORDINATOR_MODE=true` and `REDIS_URL` is set
-- **Worker Mode**: When `REDIS_URL` is set but `COORDINATOR_MODE` is not true
-- **POW Service Mode**: When `POW_SERVICE_MODE=true`
+- **Coordinator** (`node src/coordinator/index.js`): Telegram bot and job orchestration
+- **Worker** (`node src/worker/index.js`): Credential checking workers
+- **POW Service** (`node src/pow-service/index.js`): Proof-of-work computation service
 
 ## Core Configuration
 
@@ -19,23 +18,9 @@ The system automatically detects the deployment mode based on environment variab
 |----------|----------|---------|-------------|
 | `NODE_ENV` | No | `production` | Node.js environment (development, production, test) |
 | `LOG_LEVEL` | No | `info` | Logging level (error, warn, info, debug, trace) |
-| `JSON_LOGGING` | No | `false` | Enable structured JSON logging |
+| `TARGET_LOGIN_URL` | **Yes*** | — | Rakuten OAuth login URL |
 
-### Single-Node Mode (Original Deployment)
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `TELEGRAM_BOT_TOKEN` | **Yes** | — | Bot token from @BotFather |
-| `TARGET_LOGIN_URL` | **Yes** | — | Full OAuth URL with client_id, redirect_uri |
-| `TIMEOUT_MS` | No | `60000` | HTTP timeout for credential checks |
-| `BATCH_CONCURRENCY` | No | `1` | Parallel checks (1 = sequential) |
-| `BATCH_DELAY_MS` | No | `50` | Delay between request chunks (ms) |
-| `BATCH_HUMAN_DELAY_MS` | No | `0` | Human delay multiplier (0=disabled, 0.1=10%) |
-| `PROXY_SERVER` | No | — | Single proxy URL for all requests |
-| `FORWARD_CHANNEL_ID` | No | — | Channel ID to forward VALID credentials |
-| `ALLOWED_USER_IDS` | No | — | Comma-separated Telegram user IDs |
-| `PROCESSED_TTL_MS` | No | `2592000000` | Cache TTL (30 days in ms) |
-| `FORWARD_TTL_MS` | No | `2592000000` | Message tracking TTL (30 days in ms) |
+*Required for coordinator and worker
 
 ## Distributed Architecture
 
@@ -43,104 +28,52 @@ The system automatically detects the deployment mode based on environment variab
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `REDIS_URL` | **Yes*** | — | Redis connection URL (enables distributed mode) |
-| `REDIS_HOST` | No | `localhost` | Redis host (alternative to REDIS_URL) |
-| `REDIS_PORT` | No | `6379` | Redis port (alternative to REDIS_URL) |
-| `REDIS_PASSWORD` | No | — | Redis password (if required) |
-| `REDIS_DB` | No | `0` | Redis database number (0-15) |
+| `REDIS_URL` | **Yes*** | — | Redis connection URL |
 
-*Required for coordinator and worker modes
+*Required for coordinator and worker; optional for pow-service (caching)
 
-### Coordinator Mode
+### Coordinator
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `COORDINATOR_MODE` | **Yes** | `false` | Enable coordinator mode |
 | `TELEGRAM_BOT_TOKEN` | **Yes** | — | Bot token from @BotFather |
-| `TARGET_LOGIN_URL` | **Yes** | — | Target OAuth login URL |
-| `BACKUP_COORDINATOR` | No | `false` | Enable backup coordinator (standby) |
 | `FORWARD_CHANNEL_ID` | No | — | Channel ID for forwarding VALID credentials |
 | `ALLOWED_USER_IDS` | No | — | Comma-separated allowed user IDs |
 | `METRICS_PORT` | No | `9090` | Port for Prometheus metrics endpoint |
-| `HEALTH_CHECK_PORT` | No | `8080` | Port for health check endpoint |
+| `BATCH_CONCURRENCY` | No | `1` | Parallel checks (1 = sequential) |
+| `BATCH_DELAY_MS` | No | `50` | Delay between request chunks (ms) |
+| `BATCH_HUMAN_DELAY_MS` | No | `0` | Human delay multiplier |
+| `PROXY_SERVER` | No | — | Single proxy URL |
+| `PROXY_POOL` | No | — | Comma-separated proxy URLs |
+| `PROCESSED_TTL_MS` | No | `2592000000` | Cache TTL (30 days) |
+| `FORWARD_TTL_MS` | No | `2592000000` | Forward tracking TTL (30 days) |
 
-### Worker Mode
+### Worker
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `WORKER_ID` | No | *auto* | Unique worker identifier (auto-generated) |
 | `WORKER_CONCURRENCY` | No | `3` | Concurrent tasks per worker (1-50) |
+| `WORKER_TASK_TIMEOUT` | No | `120000` | Task timeout (ms) |
+| `WORKER_HEARTBEAT_INTERVAL` | No | `10000` | Heartbeat interval (ms) |
+| `WORKER_QUEUE_TIMEOUT` | No | `30000` | Queue timeout (ms) |
 | `POW_SERVICE_URL` | No | — | POW service HTTP endpoint |
-| `POW_SERVICE_TIMEOUT` | No | `30000` | POW service timeout (5000-60000ms) |
 
-### POW Service Mode
+### POW Service
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `POW_SERVICE_MODE` | **Yes** | `false` | Enable POW service mode |
 | `PORT` | No | `3001` | HTTP server port |
-| `REDIS_URL` | No | — | Redis for caching (optional) |
-
-### Batch Processing
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `BATCH_MAX_RETRIES` | No | `2` | Maximum retry attempts (0-10) |
-| `BATCH_TIMEOUT_MS` | No | `120000` | Task timeout (30s-10min) |
-
-### Proxy Configuration
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `PROXY_POOL` | No | — | Comma-separated proxy URLs |
-| `PROXY_HEALTH_CHECK_INTERVAL` | No | `30000` | Health check interval (10s-5min) |
-
-### Monitoring
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `METRICS_PORT` | No | `9090` | Prometheus metrics port (1024-65535) |
-| `HEALTH_CHECK_PORT` | No | `8080` | Health check port (1024-65535) |
-
-## Migration Guide
-
-### From Single-Node to Distributed
-
-1. **Keep existing variables**: All current environment variables continue to work
-2. **Add Redis**: Set `REDIS_URL` to enable distributed mode
-3. **Choose mode**: Set `COORDINATOR_MODE=true` for the main instance
-4. **Optional**: Add `POW_SERVICE_URL` for better performance
-
-### Backward Compatibility
-
-The system maintains full backward compatibility:
-
-- **No Redis**: Automatically uses single-node mode with in-memory queue
-- **Existing variables**: All original variables work unchanged
-- **Graceful degradation**: Falls back to local computation if services unavailable
+| `POW_NUM_WORKERS` | No | *CPU-1* | Worker thread count |
+| `POW_TASK_TIMEOUT` | No | `30000` | Task timeout (ms) |
 
 ## Example Configurations
 
-### Single-Node (Original)
-
-```bash
-# Required
-TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyz
-TARGET_LOGIN_URL=https://login.account.rakuten.com/sso/authorize?client_id=rakuten_ichiba_top_web&service_id=s245&response_type=code&scope=openid&redirect_uri=https%3A%2F%2Fwww.rakuten.co.jp%2F
-
-# Optional
-BATCH_CONCURRENCY=5
-PROXY_SERVER=http://proxy:8080
-FORWARD_CHANNEL_ID=-1001234567890
-LOG_LEVEL=info
-```
-
-### Distributed Coordinator
+### Coordinator
 
 ```bash
 # Required
 REDIS_URL=redis://localhost:6379
-COORDINATOR_MODE=true
 TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyz
 TARGET_LOGIN_URL=https://login.account.rakuten.com/sso/authorize?client_id=rakuten_ichiba_top_web&service_id=s245&response_type=code&scope=openid&redirect_uri=https%3A%2F%2Fwww.rakuten.co.jp%2F
 
@@ -151,14 +84,14 @@ FORWARD_CHANNEL_ID=-1001234567890
 METRICS_PORT=9090
 ```
 
-### Distributed Worker
+### Worker
 
 ```bash
 # Required
 REDIS_URL=redis://localhost:6379
 
 # Optional
-WORKER_CONCURRENCY=3  # Concurrent tasks per worker (1-50, default: 3)
+WORKER_CONCURRENCY=3
 POW_SERVICE_URL=http://pow-service:3001
 WORKER_ID=worker-01
 ```
@@ -166,9 +99,6 @@ WORKER_ID=worker-01
 ### POW Service
 
 ```bash
-# Required
-POW_SERVICE_MODE=true
-
 # Optional
 PORT=3001
 REDIS_URL=redis://localhost:6379

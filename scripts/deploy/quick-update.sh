@@ -133,28 +133,16 @@ fast_update_service() {
 
   case "$service" in
     coordinator)
-      docker cp main.js           "$container":/app/main.js
-      docker cp telegramHandler.js "$container":/app/telegramHandler.js
-      docker cp httpChecker.js     "$container":/app/httpChecker.js
-      docker cp logger.js          "$container":/app/logger.js
-      docker cp shared/            "$container":/app/shared
-      docker cp telegram/          "$container":/app/telegram
-      docker cp automation/        "$container":/app/automation
-      docker cp utils/             "$container":/app/utils
+      docker cp src/              "$container":/app/src
+      docker cp package.json      "$container":/app/package.json
       ;;
     worker)
-      docker cp worker.js      "$container":/app/worker.js
-      docker cp httpChecker.js "$container":/app/httpChecker.js
-      docker cp logger.js      "$container":/app/logger.js
-      docker cp shared/        "$container":/app/shared
-      docker cp automation/    "$container":/app/automation
-      docker cp utils/         "$container":/app/utils
+      docker cp src/              "$container":/app/src
+      docker cp package.json      "$container":/app/package.json
       ;;
     pow-service)
-      docker cp pow-service.js                       "$container":/app/pow-service.js
-      docker cp logger.js                            "$container":/app/logger.js
-      docker cp shared/                              "$container":/app/shared
-      docker cp automation/http/fingerprinting/      "$container":/app/automation/http/fingerprinting
+      docker cp src/              "$container":/app/src
+      docker cp package.json      "$container":/app/package.json
       ;;
   esac
 

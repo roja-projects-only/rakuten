@@ -7,15 +7,11 @@ Requires=network.target
 
 [Service]
 Type=simple
-User=worker
-Group=worker
+User=rakuten
+Group=rakuten
 WorkingDirectory=/opt/rakuten-checker
-ExecStart=/usr/bin/docker run --rm --name worker-%i \
-  --network host \
-  --env-file /opt/rakuten-checker/.env.worker \
-  --env WORKER_ID=worker-%i \
-  --volume /opt/rakuten-checker/logs:/app/logs \
-  rakuten-worker:latest
+ExecStart=/usr/bin/node src/worker/index.js
+EnvironmentFile=/opt/rakuten-checker/.env
 
 # Restart policy
 Restart=always
@@ -37,7 +33,7 @@ ReadWritePaths=/opt/rakuten-checker/logs
 # Logging
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=worker-%i
+SyslogIdentifier=worker
 
 # Graceful shutdown
 TimeoutStopSec=120

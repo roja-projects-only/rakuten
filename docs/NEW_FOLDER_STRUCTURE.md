@@ -143,21 +143,26 @@ deployment/                         # Kept at root level
 ├── docker/
 │   ├── Dockerfile.coordinator
 │   ├── Dockerfile.worker
-│   └── Dockerfile.pow-service
+│   ├── Dockerfile.pow-service
+│   └── docker-compose.yml
+├── railway/
+│   └── railway.json
 ├── systemd/
 │   ├── coordinator.service
 │   ├── worker.service
 │   └── pow-service.service
-├── aws/
+├── env/
+│   ├── common.env.example
+│   ├── coordinator.env.example
+│   ├── worker.env.example
+│   └── pow-service.env.example
+├── scripts/
+│   ├── deploy-pow-service.sh
 │   ├── user-data-coordinator.sh
 │   ├── user-data-worker.sh
 │   └── user-data-pow-service.sh
-├── redis/
-│   └── redis.conf
-└── env-examples/
-    ├── .env.coordinator.example
-    ├── .env.worker.example
-    └── .env.pow-service.example
+└── redis/
+    └── redis.conf
 
 docs/                               # Kept at root level
 ├── AUDIT_CURRENT_WORKSPACE.md

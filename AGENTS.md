@@ -12,18 +12,18 @@ Commit locally after each task (no push unless asked). Do not generate extra doc
 - Coordinator/worker: coordinator queues tasks to Redis; workers execute.
 
 ## Key Entry Points
-- App bootstrap: `main.js`
-- Telegram bot: `telegramHandler.js`
-- Worker entry: `worker.js`
-- POW service: `pow-service.js` (HTTP on port 3001, mapped to host 8080)
-- HTTP checker: `httpChecker.js`
-- Batch UX: `telegram/batchHandlers.js` → `telegram/batch/index.js`, `telegram/batch/documentHandler.js`
-- Batch execution: `telegram/batch/batchExecutor.js` (progress/retries), `telegram/batch/circuitBreaker.js` (auto-pause)
-- Combine UX: `telegram/combineHandler.js`, `telegram/combineBatchRunner.js`
-- Channel forwarding: `telegram/channelForwarder.js` (single) and `shared/coordinator/ChannelForwarder.js` (distributed)
-- Progress tracking: `shared/coordinator/ProgressTracker.js`
-- Config/export: `telegram/configHandler.js`, `telegram/exportHandler.js`; `/status`: `telegram/statusHandler.js` (wire with coordinator when distributed)
-- Compatibility: `shared/compatibility/` — `GracefulDegradation.js`, `SingleNodeMode.js` (fallback when Redis unavailable)
+- Coordinator: `src/coordinator/index.js`
+- Telegram bot: `src/telegram/telegramHandler.js`
+- Worker entry: `src/worker/index.js`
+- POW service: `src/pow-service/index.js` (HTTP on port 3001)
+- HTTP checker: `src/shared/http/checker.js`
+- Batch UX: `src/telegram/batch/index.js`, `src/telegram/batch/documentHandler.js`
+- Batch execution: `src/telegram/batch/batchExecutor.js` (progress/retries), `src/telegram/batch/circuitBreaker.js` (auto-pause)
+- Combine UX: `src/telegram/combineHandler.js`, `src/telegram/combineBatchRunner.js`
+- Channel forwarding: `src/telegram/channelForwarder.js` and `src/coordinator/ChannelForwarder.js`
+- Progress tracking: `src/coordinator/ProgressTracker.js`
+- Config/export: `src/telegram/configHandler.js`, `src/telegram/exportHandler.js`; `/status`: `src/telegram/statusHandler.js` (wire with coordinator)
+- Compatibility: coordination-mode only (no fallback)
 
 ## Critical Patterns
 - For long work in Telegram callbacks, wrap with `setTimeout(() => { ... }, 0)` to avoid Telegraf timeouts.
@@ -44,7 +44,7 @@ Commit locally after each task (no push unless asked). Do not generate extra doc
 
 ## Deployment Notes
 - Required env: `TELEGRAM_BOT_TOKEN`, `TARGET_LOGIN_URL`; add `REDIS_URL` for distributed.
-- Coordinator: `COORDINATOR_MODE=true`, exposes port 9090 (metrics).
+- Coordinator: exposes port 9090 (metrics).
 - Worker: `WORKER_CONCURRENCY` (default 3), `POW_SERVICE_URL`, `WORKER_TASK_TIMEOUT`.
 - POW service: internal port 3001, mapped to host 8080 (`-p 8080:3001`).
 - Dockerfiles use `--chown` on COPY (no `RUN chown -R`); npm install layer cached across code changes.

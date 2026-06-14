@@ -22,13 +22,13 @@
    - `/config reset <KEY>` - Revert to env/default
 
 ### Integration Points
-- [main.js](../main.js) - Coordinator initialization
-- [worker.js](../worker.js) - Worker initialization  
-- [telegramHandler.js](../telegramHandler.js) - Command registration
-- [telegram/batch/batchExecutor.js](../telegram/batch/batchExecutor.js) - Uses `getBatchConfig()`
-- [telegram/combineBatchRunner.js](../telegram/combineBatchRunner.js) - Uses `getBatchConfig()`
-- [telegram/channelForwarder.js](../telegram/channelForwarder.js) - Uses `getChannelId()`
-- [shared/worker/WorkerNode.js](../shared/worker/WorkerNode.js) - Uses `getWorkerConfig()`
+- [src/coordinator/index.js](../src/coordinator/index.js) - Coordinator initialization
+- [src/worker/index.js](../src/worker/index.js) - Worker initialization  
+- [src/telegram/telegramHandler.js](../src/telegram/telegramHandler.js) - Command registration
+- [src/telegram/batch/batchExecutor.js](../src/telegram/batch/batchExecutor.js) - Uses `getBatchConfig()`
+- [src/telegram/combineBatchRunner.js](../src/telegram/combineBatchRunner.js) - Uses `getBatchConfig()`
+- [src/telegram/channelForwarder.js](../src/telegram/channelForwarder.js) - Uses `getChannelId()`
+- [src/worker/WorkerNode.js](../src/worker/WorkerNode.js) - Uses `getWorkerConfig()`
 - [shared/coordinator/ProxyPoolManager.js](../shared/coordinator/ProxyPoolManager.js) - Uses `getProxyConfig()`
 - [shared/coordinator/JobQueueManager.js](../shared/coordinator/JobQueueManager.js) - Uses config getter
 

@@ -14,8 +14,8 @@
  */
 
 const { createLogger } = require('../logger');
-const powServiceClient = require('../automation/http/fingerprinting/powServiceClient');
-const { computeCresFromMdata } = require('../automation/http/fingerprinting/challengeGenerator');
+const powServiceClient = require('../../src/shared/fingerprinting/powServiceClient');
+const { computeCresFromMdata } = require('../../src/shared/fingerprinting/challengeGenerator');
 
 const log = createLogger('pow-integration-test');
 
@@ -162,7 +162,7 @@ class POWIntegrationTest {
     
     try {
       // Create a client with invalid service URL to simulate unavailability
-      const { POWServiceClient } = require('../automation/http/fingerprinting/powServiceClient');
+      const { POWServiceClient } = require('../../src/shared/fingerprinting/powServiceClient');
       const fallbackClient = new POWServiceClient({
         serviceUrl: 'http://localhost:9999', // Non-existent service
         timeout: 1000 // Short timeout

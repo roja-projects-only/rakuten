@@ -11,16 +11,10 @@ This guide covers deploying the POW Service to an EC2 c6i.large spot instance.
 
 ## Quick Deployment
 
-1. **Upload files to EC2 instance:**
+1. **Upload project files to EC2 instance:**
    ```bash
-   # Copy deployment files
-   scp -r deployment/ ubuntu@your-ec2-ip:/tmp/
-   scp Dockerfile.pow-service ubuntu@your-ec2-ip:/tmp/
-   scp pow-service.js ubuntu@your-ec2-ip:/tmp/
-   scp -r shared/ ubuntu@your-ec2-ip:/tmp/
-   scp -r automation/ ubuntu@your-ec2-ip:/tmp/
-   scp logger.js ubuntu@your-ec2-ip:/tmp/
-   scp package*.json ubuntu@your-ec2-ip:/tmp/
+   # Copy project files
+   scp -r . ubuntu@your-ec2-ip:/opt/rakuten-checker/
    ```
 
 2. **SSH to EC2 instance:**
@@ -77,22 +71,22 @@ sudo mkdir -p /opt/pow-service/{logs,config}
 sudo chown -R powservice:powservice /opt/pow-service
 ```
 
-### 3. Build Docker Image
+### 3. Install Dependencies
 
 ```bash
 # Copy files to service directory
 sudo cp -r /tmp/* /opt/pow-service/
 cd /opt/pow-service
 
-# Build Docker image
-sudo docker build -f Dockerfile.pow-service -t pow-service:latest .
+# Install dependencies
+npm ci --omit=dev
 ```
 
 ### 4. Configure Environment
 
 ```bash
 # Copy environment template
-sudo cp deployment/.env.pow-service.example /opt/pow-service/.env
+sudo cp deployment/env/pow-service.env.example /opt/pow-service/.env
 sudo chown powservice:powservice /opt/pow-service/.env
 sudo chmod 600 /opt/pow-service/.env
 
@@ -123,7 +117,7 @@ WORKER_HEARTBEAT_INTERVAL=10000 # Heartbeat frequency
 
 ```bash
 # Copy service file
-sudo cp deployment/pow-service.service /etc/systemd/system/
+sudo cp deployment/systemd/pow-service.service /etc/systemd/system/
 
 # Reload systemd and enable service
 sudo systemctl daemon-reload

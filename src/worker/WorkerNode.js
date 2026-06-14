@@ -477,10 +477,10 @@ class WorkerNode {
       });
       
       // Request cres from POW service (with fallback)
-      // Note: POW service integration is handled internally by httpChecker.js
+      // Note: POW service integration is handled internally by src/shared/http/checker.js
       // which uses powServiceClient for cres computation with automatic fallback
       
-      // Execute credential check via existing httpChecker.js with assigned proxy
+      // Execute credential check via src/shared/http/checker.js with assigned proxy
       const checkResult = await checkCredentials(username, password, {
         proxy: proxyUrl,
         timeoutMs: 60000,
