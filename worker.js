@@ -1,4 +1,0 @@
-#!/usr/bin/env node
-// Thin bridge — delegates to src/worker/index.js
-// See docs/PHASE_3_SERVICE_MIGRATION.md
-require('./src/worker');

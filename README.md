@@ -31,52 +31,101 @@ High-speed distributed Telegram bot for validating Rakuten account credentials w
 
 ## 🚀 Quick Start
 
-### Option 1: AWS EC2 Deployment (Recommended)
+### Docker Compose (Recommended)
 ```powershell
 # 1. Install dependencies
 npm install
 
-# 2. Configure for AWS
-copy config\.env.coordinator .env
-# Edit .env with your settings
+# 2. Configure environment
+copy .env.example .env
+# Edit .env with your TELEGRAM_BOT_TOKEN, TARGET_LOGIN_URL, REDIS_URL
 
-# 3. Start coordinator
-.\scripts\setup\fix-coordinator.bat
+# 3. Start all services
+docker compose -f deployment/docker/docker-compose.yml up -d
 ```
 
-### Option 2: Local Development
+### Local Development
 ```powershell
 # 1. Install dependencies
 npm install
 
-# 2. Configure for local development
-copy config\.env.local .env
+# 2. Configure environment
+copy .env.example .env
 # Edit .env with your settings
 
-# 3. Start with Docker Compose
-docker-compose up -d redis
-.\scripts\setup\fix-coordinator-issue.ps1
+# 3. Start coordinator (requires Redis)
+npm run start:coordinator
+
+# 4. Start worker (in separate terminal)
+npm run start:worker
+
+# 5. Start POW service (in separate terminal)
+npm run start:pow-service
 ```
 
 ## 📁 Project Structure
 
 ```
-├── config/                 # Environment configurations
-├── scripts/
-│   ├── debug/             # System monitoring and debugging
-│   ├── setup/             # Installation and configuration
-│   ├── maintenance/       # Redis cleanup and maintenance
-│   ├── tests/             # Integration and performance tests
-│   ├── deploy/            # Deployment scripts
-│   └── migration/         # Data migration utilities
-├── shared/                # Distributed system components
-│   ├── coordinator/       # Job orchestration and HA
-│   ├── worker/           # Task processing
-│   ├── redis/            # Redis client and schemas
-│   └── config/           # Environment validation
-├── telegram/             # Telegram bot handlers
-├── automation/           # HTTP checking and batch processing
-└── deployment/           # Docker and systemd configurations
+src/
+├── coordinator/          # Coordinator service (Telegram bot + job orchestration)
+│   ├── index.js          # Entrypoint
+│   ├── Coordinator.js    # Main orchestrator
+│   ├── JobQueueManager.js # Redis-based task queue
+│   ├── ProgressTracker.js # Batch progress tracking
+│   ├── ProxyPoolManager.js # Proxy rotation
+│   ├── ChannelForwarder.js # Channel forwarding
+│   ├── MetricsManager.js # Prometheus metrics
+│   └── MetricsServer.js  # Metrics HTTP endpoint
+├── worker/               # Worker service (credential checking)
+│   ├── index.js          # Entrypoint
+│   └── WorkerNode.js     # Worker execution loop
+├── pow-service/          # POW service (proof-of-work computation)
+│   └── index.js          # Entrypoint with inline POWService
+├── shared/               # Shared modules
+│   ├── config/           # Environment validation and config service
+│   ├── logger/           # Structured logging
+│   ├── redis/            # Redis client and key schema
+│   ├── http/             # HTTP client, flow, analyzer, checker
+│   ├── batch/            # Batch processing, parsing, processed store
+│   ├── fingerprinting/   # POW challenge, bio/rat generators
+│   ├── capture/          # Account data capture
+│   ├── payloads/         # Request payloads
+│   ├── errors/           # Error handling
+│   └── utils/            # Utility functions
+└── telegram/             # Telegram bot handlers
+    ├── telegramHandler.js # Bot setup and command registration
+    ├── messages/          # Message formatting helpers
+    ├── batch/             # Batch processing handlers
+    ├── combineHandler.js  # /combine command
+    ├── combineBatchRunner.js # Combine batch execution
+    ├── channelForwarder.js # Channel forwarding
+    ├── channelForwardStore.js # Forward dedup store
+    ├── configHandler.js   # /config command
+    ├── exportHandler.js   # Export VALID credentials
+    ├── statusHandler.js   # /status command
+    └── messageTracker.js  # Forwarded message updates
+
+deployment/
+├── docker/               # Docker configuration
+│   ├── Dockerfile.coordinator
+│   ├── Dockerfile.worker
+│   ├── Dockerfile.pow-service
+│   └── docker-compose.yml
+├── railway/              # Railway configuration
+│   └── railway.json
+├── redis.conf            # Redis configuration
+├── *.service             # Systemd service files
+├── *.sh                  # User-data scripts
+└── *.example             # Environment templates
+
+scripts/
+├── deploy/               # Deployment scripts
+├── tests/                # Integration and unit tests
+├── maintenance/          # Redis cleanup and maintenance
+├── debug/                # Debug utilities
+└── migration/            # Data migration scripts
+
+docs/                     # Project documentation
 ```
 
 ## ⚙️ Environment Variables
@@ -85,6 +134,7 @@ docker-compose up -d redis
 |----------|----------|---------|-------------|
 | `TELEGRAM_BOT_TOKEN` | ✅ | - | Bot token from @BotFather |
 | `TARGET_LOGIN_URL` | ✅ | - | Rakuten OAuth login URL |
+| `REDIS_URL` | ✅ | - | Redis connection URL |
 | `FORWARD_CHANNEL_ID` | ❌ | - | Channel ID to forward VALID credentials |
 | `TIMEOUT_MS` | ❌ | `60000` | Request timeout (ms) |
 | `BATCH_CONCURRENCY` | ❌ | `1` | Parallel batch checks (1 = sequential) |
@@ -93,7 +143,8 @@ docker-compose up -d redis
 | `BATCH_HUMAN_DELAY_MS` | ❌ | `0` | Human delay multiplier for batch (0=skip, 0.1=10%) |
 | `PROXY_SERVER` | ❌ | - | Proxy URL (any format) |
 | `LOG_LEVEL` | ❌ | `info` | Logging: error\|warn\|info\|debug |
-| `REDIS_URL` | ❌ | - | Redis URL for cloud (JSONL locally) |
+| `WORKER_CONCURRENCY` | ❌ | `3` | Concurrent tasks per worker |
+| `POW_SERVICE_URL` | ❌ | - | POW service endpoint |
 
 ## 📖 Commands
 
@@ -121,8 +172,8 @@ Aborts the currently running batch process.
 `/combine` → upload files → `/done` → choose type → confirm.
 
 ### Config & Status
-- `/config` — view or set centralized config (when Redis/config service is available).
-- `/status` — system health and workers (when running as coordinator with status handler wired).
+- `/config` — view or set centralized config
+- `/status` — system health and workers
 
 ### URL Batch
 ```
@@ -138,43 +189,6 @@ Process credentials from a remote URL.
 | `INVALID` | ❌ | Wrong credentials |
 | `BLOCKED` | 🔒 | Account locked/captcha |
 | `ERROR` | ⚠️ | Technical failure |
-
-## 🏗️ Architecture
-
-```
-main.js                     # Entry point, env validation, config service, shutdown
-httpChecker.js              # Core credential checker
-telegramHandler.js          # Telegram bot commands
-├── telegram/
-│   ├── messages/           # MarkdownV2 helpers + message builders (static, check, capture, batch)
-│   ├── batchHandlers.js    # Facade → batch/ (file/URL batch)
-│   ├── batch/              # documentHandler, batchExecutor, handlers/ (hotmail, ulp, jp, all)
-│   ├── combineHandler.js   # /combine → /done flow
-│   ├── combineBatchRunner.js
-│   ├── channelForwarder.js # Forward VALID creds to channel
-│   ├── channelForwardStore.js # Dedupe store for forwarding
-│   ├── configHandler.js    # /config (centralized config)
-│   ├── exportHandler.js    # Export VALID from Redis
-│   ├── statusHandler.js    # /status (system health)
-│   └── messageTracker.js   # Forwarded message updates
-└── automation/
-    ├── http/
-    │   ├── httpFlow.js     # Login flow (navigate → email → password)
-    │   ├── httpClient.js   # Axios client with cookie jar
-    │   ├── sessionManager.js  # Session lifecycle
-    │   ├── htmlAnalyzer.js # Response outcome detection
-    │   ├── httpDataCapture.js # Points/Cash/Rank API capture
-    │   └── fingerprinting/
-    │       ├── challengeGenerator.js  # cres POW algorithm
-    │       ├── powServiceClient.js    # Optional POW service client
-    │       ├── ratGenerator.js        # RAT fingerprint data
-    │       └── bioGenerator.js        # Behavioral biometrics
-    └── batch/
-        ├── parse.js        # File parsing, type filters
-        ├── hotmail.js      # HOTMAIL domain filter
-        ├── ulp.js          # Rakuten domain filter
-        └── processedStore.js # Dedup cache (30-day TTL)
-```
 
 ## 🔐 cres Algorithm
 
@@ -192,7 +206,7 @@ The algorithm computes a 16-char string where `MurmurHash3_x64_128(string, seed)
 - Worker thread pool for non-blocking batch processing
 - 5-minute cache for repeated mask+key+seed combinations
 
-Implementation: `automation/http/fingerprinting/challengeGenerator.js`
+Implementation: `src/shared/fingerprinting/challengeGenerator.js`
 
 ## 📡 Data Capture API
 
@@ -210,11 +224,17 @@ POST https://ichiba-common-web-gateway.rakuten.co.jp/ichiba-common/headerinfo/ge
 ## 🔧 Development
 
 ```powershell
-# Run with debug logging
-$env:LOG_LEVEL="debug"; npm start
+# Run coordinator with debug logging
+$env:LOG_LEVEL="debug"; npm run start:coordinator
 
-# Run in production
-npm start
+# Run worker
+npm run start:worker
+
+# Run POW service
+npm run start:pow-service
+
+# Run all tests
+npm run test:integration
 ```
 
 ## 📝 Batch Domain Filters
@@ -232,23 +252,37 @@ npm start
 - Batch progress updates throttled to every 5 seconds
 - Respect Rakuten's rate limits with appropriate delays
 
-## 🚀 Deployment (Railway)
+## 🚀 Deployment
 
+### Docker Compose
+```powershell
+# Build and start all services
+docker compose -f deployment/docker/docker-compose.yml up -d
+
+# View logs
+docker compose -f deployment/docker/docker-compose.yml logs -f coordinator
+
+# Stop all services
+docker compose -f deployment/docker/docker-compose.yml down
+```
+
+### Railway
 1. Push to GitHub
 2. Connect repo to Railway
 3. Add Redis service in Railway (click "New" → "Database" → "Redis")
-4. Set environment variables in Railway dashboard:
-   - `TELEGRAM_BOT_TOKEN`
-   - `TARGET_LOGIN_URL`
-   - `REDIS_URL` (auto-set if you link the Redis service)
+4. Set environment variables in Railway dashboard
 5. Deploy — Railway auto-detects Node.js and builds native dependencies
 
-Config file: `railway.json`
+Config file: `deployment/railway/railway.json`
+
+### AWS EC2
+See `deployment/DEPLOYMENT.md` for detailed AWS setup instructions.
 
 ## 📚 Developer docs
 
-- [AGENTS.md](AGENTS.md) — Agent playbook (quick start, entry points, patterns, commands).
-- [AI_CONTEXT.md](AI_CONTEXT.md) — Architecture, data flows, storage, and how-tos.
+- [AGENTS.md](AGENTS.md) — Agent playbook (quick start, entry points, patterns, commands)
+- [AI_CONTEXT.md](AI_CONTEXT.md) — Architecture, data flows, storage, and how-tos
+- [docs/](docs/) — Migration records and implementation documentation
 
 ## 📄 License
 
