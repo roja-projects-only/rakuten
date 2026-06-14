@@ -59,20 +59,43 @@ function agentDebugLog(location, message, hypothesisId, data) {
 }
 // #endregion
 
-// Check POW service availability on module load
-let powServiceAvailable = false;
-(async () => {
-  try {
-    powServiceAvailable = await powServiceClient.testConnection();
-    if (!powServiceAvailable) {
-      log.warn('POW service unavailable - will use local fallback computation for slower processing');
-    } else {
-      log.info('POW service connection verified');
-    }
-  } catch (error) {
-    log.warn('POW service connection test failed - will use local fallback computation', { error: error.message });
+// Lazy POW service availability check — deferred to first use to avoid import-time side effects.
+let powServiceAvailable = null; // null = not yet checked
+let powServiceCheckPromise = null;
+
+/**
+ * Check POW service availability (lazy, runs once on first call).
+ * Skipped when POW_SKIP_CONNECTION_TEST=1 (test mode uses local computation directly).
+ * @returns {Promise<boolean>}
+ */
+async function ensurePowServiceChecked() {
+  if (powServiceAvailable !== null) return powServiceAvailable;
+  if (powServiceCheckPromise) return powServiceCheckPromise;
+
+  // In test mode, skip the connection test entirely — local POW is used directly.
+  if (process.env.POW_SKIP_CONNECTION_TEST === '1') {
+    powServiceAvailable = false;
+    log.info('POW service connection test skipped (POW_SKIP_CONNECTION_TEST=1) — using local computation');
+    return powServiceAvailable;
   }
-})();
+
+  powServiceCheckPromise = (async () => {
+    try {
+      powServiceAvailable = await powServiceClient.testConnection();
+      if (!powServiceAvailable) {
+        log.warn('POW service unavailable - will use local fallback computation for slower processing');
+      } else {
+        log.info('POW service connection verified');
+      }
+    } catch (error) {
+      powServiceAvailable = false;
+      log.warn('POW service connection test failed - will use local fallback computation', { error: error.message });
+    }
+    return powServiceAvailable;
+  })();
+
+  return powServiceCheckPromise;
+}
 
 // Rakuten login endpoints
 const LOGIN_BASE = 'https://login.account.rakuten.com';
@@ -147,6 +170,8 @@ async function postUtilGcWithRetries(client, { gcUrl, gcPayload, timeoutMs, head
  */
 async function computeCresWithService(mdata, step, options = {}) {
   const { forbidFakeCres = false } = options;
+  // Ensure POW service availability is checked (lazy, once)
+  await ensurePowServiceChecked();
   try {
     const mdataObj = typeof mdata === 'string' ? JSON.parse(mdata) : mdata;
     const body = mdataObj?.body;
@@ -881,4 +906,5 @@ module.exports = {
   submitPasswordStep,
   followRedirects,
   sleep,
+  ensurePowServiceChecked,
 };

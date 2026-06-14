@@ -78,7 +78,11 @@ function logLine(level, scope, args) {
   const scopeText = scope ? `[${scope}]` : '';
   const line = `${COLORS.gray}${timestamp()}${COLORS.reset} ${color}${label}${COLORS.reset} ${COLORS.blue}${scopeText}${COLORS.reset} ${formatArgs(args)}`.trim();
 
-  if (level === 'error') {
+  // In test mode, route everything through stdout to avoid PowerShell
+  // NativeCommandError on stderr output from native commands.
+  if (process.env.LOCAL_FLOW_TEST === '1') {
+    console.log(line);
+  } else if (level === 'error') {
     console.error(line);
   } else if (level === 'warn') {
     console.warn(line);

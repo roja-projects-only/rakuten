@@ -94,6 +94,11 @@ class POWServiceClient {
     }
     
     this.stats.localCacheMisses++;
+
+    // In test mode, skip HTTP service entirely — use local computation directly.
+    if (process.env.POW_SKIP_CONNECTION_TEST === '1') {
+      return await this.fallbackToLocal(params, cacheKey);
+    }
     
     try {
       // Try POW service first
