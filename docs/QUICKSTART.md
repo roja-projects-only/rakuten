@@ -5,7 +5,7 @@ This guide helps you quickly set up the distributed Rakuten checker for local de
 ## Prerequisites
 
 - Docker and Docker Compose installed
-- Node.js 18+ (for local development)
+- Node.js 22+ (for local development)
 - Redis (or use Docker Compose)
 - Telegram Bot Token
 
