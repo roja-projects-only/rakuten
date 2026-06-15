@@ -66,9 +66,9 @@ ENV JSON_LOGGING=true
 # Expose port
 EXPOSE 3001
 
-# Health check
+# Health check — respects PORT env (defaults to 3001 if unset)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:3001/health || exit 1
+    CMD curl -f http://localhost:${PORT:-3001}/health || exit 1
 
 # Switch to non-root user
 USER powservice

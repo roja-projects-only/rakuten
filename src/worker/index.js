@@ -5,7 +5,7 @@
  * Always runs as worker.
  *
  * Required env:
- *   REDIS_URL
+ *   REDIS_URL, TARGET_LOGIN_URL
  * Optional:
  *   WORKER_ID, WORKER_CONCURRENCY, POW_SERVICE_URL, WORKER_TASK_TIMEOUT,
  *   WORKER_HEARTBEAT_INTERVAL, WORKER_QUEUE_TIMEOUT
@@ -26,6 +26,13 @@ async function main() {
     // 1. Validate required env
     if (!process.env.REDIS_URL) {
       log.error('Missing required environment variable: REDIS_URL');
+      process.exit(1);
+    }
+    // TARGET_LOGIN_URL is required for credential checking at task execution time.
+    // Validating here gives a clear startup failure instead of a confusing late error
+    // inside checkCredentials() during the first dequeued task.
+    if (!process.env.TARGET_LOGIN_URL) {
+      log.error('Missing required environment variable: TARGET_LOGIN_URL');
       process.exit(1);
     }
 
