@@ -203,7 +203,7 @@ A browser terminal opens. Run commands **one block at a time**:
 **Block 1 — Install Docker & Git:**
 ```bash
 sudo apt update && sudo apt upgrade -y
-sudo apt install -y docker.io docker-buildx-plugin git
+sudo apt install -y docker.io docker-buildx git
 sudo systemctl enable docker && sudo systemctl start docker
 sudo usermod -aG docker ubuntu
 ```
@@ -300,7 +300,7 @@ Click instance → **Connect** → **EC2 Instance Connect** → **Connect**.
 **Block 1 — Install Docker & Git:**
 ```bash
 sudo apt update && sudo apt upgrade -y
-sudo apt install -y docker.io docker-buildx-plugin git
+sudo apt install -y docker.io docker-buildx git
 sudo systemctl enable docker && sudo systemctl start docker
 sudo usermod -aG docker ubuntu
 ```
@@ -413,7 +413,7 @@ Click instance → **Connect** → **EC2 Instance Connect** → **Connect**.
 **Block 1 — Install Docker & Git:**
 ```bash
 sudo apt update && sudo apt upgrade -y
-sudo apt install -y docker.io docker-buildx-plugin git
+sudo apt install -y docker.io docker-buildx git
 sudo systemctl enable docker && sudo systemctl start docker
 sudo usermod -aG docker ubuntu
 ```
