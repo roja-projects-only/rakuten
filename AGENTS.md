@@ -29,7 +29,7 @@ Distributed Node.js/Docker system for validating Rakuten account credentials via
 
 1. Syntax check: `node -c src/path/to/file.js`
 2. Local full-flow test: `npm run test:flow` (exercises production modules in a single process)
-3. Config system test: `npm run test:config` (48 tests)
+3. Config system test: `npm run test:config` (schema validation + Redis ops + pub/sub)
 4. Integration tests: `npm run test:integration` (requires Redis)
 5. Verify changed module with `LOG_LEVEL=debug` for HTTP flow output
 6. Grep the codebase for stale references to removed patterns

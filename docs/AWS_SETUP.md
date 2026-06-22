@@ -559,7 +559,7 @@ curl http://POW_PRIVATE_IP:8080/health
 
 ## Updating Code
 
-The repo includes a **quick-update script** that automates the `git pull` → `docker build` → `docker restart` cycle on each EC2 instance.
+The repo includes a **quick-update script** that automates the `git pull` → `docker stop`/`rm` → `docker build` → `docker run` cycle on each EC2 instance (full mode), or a `docker cp` → `docker commit` → container recreate (`--fast` mode).
 
 ### Quick Update (Recommended)
 
@@ -583,7 +583,7 @@ chmod +x scripts/deploy/quick-update.sh
 ./scripts/deploy/quick-update.sh pow-service --fast
 ```
 
-**When to use `--fast`:** Only when `package.json` has NOT changed. The script copies changed JS files into the running container and restarts it. For any dependency or Dockerfile change, use a full rebuild (omit `--fast`).
+**When to use `--fast`:** Only when `package.json` has NOT changed. The script copies changed JS files into the container, commits them to the image, then recreates the container (it does **not** run `npm install`). For any dependency or Dockerfile change, use a full rebuild (omit `--fast`).
 
 ### One-liner via SSH
 

@@ -22,7 +22,7 @@ The system supports three services, each with its own entrypoint under `src/`:
 | `TARGET_LOGIN_URL` | **Yes*** | — | Rakuten OAuth login URL |
 | `TIMEOUT_MS` | No | `60000` | HTTP request timeout for credential checks (ms) |
 
-*Required for coordinator and worker
+*Required for **coordinator only**. The worker reads `TARGET_LOGIN_URL` but does not hard-require it at startup (it is supplied per-task by the coordinator).
 
 ## Distributed Architecture
 
@@ -30,7 +30,11 @@ The system supports three services, each with its own entrypoint under `src/`:
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `REDIS_URL` | **Yes*** | — | Redis connection URL |
+| `REDIS_URL` | **Yes*** | — | Redis connection URL (takes precedence over the discrete `REDIS_*` vars below) |
+| `REDIS_HOST` | No | `localhost` | Redis host (used only when `REDIS_URL` is unset) |
+| `REDIS_PORT` | No | `6379` | Redis port (used only when `REDIS_URL` is unset) |
+| `REDIS_DB` | No | `0` | Redis database index (used only when `REDIS_URL` is unset) |
+| `REDIS_PASSWORD` | No | — | Redis password (used only when `REDIS_URL` is unset; prefer embedding in `REDIS_URL`) |
 | `REDIS_COMMAND_TIMEOUT` | No | `60000` | Redis command timeout (ms) |
 
 *Required for coordinator and worker; optional for pow-service (caching)
@@ -50,6 +54,7 @@ The system supports three services, each with its own entrypoint under `src/`:
 | `BATCH_HUMAN_DELAY_MS` | No | `0` | Human delay multiplier |
 | `PROXY_SERVER` | No | — | Single proxy URL |
 | `PROXY_POOL` | No | — | Comma-separated proxy URLs |
+| `PROXY_HEALTH_CHECK_INTERVAL` | No | `30000` | Proxy health-check interval (ms) |
 | `PROCESSED_TTL_MS` | No | `2592000000` | Cache TTL (30 days) |
 | `FORWARD_TTL_MS` | No | `2592000000` | Forward tracking TTL (30 days) |
 
@@ -63,8 +68,11 @@ The system supports three services, each with its own entrypoint under `src/`:
 | `WORKER_HEARTBEAT_INTERVAL` | No | `10000` | Heartbeat interval (ms) |
 | `WORKER_QUEUE_TIMEOUT` | No | `30000` | Queue timeout (ms) |
 | `WORKER_HTTP_PORT` | No | `3010` | Optional HTTP status endpoint port |
-| `POW_SERVICE_URL` | No | — | POW service HTTP endpoint |
+| `POW_SERVICE_URL` | No | `http://localhost:3001`† | POW service HTTP endpoint |
 | `POW_CLIENT_TIMEOUT` | No | `25000` | POW service HTTP client timeout (ms) |
+| `POW_SKIP_CONNECTION_TEST` | No | — | Set to `1` to skip the POW service reachability check and use local computation directly (used by the test harness) |
+
+†The POW client falls back to `http://localhost:3001` when `POW_SERVICE_URL` is unset. Production deployments must set it explicitly (e.g. the POW instance's private IP on port 8080).
 
 ### POW Service
 
@@ -127,10 +135,14 @@ Common validation errors and solutions:
 
 | Error | Solution |
 |-------|----------|
-| `REDIS_URL must start with redis://` | Use proper Redis URL format |
+| `REDIS_URL must start with redis:// or rediss://` | Use proper Redis URL format |
 | `TELEGRAM_BOT_TOKEN format is invalid` | Check token from @BotFather |
-| `BATCH_CONCURRENCY must be between 1-50` | Use valid concurrency range |
-| `POW_SERVICE_URL must start with http://` | Use proper HTTP URL format |
+| `BATCH_CONCURRENCY must be between 1-20` | Startup validator caps `BATCH_CONCURRENCY` at 20 (the `/config set` path allows up to 50) |
+| `POW_SERVICE_URL must start with http:// or https://` | Use proper HTTP URL format |
+
+> Startup validation (`environment.js`) and the `/config` validator (`configSchema.js`) use different
+> ranges for some variables — see [CONFIG_SYSTEM.md](CONFIG_SYSTEM.md). A value accepted at startup may be
+> rejected by `/config set`.
 
 ## Security Considerations
 

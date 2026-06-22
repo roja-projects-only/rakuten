@@ -57,6 +57,10 @@ Owns: task execution (credential checking via HTTP flow), POW computation (local
 Key files:
 - `index.js` — Service entrypoint (Redis connection, task dequeue)
 - `WorkerNode.js` — Worker execution loop (pops tasks, checks credentials, publishes results)
+- `processTaskDirect.js` — Core task execution path (also reused by the local `test-full-flow.js` harness)
+- `heartbeat.js` — Heartbeat payload build/send to Redis
+- `httpServer.js` — Worker HTTP health/status/metrics endpoints (`GET /health`, `/status`, `/metrics`, `/`)
+- `workerErrors.js` — Fatal vs transient error classification
 
 Configuration: `WORKER_CONCURRENCY` (default 3), `WORKER_TASK_TIMEOUT` (120s), `POW_SERVICE_URL` (optional, falls back to local).
 
@@ -69,10 +73,10 @@ Standalone HTTP service for Proof-of-Work computation.
 
 API endpoints:
 - `POST /compute` — Compute POW cres value: `{ mask, key, seed }` → `{ cres, cached, computeTimeMs }`
-- `GET /health` — Health check with cache statistics
-- `GET /metrics` — Prometheus metrics
+- `GET /health` — Health check (status, uptime, hash implementation, redis, worker pool)
+- `GET /metrics` — Prometheus metrics (`pow_requests_total`, `pow_cache_hit_rate`, `pow_uptime_seconds`)
 
-Configuration: `PORT` (default 3001, mapped to 8080 on host), `REDIS_URL` (optional for caching), `POW_NUM_WORKERS` (CPU-1).
+Configuration: `PORT` (default 3001 for local runs; Docker sets `PORT=8080` and publishes `8080:8080` for compose / `8080:3001` for EC2), `REDIS_URL` (optional for caching), `POW_NUM_WORKERS` (CPU-1).
 
 Key file: `index.js` — Single-file service with inline POWService class (worker thread pool, Redis cache).
 
@@ -91,7 +95,8 @@ All live under `src/shared/`.
 | **Fingerprinting** | POW challenge algorithm, POW service client, worker pool, bio/rat generators | `challengeGenerator.js`, `powServiceClient.js`, `powWorkerPool.js` |
 | **Capture** | Account data capture (API + HTML), profile/order data | `apiCapture.js`, `htmlCapture.js`, `profileData.js` |
 | **Payloads** | Request payload builders | `authorizeRequest.js`, `bioPayload.js`, `ratPayload.js` |
-| **Errors** | Custom error classes | `AppError.js`, `RetryableError.js`, `TimeoutError.js` |
+| **Errors** | Custom error classes | `AppError.js`, `RetryableError.js`, `TimeoutError.js`, `ValidationError.js` |
+| **Constants** | Status codes, batch states, TTL/key defaults | `statusCodes.js`, `defaults.js`, `index.js` |
 | **Utils** | Retry with backoff, TTL map | `retryWithBackoff.js`, `mapWithTtl.js` |
 
 **Rule**: Services can import from `src/shared/` but `src/shared/` cannot import from services. `src/telegram/` can import from `src/shared/`. No circular dependencies.
@@ -114,18 +119,30 @@ All live under `src/shared/`.
 
 ## Redis Design
 
-Redis serves as the single source of truth for:
+Redis serves as the single source of truth for coordination. Most keys are defined centrally in
+`src/shared/redis/keys.js`; the two dedup stores (`proc:` / `fwd:`) define their prefixes locally.
 
 | Purpose | Key Pattern | TTL |
 |---------|-------------|-----|
 | Task queue | `queue:tasks`, `queue:retry` | None |
-| Progress tracking | `progress:{batchId}` | None |
-| Processed credentials | `proc:{user}:{pass}` | 30 days |
-| Channel forward dedup | `fwd:{user}:{pass}` | 30 days |
-| Worker heartbeats | `worker:{id}:heartbeat` | 30s |
-| Coordinator heartbeat | `coordinator:heartbeat` | 30s |
+| Task lease (in-flight) | `job:{batchId}:{taskId}` | 5 min |
+| Progress tracking | `progress:{batchId}` (+ `:count`, `:counts`, `:valid`) | 7 days |
+| Single-check dispatch result | `check:result:{taskId}`, `check:cancelled:{taskId}` | 120s |
+| Batch cancellation flag | `batch:{batchId}:cancelled` | 1 hour |
+| Processed credentials (dedup) | `proc:{status}:{email}:{password}` | 30 days |
+| Result cache | `result:{status}:{email}:{password}` | 30 days |
+| Channel forward dedup | `fwd:{email}:{password}` | 30 days |
+| Forward two-phase commit | `forward:pending:{trackingCode}` | 2 min |
+| Message tracking | `msg:{trackingCode}`, `msg:cred:{email}:{password}` | 30 days |
+| Proxy health | `proxy:{proxyId}:health` | 5 min |
+| Worker heartbeats / info | `worker:{id}:heartbeat`, `worker:{id}:info` | 30s / none |
+| Coordinator heartbeat / lock | `coordinator:heartbeat`, `coordinator:lock:{op}` | 30s / 10s |
+| POW cache | `pow:{mask}:{key}:{seed}` | 5 min |
 | Config values | `config:{key}` | None |
-| Message tracking | `msg:{trackingCode}` | 30 days |
+
+Pub/sub channels: `forward_events`, `update_events`, `worker_heartbeats`.
+
+> Note: TTLs above reflect `keys.js`; the cache TTLs `PROCESSED_TTL_MS` / `FORWARD_TTL_MS` (30-day defaults) are applied by `processedStore` / `channelForwardStore` at write time.
 
 ## Telegram Flow
 

@@ -17,6 +17,10 @@ src/coordinator/MetricsServer.js    # Metrics HTTP endpoint
 src/worker/barrel.js                # Worker barrel export
 src/worker/index.js                 # Worker entrypoint (Redis connection, task dequeue)
 src/worker/WorkerNode.js            # Worker execution loop
+src/worker/processTaskDirect.js     # Core task execution path (reused by test-full-flow.js)
+src/worker/heartbeat.js             # Heartbeat payload build/send
+src/worker/httpServer.js            # Worker health/status/metrics HTTP server (port 3010)
+src/worker/workerErrors.js          # Fatal vs transient error classification
 
 src/pow-service/index.js            # POW HTTP service (port 3001, optional Redis cache)
 
@@ -39,10 +43,11 @@ src/shared/redis/                   # client.js (Redis connection), keys.js (key
 src/shared/logger/                  # Structured logger (createLogger)
 src/shared/http/                    # checker, client, flow, analyzer, sessionManager, ipFetcher, retryInterceptor, proxyTracker
 src/shared/batch/                   # parse, processedStore, processor, constants, hotmail, ulp, http
-src/shared/fingerprinting/          # challengeGenerator, powServiceClient, powWorkerPool, powWorker, powCache, bioGenerator, ratGenerator
-src/shared/capture/                 # apiCapture, htmlCapture, orderHistory, profileData, ssoFormHandler
+src/shared/fingerprinting/          # challengeGenerator, powServiceClient, powWorkerPool, powWorker, powCache, bioGenerator, ratGenerator, browserProfile
+src/shared/capture/                 # apiCapture, htmlCapture, orderHistory, profileData, ssoFormHandler, validateCaptureForForwarding
 src/shared/payloads/                # authorizeRequest, bioPayload, ratPayload
-src/shared/errors/                  # Custom error classes
+src/shared/errors/                  # AppError, RetryableError, TimeoutError, ValidationError
+src/shared/constants/               # statusCodes (VALID/INVALID/BLOCKED/ERROR, batch states), defaults
 src/shared/utils/                   # retryWithBackoff, mapWithTtl
 ```
 
@@ -70,9 +75,9 @@ src/shared/utils/                   # retryWithBackoff, mapWithTtl
 - Worker: `WorkerNode` pops tasks, increments progress, publishes forward/update events.
 
 ## 4) Storage & Dedup
-- **Processed creds**: `processedStore` (`proc:{user}:{pass}`), 30-day TTL, Redis-only.
-- **Forwarded creds**: `channelForwardStore` (`fwd:{user}:{pass}`), 30-day TTL, shared by single + distributed forwarders.
-- **Message tracking**: `messageTracker` (`msg:{trackingCode}`, `msg:cred:{user}:{pass}`) for delete/update.
+- **Processed creds**: `processedStore` (`proc:{status}:{email}:{password}`), 30-day TTL, Redis-only.
+- **Forwarded creds**: `channelForwardStore` (`fwd:{email}:{password}`), 30-day TTL, shared by single + distributed forwarders.
+- **Message tracking**: `messageTracker` (`msg:{trackingCode}`, `msg:cred:{email}:{password}`) for delete/update.
 
 ## 5) Telegram Patterns
 - Always use `{ parse_mode: 'MarkdownV2' }` and helpers from `telegram/messages/helpers.js`: `escapeV2`, `codeV2`, `boldV2`, `spoilerCodeV2`. (Distributed `ChannelForwarder` uses local copies for its formatter.)

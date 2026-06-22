@@ -78,7 +78,11 @@ src/
 │   └── MetricsServer.js  # Metrics HTTP endpoint
 ├── worker/               # Worker service (credential checking)
 │   ├── index.js          # Entrypoint
-│   └── WorkerNode.js     # Worker execution loop
+│   ├── WorkerNode.js     # Worker execution loop
+│   ├── processTaskDirect.js # Core task execution (shared with test harness)
+│   ├── heartbeat.js      # Heartbeat payloads
+│   ├── httpServer.js     # Worker health/status/metrics HTTP server
+│   └── workerErrors.js   # Fatal vs transient error classification
 ├── pow-service/          # POW service (proof-of-work computation)
 │   └── index.js          # Entrypoint with inline POWService
 ├── shared/               # Shared modules
@@ -186,7 +190,15 @@ Aborts the currently running batch process.
 
 ### Config & Status
 - `/config` — view or set centralized config
-- `/status` — system health and workers
+- `/status` — system health and workers (coordinator mode only)
+- `/export` — export captured VALID credentials as a file
+- `/help` — usage guide; `/start` — welcome message
+
+### Proxy
+```
+.proxy
+```
+Show the configured proxy and proxy-pool status (values masked).
 
 ### URL Batch
 ```
@@ -262,10 +274,14 @@ npm run test:integration
 ## 🛡️ Rate Limiting
 
 - Processed credentials are cached for 30 days (configurable via `PROCESSED_TTL_MS`)
-- Batch progress updates throttled to every 5 seconds
+- Batch progress updates throttled to every 2 seconds (single/combine batches) or every 8 seconds (distributed mode)
 - Respect Rakuten's rate limits with appropriate delays
 
 ## 🚀 Deployment
+
+> **Production runs on AWS EC2 with Docker** (see [docs/AWS_SETUP.md](docs/AWS_SETUP.md)), with Redis hosted
+> on Railway. Docker Compose (below) is for local/single-host use. The Railway app config
+> (`deployment/railway/railway.json`) deploys the **coordinator** only and is an alternative path.
 
 ### Docker Compose
 ```powershell
@@ -284,7 +300,7 @@ docker compose -f deployment/docker/docker-compose.yml down
 2. Connect repo to Railway
 3. Add Redis service in Railway (click "New" → "Database" → "Redis")
 4. Set environment variables in Railway dashboard
-5. Deploy — Railway auto-detects Node.js and builds native dependencies
+5. Deploy — Railway uses Nixpacks (`deployment/railway/railway.json`) and runs the coordinator (`node src/coordinator/index.js`)
 
 Config file: `deployment/railway/railway.json`
 

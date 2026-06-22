@@ -54,6 +54,7 @@ npm run test:worker-crash          # Worker crash recovery
 npm run test:deduplication        # Cross-batch deduplication
 npm run test:pow-degradation      # POW service fallback behavior
 npm run test:proxy-health          # Proxy rotation health checks
+npm run test:pow-integration      # POW service client + service integration
 ```
 
 Integration test scripts live in `scripts/tests/`. They require a local Redis instance and the appropriate environment configuration.
@@ -65,7 +66,7 @@ Integration test scripts live in `scripts/tests/`. They require a local Redis in
 ### Quick Tests (Local)
 
 ```bash
-# Schema validation + Redis ops + pub/sub (48 tests)
+# Schema validation + Redis ops + pub/sub
 npm run test:config
 
 # Deployment smoke test (loads modules, reads values from env/defaults)

@@ -7,6 +7,7 @@ Scripts for maintaining and cleaning up the distributed system.
 - **`fix-redis-data.js`** - Clean up corrupted Redis keys and fix data type conflicts
 - **`clear-redis-conflicts.js`** - Clear Redis data type conflicts (legacy)
 - **`emergency-clear-redis.js`** - Emergency Redis cleanup script
+- **`clear-progress-tracker.js`** - Clear stale progress-tracker state in Redis
 
 ## Usage
 

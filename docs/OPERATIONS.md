@@ -47,6 +47,11 @@ node scripts/deploy/update-instance.js pow
 node scripts/deploy/update-instance.js all
 ```
 
+> ⚠️ `quick-update.sh` is the recommended tool. `update-instance.js` currently names the POW
+> container `rakuten-pow` (not `rakuten-pow-service`) and maps ports `8080:8080` (not `8080:3001`),
+> so the two tools are **not** interchangeable for the POW service — mixing them can leave two
+> POW containers contending for port 8080. Prefer `quick-update.sh` until this is reconciled.
+
 ---
 
 ## What It Does
@@ -61,8 +66,12 @@ node scripts/deploy/update-instance.js all
 
 **Fast mode (`--fast`):**
 1. `git pull` — gets latest code
-2. `docker cp` — copies changed JS files into running container
-3. `docker restart` — restarts the container (~5 seconds total)
+2. `docker cp` — copies changed `src/` + `package.json` into the running container
+3. `docker commit` — commits the container to its image so the copied files survive recreation
+4. `docker stop` + `docker rm -f` + `docker run` — recreates the container from the committed image (~5 seconds total)
+
+> `--fast` does **not** run `npm install`. Use a full rebuild for any dependency change. Note that fast
+> updates leave the image tag pointing at a committed (non-pristine) layer until the next full rebuild.
 
 ---
 
@@ -165,10 +174,10 @@ docker image prune -f
 
 ```bash
 # Stop all
-docker stop rakuten-coordinator rakuten-worker rakuten-pow
+docker stop rakuten-coordinator rakuten-worker rakuten-pow-service
 
 # Remove all
-docker rm -f rakuten-coordinator rakuten-worker rakuten-pow
+docker rm -f rakuten-coordinator rakuten-worker rakuten-pow-service
 
 # Rebuild and start
 ./scripts/deploy/quick-update.sh all

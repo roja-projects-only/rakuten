@@ -9,14 +9,14 @@ The POW (Proof-of-Work) service provides HTTP-based POW computation with automat
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    Credential Checker                        │
-│                      (httpFlow.js)                           │
+│                  (src/shared/http/flow.js)                   │
 └────────────────────────┬────────────────────────────────────┘
                          │
                          ▼
               ┌──────────────────────┐
               │  POW Service Client  │
               │ (powServiceClient.js)│
-              │  - 5s timeout        │
+              │  - 25s timeout       │
               │  - Auto fallback     │
               │  - Local cache       │
               └──────────┬───────────┘
@@ -38,7 +38,7 @@ The POW (Proof-of-Work) service provides HTTP-based POW computation with automat
 HTTP client for communicating with the POW service.
 
 **Features:**
-- 5-second timeout for HTTP requests
+- 25-second timeout for HTTP requests (`POW_CLIENT_TIMEOUT`, default 25000ms)
 - Automatic fallback to local computation on timeout/error
 - Local memory cache for fallback results (not Redis)
 - Exponential backoff retry logic
@@ -61,24 +61,25 @@ console.log('Success rate:', stats.requests.successRate);
 console.log('Fallback rate:', stats.fallback.rate);
 ```
 
-### 2. Updated HTTP Flow (`httpFlow.js`)
+### 2. HTTP Flow (`src/shared/http/flow.js`)
 
-The HTTP flow has been updated to use the POW service client instead of direct local computation.
+The login flow uses the POW service client (via the `computeCresWithService()` helper) rather than calling local computation directly.
 
-**Changes:**
-- Replaced `computeCresFromMdataAsync()` with `powServiceClient.computeCres()`
-- Added `computeCresWithService()` helper function for consistent error handling
-- Added POW service availability check on module load
-- Enhanced logging for service unavailability warnings
+**Details:**
+- `computeCresWithService()` wraps `powServiceClient.computeCres()` for consistent error handling
+- POW service availability is checked on module load (skipped when `POW_SKIP_CONNECTION_TEST=1`)
+- Logs a warning and uses local fallback when the service is unavailable
+- The legacy `computeCresFromMdataAsync()` still exists in `challengeGenerator.js` and is used by the local fallback path
 
 ### 3. POW Service (`src/pow-service/index.js`)
 
 Standalone HTTP service for POW computation.
 
 **Endpoints:**
-- `POST /compute` - Compute POW cres value
-- `GET /health` - Health check with cache statistics
-- `GET /metrics` - Prometheus metrics
+- `GET /` - Service banner and endpoint list
+- `POST /compute` - Compute POW cres value. Request `{ mask, key, seed }` → `{ cres, cached, computeTimeMs }`. `mask`/`key` max length 32; `seed` must be a number. Errors: `400 INVALID_REQUEST`/`INVALID_TYPES`/`INVALID_LENGTH`, `408 POW_TIMEOUT`, `503 POW_OVERLOADED`, `422 POW_FAILED`, `500 COMPUTATION_ERROR`.
+- `GET /health` - Health check: `{ status, timestamp, uptime, hashImplementation, redis, workerPool }` (cache statistics are exposed via `/metrics`, not here)
+- `GET /metrics` - Prometheus metrics: `pow_requests_total{status}`, `pow_cache_hit_rate`, `pow_uptime_seconds`
 
 ## Configuration
 
@@ -153,47 +154,37 @@ npm run verify:pow-deployment
 
 ## Deployment
 
-### Railway Deployment
+### AWS EC2 Deployment
 
-1. **Deploy POW Service** (if not already deployed):
+The POW service runs as a Docker container on its own EC2 instance. See [AWS_SETUP.md](AWS_SETUP.md) for the full walkthrough. Summary:
+
+1. **Build and run the container** (on the POW instance):
    ```bash
-   # Deploy POW service to Railway
-   railway up -s pow-service
+   ./scripts/deploy/quick-update.sh pow-service
+   ```
+   This publishes the service on host port `8080` (container `3001`).
+
+2. **Point the coordinator and workers at it** via their `.env` files using the POW instance's **private** IP:
+   ```bash
+   POW_SERVICE_URL=http://POW_PRIVATE_IP:8080
    ```
 
-2. **Update Main Service Environment**:
-   ```bash
-   # Set POW_SERVICE_URL in Railway dashboard
-   POW_SERVICE_URL=https://pow-service-production.up.railway.app
+3. **Verify the connection** in the coordinator/worker logs:
    ```
-
-3. **Deploy Updated Code**:
-   ```bash
-   git add .
-   git commit -m "feat: integrate POW service client with fallback"
-   git push
-   ```
-
-4. **Verify Deployment**:
-   ```bash
-   # Check Railway logs for POW service connection
-   railway logs
-   
-   # Look for:
-   # ✅ "POW service connection verified"
-   # ⚠️  "POW service unavailable - will use local fallback"
+   ✅ "POW service connection verified"
+   ⚠️  "POW service unavailable - will use local fallback"
    ```
 
 ### Monitoring
 
-**Check POW service health:**
+**Check POW service health** (from a host that can reach it, e.g. the POW instance itself):
 ```bash
-curl https://pow-service-production.up.railway.app/health
+curl http://localhost:8080/health
 ```
 
 **Check metrics:**
 ```bash
-curl https://pow-service-production.up.railway.app/metrics
+curl http://localhost:8080/metrics
 ```
 
 **Monitor cache hit rates:**
@@ -207,7 +198,7 @@ The system automatically falls back to local computation when:
 1. **POW service is unavailable** (ECONNREFUSED, ENOTFOUND)
    - Logs: `POW service unavailable - using local fallback`
    
-2. **POW service times out** (>5 seconds)
+2. **POW service times out** (>`POW_CLIENT_TIMEOUT`, default 25 seconds)
    - Logs: `POW service timeout - using local fallback`
    
 3. **POW service returns error** (5xx, invalid response)
@@ -228,7 +219,7 @@ The system automatically falls back to local computation when:
 | POW service (cache hit) | <50ms | Redis cache |
 | POW service (cache miss) | 100-500ms | Worker thread computation |
 | Local fallback | 200-800ms | Synchronous computation |
-| POW service timeout | 5000ms + fallback time | Triggers fallback |
+| POW service timeout | 25000ms + fallback time | Triggers fallback |
 
 ### Optimization Tips
 
@@ -255,7 +246,7 @@ The system automatically falls back to local computation when:
 
 **Symptoms:**
 - Logs show: `POW service timeout - using local fallback`
-- Response times >5 seconds
+- Response times >25 seconds
 
 **Solutions:**
 1. Check POW service CPU usage

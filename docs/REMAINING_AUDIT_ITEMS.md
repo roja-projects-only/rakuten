@@ -2,7 +2,7 @@
 
 Items from the audit that were **not implemented** — either deferred for later or classified as too risky to touch without a specific bug.
 
-## R1. `WorkerNode.js` (1627 lines) — Single-file refactor
+## R1. `WorkerNode.js` (1332 lines) — Single-file refactor
 
 **Status**: Do not touch unless there is a proven bug.
 
@@ -10,7 +10,7 @@ Items from the audit that were **not implemented** — either deferred for later
 
 **Why deferred**: The file works, is self-contained, and the execution flow is the most critical path in the system. `processTaskDirect` at the bottom is also used by `test-full-flow.js` — refactoring could break the test harness. No bugs reported.
 
-**If ever touched**: Extract HTTP status server → `src/worker/httpServer.js`, extract metrics → `src/worker/metrics.js`, extract heartbeat → `src/worker/heartbeat.js`. Leave the core flow (`run → dequeue → process → store → publish`) intact.
+**Partially done**: The HTTP status server (`src/worker/httpServer.js`), heartbeat (`src/worker/heartbeat.js`), error classification (`src/worker/workerErrors.js`), and core task path (`src/worker/processTaskDirect.js`) have already been extracted. What remains in `WorkerNode.js` is the orchestration loop plus metrics. **If ever touched further**: extract metrics → `src/worker/metrics.js`, leaving the core flow (`run → dequeue → process → store → publish`) intact.
 
 ---
 
@@ -70,7 +70,6 @@ In production, the `src/telegram/channelForwarder.js` `forwardValidToChannel()` 
 
 Minor items still open:
 - The `docker-compose.yml` healthcheck for the POW service uses `wget` but the `pow-service` image has `curl` installed — inconsistent but works
-- Coordinator log/data volumes (`../../logs:/app/logs`, `../../data:/app/data`) — the data directory doesn't exist in the project root
 - Env variable duplication in docker-compose (each worker repeats the same block) — could use YAML anchors
 
 ---

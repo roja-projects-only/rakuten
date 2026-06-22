@@ -12,7 +12,7 @@ All shared modules live under `src/shared/` and are used by multiple services. T
 ### Files
 - `environment.js` — Mode detection + env var validation
 - `configService.js` — Centralized config with Redis pub/sub hot-reload
-- `configSchema.js` — Schema: 17 hot-reloadable variables with type/range validation
+- `configSchema.js` — Schema: 20 hot-reloadable variables with type/range validation
 
 ### Who Imports It
 - Coordinator, Worker, POW Service (environment validation)
@@ -54,7 +54,7 @@ All shared modules live under `src/shared/` and are used by multiple services. T
 
 ### Files
 - `client.js` — ioredis wrapper with connection pooling, retry, health monitoring
-- `keys.js` — Centralized Redis key schema (282 lines)
+- `keys.js` — Centralized Redis key schema (325 lines)
 
 ### Who Imports It
 - Coordinator (job queue, progress tracking, channel forwarding)
@@ -63,7 +63,7 @@ All shared modules live under `src/shared/` and are used by multiple services. T
 - Telegram handlers (dedupe stores)
 
 ### Rules for Modifying
-- All Redis keys must be defined in `keys.js`
+- New Redis keys should be defined in `keys.js`. Note: the two dedup stores predate the schema and still define their own prefixes locally — `processedStore.js` (`proc:` prefix) and `channelForwardStore.js` (`fwd:` prefix). All other keys live in `keys.js`.
 - Use `REDIS_URL` for connection (required for coordinator/worker)
 - Test key patterns with `redis-cli`
 
@@ -136,6 +136,7 @@ All shared modules live under `src/shared/` and are used by multiple services. T
 - `powCache.js` — POW cache
 - `bioGenerator.js` — Behavioral biometrics
 - `ratGenerator.js` — RAT fingerprint
+- `browserProfile.js` — Browser fingerprint profile
 
 ### Who Imports It
 - HTTP flow (POW computation)
@@ -160,6 +161,7 @@ All shared modules live under `src/shared/` and are used by multiple services. T
 - `orderHistory.js` — Order data
 - `profileData.js` — Profile and cards
 - `ssoFormHandler.js` — SSO handler
+- `validateCaptureForForwarding.js` — Forwarding eligibility check (latest order + ≥1 card)
 
 ### Who Imports It
 - HTTP flow (after successful login)

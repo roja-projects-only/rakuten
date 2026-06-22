@@ -4,7 +4,7 @@
 
 ### Core Config System
 1. **Schema** ([src/shared/config/configSchema.js](../src/shared/config/configSchema.js))
-   - 17 hot-reloadable environment variables
+   - 20 hot-reloadable environment variables
    - Type validation (int, float, bool, enum, url, csv, string)
    - Range constraints and custom validators
    - Default values and precedence handling
@@ -33,7 +33,7 @@
 - [src/coordinator/JobQueueManager.js](../src/coordinator/JobQueueManager.js) - Uses config getter
 
 ### Testing
-- [scripts/tests/test-config-service.js](../scripts/tests/test-config-service.js) — Schema validation, Redis ops, pub/sub (48 tests)
+- [scripts/tests/test-config-service.js](../scripts/tests/test-config-service.js) — Schema validation, Redis ops, pub/sub
 - [scripts/tests/verify-config-deployment.js](../scripts/tests/verify-config-deployment.js) — Deployment smoke test
 - [docs/TESTING.md](TESTING.md) — Testing guide (config system + local harness)
 
@@ -63,6 +63,13 @@
 
 ### Worker
 - `WORKER_CONCURRENCY` (1-50) - Concurrent tasks per worker
+
+### POW Service Client
+- `POW_SERVICE_URL` - POW service HTTP endpoint
+- `POW_CLIENT_TIMEOUT` (5000-60000) - POW service HTTP client timeout (ms)
+
+### Access Control
+- `ALLOWED_USER_IDS` - Comma-separated allowed Telegram user IDs
 
 ### Logging
 - `LOG_LEVEL` (error/warn/info/debug/trace) - Logging level (read per-call — changes apply at runtime)
@@ -99,6 +106,16 @@ git pull
 /config get BATCH_CONCURRENCY
 /config reset BATCH_CONCURRENCY
 ```
+
+> **Two validators, two ranges.** The ranges above are enforced by `configSchema.js` for `/config set`.
+> A separate validator in `environment.js` checks the same variables at process startup and uses
+> *different* bounds for some of them (e.g. startup caps `BATCH_CONCURRENCY` at **20**, while `/config`
+> allows up to **50**; startup allows `TIMEOUT_MS` 1000–300000, while `/config` allows 5000–120000). A value
+> accepted at startup may be rejected via `/config set`, and vice versa.
+
+> **Known dead key.** `BATCH_TIMEOUT_MS` is present in the schema (so it is settable via `/config`), but no
+> code path reads `process.env.BATCH_TIMEOUT_MS` — the effective batch task timeout is `WORKER_TASK_TIMEOUT`.
+> Setting `BATCH_TIMEOUT_MS` currently has no effect.
 
 ---
 
