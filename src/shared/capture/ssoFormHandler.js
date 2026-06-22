@@ -106,7 +106,7 @@ async function buildChallengePayload(client, options = {}, timeoutMs, logLabel) 
     log.debug(`[${logLabel}] Using random cres: ${cres}`);
   }
 
-  return { cres, challengeToken, correlationId };
+  return { cres, challengeToken, correlationId, ratData, fingerprint };
 }
 
 /**
@@ -310,22 +310,25 @@ async function skipSessionUpgrade(client, upgradeUrl, timeoutMs, options = {}) {
 
     // Build challenge payload (cres + token) from /util/gc + POW
     // Uses profile-flow client_id and page_type (from HAR analysis)
-    const { cres, challengeToken, correlationId } = await buildChallengePayload(client, {
+    const { cres, challengeToken, correlationId, ratData } = await buildChallengePayload(client, {
       ...options,
       gcClientId: 'rakuten_myr_jp_web',
       gcPageType: 'DEFAULT_P',
       referer: upgradeUrl,
     }, timeoutMs, 'skip-upgrade');
 
-    // POST to /v2/login/upgrade with skip + challenge
-    const skipUrl = `${LOGIN_BASE}/v2/login/upgrade`;
+    // POST to /v2/session/upgrade with token + challenge + rat data
+    // The browser's HAR shows this endpoint returning 200 with full fingerprint payload
+    const skipUrl = `${LOGIN_BASE}/v2/session/upgrade`;
     const skipPayload = {
       token: mainToken,
-      skip: true,
+      webauthn_supported: false,
+      bio: false,
       challenge: {
         cres: cres,
         token: challengeToken,
       },
+      rat: ratData,
     };
 
     log.debug(`[skip-upgrade] POSTing to ${skipUrl}`);
@@ -357,12 +360,27 @@ async function skipSessionUpgrade(client, upgradeUrl, timeoutMs, options = {}) {
       return null;
     }
 
-    log.info('[skip-upgrade] Session upgrade skipped successfully');
+    log.info(`[skip-upgrade] Session upgrade skipped successfully`);
+    log.debug(`[skip-upgrade] Response data: ${JSON.stringify(skipResponse.data).substring(0, 500)}`);
+
+    // The response contains a session alignment redirect in the same format as login complete
+    // Example: { redirect_uri, payload: { align_token } }
+    const responseData = skipResponse.data;
+    let redirectUrl = null;
+    let alignToken = null;
+    
+    if (responseData?.redirect_uri && responseData?.payload?.align_token) {
+      redirectUrl = responseData.redirect_uri;
+      alignToken = responseData.payload.align_token;
+      log.debug(`[skip-upgrade] Found session alignment redirect: ${redirectUrl}`);
+    }
 
     return {
-      html: typeof skipResponse.data === 'string' ? skipResponse.data : JSON.stringify(skipResponse.data),
+      html: typeof responseData === 'string' ? responseData : JSON.stringify(responseData),
       url: skipUrl,
       skipped: true,
+      redirectUrl,
+      code: alignToken,
     };
 
   } catch (error) {

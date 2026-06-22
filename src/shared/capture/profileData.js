@@ -126,6 +126,66 @@ async function fetchProfileData(client, jar, timeoutMs) {
       }
     }
     
+    // Check if redirected to session/upgrade page - attempt to skip
+    if (currentUrl.includes('/session/upgrade')) {
+      log.info('Profile SSO requires session upgrade - attempting to skip...');
+      
+      const skipResult = await skipSessionUpgrade(client, currentUrl, timeoutMs);
+      if (!skipResult) {
+        log.warn('Could not skip session upgrade - skipping profile capture');
+        return null;
+      }
+      
+      log.debug('Session upgrade skipped, following session alignment...');
+      
+      // The session upgrade response contains a session alignment redirect.
+      // Follow it instead of retrying SSO authorize from scratch.
+      if (skipResult.redirectUrl && skipResult.code) {
+        log.debug(`Following session alignment redirect to: ${skipResult.redirectUrl}`);
+        
+        // Post the align_token to the session alignment endpoint
+        const alignPayload = new URLSearchParams();
+        alignPayload.append('align_token', skipResult.code);
+        
+        response = await client.post(skipResult.redirectUrl, alignPayload.toString(), {
+          timeout: timeoutMs,
+          maxRedirects: 10,
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Referer': currentUrl,
+          },
+        });
+        
+        html = response.data;
+        currentUrl = response.request?.res?.responseUrl || response.config?.url || '';
+        log.debug(`Profile SSO after session alignment - URL: ${currentUrl.substring(0, 80)}...`);
+      } else {
+        log.debug('No redirect in session upgrade response, retrying SSO authorize...');
+        
+        // Fallback: retry the SSO authorize request
+        response = await client.get(ssoAuthorizeUrl, {
+          timeout: timeoutMs,
+          maxRedirects: 10,
+          headers: {
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+          },
+        });
+        
+        html = response.data;
+        currentUrl = response.request?.res?.responseUrl || response.config?.url || '';
+        log.debug(`Profile SSO after session upgrade skip - URL: ${currentUrl.substring(0, 80)}...`);
+      }
+      
+      // If still on session/upgrade page, we failed
+      if (currentUrl.includes('/session/upgrade')) {
+        log.warn('Still on session upgrade page after skip attempt - skipping profile capture');
+        return null;
+      }
+    }
+    
     // Step 2: Handle SSO form redirects
     if (hasSsoForm(html)) {
       const result = await followSsoRedirects(client, html, currentUrl, timeoutMs, 5);
@@ -234,6 +294,7 @@ async function fetchProfileData(client, jar, timeoutMs) {
           log.warn('Could not skip verification during initiate - skipping profile capture');
           return null;
         }
+        log.debug(`Verification skipped successfully, retrying initiate...`);
         // Retry initiate after skip
         const retryResponse = await client.get(initiateUrl, {
           timeout: timeoutMs,
@@ -243,7 +304,10 @@ async function fetchProfileData(client, jar, timeoutMs) {
             'Referer': 'https://profile.id.rakuten.co.jp/',
           },
         });
+        const retryUrl = retryResponse.request?.res?.responseUrl || retryResponse.config?.url || '';
+        log.debug(`Initiate retry (after verify) - status: ${retryResponse.status}, URL: ${retryUrl.substring(0, 80)}..., type: ${typeof retryResponse.data}`);
         bearerToken = extractBearerToken(retryResponse.data);
+        log.debug(`Initiate retry (after verify) - bearerToken ${bearerToken ? 'FOUND' : 'NOT FOUND'}`);
       } else if (initiateUrl2.includes('/session/upgrade')) {
         log.info('Profile gateway initiate requires session upgrade - attempting to skip...');
         const skipResult = await skipSessionUpgrade(client, initiateUrl2, timeoutMs);
@@ -251,6 +315,7 @@ async function fetchProfileData(client, jar, timeoutMs) {
           log.warn('Could not skip session upgrade during initiate - skipping profile capture');
           return null;
         }
+        log.debug(`Session upgrade skipped successfully, retrying initiate...`);
         // Retry initiate after session upgrade skip
         const retryResponse = await client.get(initiateUrl, {
           timeout: timeoutMs,
@@ -260,7 +325,13 @@ async function fetchProfileData(client, jar, timeoutMs) {
             'Referer': 'https://profile.id.rakuten.co.jp/',
           },
         });
+        const retryUrl = retryResponse.request?.res?.responseUrl || retryResponse.config?.url || '';
+        log.debug(`Initiate retry - status: ${retryResponse.status}, URL: ${retryUrl.substring(0, 80)}..., type: ${typeof retryResponse.data}, len: ${(retryResponse.data || '').length}`);
         bearerToken = extractBearerToken(retryResponse.data);
+        log.debug(`Initiate retry - bearerToken ${bearerToken ? 'FOUND' : 'NOT FOUND'} (len=${bearerToken ? bearerToken.length : 0})`);
+        if (!bearerToken && typeof retryResponse.data === 'string') {
+          log.debug(`Initiate retry data preview: ${retryResponse.data.substring(0, 300)}`);
+        }
       } else if (initiateUrl2.includes('login.account.rakuten.com')) {
         log.warn('Profile gateway requires re-authentication - skipping profile capture');
         return null;
@@ -270,6 +341,12 @@ async function fetchProfileData(client, jar, timeoutMs) {
       
       if (!bearerToken) {
         log.warn('Could not obtain Bearer token from gateway/initiate (no token in response)');
+        log.debug(`Initiate final state - status: ${initiateResponse.status}, URL: ${initiateUrl2.substring(0, 100)}..., type: ${typeof initiateResponse.data}, responseType: ${initiateResponse.request?.responseType || 'unknown'}`);
+        if (initiateResponse.data && typeof initiateResponse.data === 'string') {
+          log.debug(`Initiate response preview: ${initiateResponse.data.substring(0, 400)}`);
+        } else if (initiateResponse.data && typeof initiateResponse.data === 'object') {
+          log.debug(`Initiate response keys: ${Object.keys(initiateResponse.data).join(', ')}`);
+        }
         return null;
       }
     }
