@@ -20,9 +20,12 @@ const {
   COORDINATOR_HEARTBEAT,
   COORDINATOR_LOCK,
   WORKER_HEARTBEAT,
+  WORKER_INFO,
   PROGRESS_TRACKER,
   JOB_QUEUE,
   PUBSUB_CHANNELS,
+  SINGLE_CHECK_RESULT,
+  SINGLE_CHECK_CANCELLED,
   generateBatchId
 } = require('../shared/redis/keys');
 
@@ -49,6 +52,7 @@ class Coordinator {
     
     // Health monitoring
     this.activeWorkers = new Map(); // workerId -> lastHeartbeat timestamp
+    this.recentlyDeadWorkers = new Map(); // workerId -> removal timestamp (60s cooldown)
     this.isRunning = false;
     this.startTime = null;
     this.heartbeatInterval = null;
@@ -457,6 +461,16 @@ class Coordinator {
     try {
       const { workerId, timestamp, tasksCompleted, batchId } = JSON.parse(message);
       
+      // Ignore heartbeats from recently removed (zombie) workers — 60s cooldown
+      const removedAt = this.recentlyDeadWorkers.get(workerId);
+      if (removedAt && (Date.now() - removedAt < 60000)) {
+        this.logger.warn('Ignoring heartbeat from recently dead worker', {
+          workerId,
+          cooldownRemaining: Math.round((60000 - (Date.now() - removedAt)) / 1000) + 's'
+        });
+        return;
+      }
+      
       // Update worker last seen time
       this.activeWorkers.set(workerId, timestamp);
       
@@ -482,23 +496,50 @@ class Coordinator {
   }
 
   /**
-   * Detect dead workers (missing heartbeats for 30+ seconds)
+   * Detect dead workers (missing heartbeats for 45+ seconds)
    * Requirements: 8.2, 8.3
    */
   async detectDeadWorkers() {
     try {
       const now = Date.now();
-      const deadThreshold = 30000; // 30 seconds
+      const deadThreshold = 45000; // 45 seconds (1.5x heartbeat interval for jitter margin)
       const deadWorkers = [];
+      
+      // Clean up expired recently-dead cooldowns
+      for (const [wid, removedAt] of this.recentlyDeadWorkers) {
+        if (now - removedAt > 60000) {
+          this.recentlyDeadWorkers.delete(wid);
+        }
+      }
       
       for (const [workerId, lastHeartbeat] of this.activeWorkers) {
         const age = now - lastHeartbeat;
         
         if (age > deadThreshold) {
+          // Verify worker is truly dead by checking WORKER_INFO key
+          // If WORKER_INFO exists, the worker process is alive but slow heartbeating
+          const infoKey = WORKER_INFO.generate(workerId);
+          const infoExists = await this.redis.executeCommand('exists', infoKey);
+          
+          if (infoExists) {
+            // Worker is alive but heartbeat is stale — don't remove.
+            // Do NOT reset the timestamp — keeps the worker marked as stale so it
+            // remains eligible for removal if WORKER_INFO is eventually cleaned up.
+            this.logger.debug('Worker heartbeat stale but process still registered', {
+              workerId,
+              lastHeartbeat: new Date(lastHeartbeat).toISOString(),
+              age: Math.round(age / 1000) + 's'
+            });
+            continue;
+          }
+          
           deadWorkers.push({ workerId, lastHeartbeat, age });
           
           // Remove from active workers
           this.activeWorkers.delete(workerId);
+          
+          // Track in recently-dead cooldown to ignore stale heartbeats
+          this.recentlyDeadWorkers.set(workerId, now);
           
           // Clean up Redis heartbeat key
           await this.redis.executeCommand('del', WORKER_HEARTBEAT.generate(workerId));
@@ -534,6 +575,83 @@ class Coordinator {
         error: error.message
       });
     }
+  }
+
+  /**
+   * Dispatch a single credential check to a worker via the Redis queue.
+   * Enqueues a task with singleCheck=true and polls for the result.
+   * Returns the result object, or null if the worker doesn't respond in time.
+   * @param {Object} creds - { username, password }
+   * @param {Object} options - { timeoutMs }
+   * @returns {Promise<Object|null>} Result object { status, capture, ipAddress, ... } or null on timeout
+   */
+  async dispatchSingleCheck(creds, options = {}) {
+    const taskId = `chk-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
+    const resultKey = SINGLE_CHECK_RESULT.generate(taskId);
+    const cancelledKey = SINGLE_CHECK_CANCELLED.generate(taskId);
+    const timeoutMs = options.timeoutMs || 60000;
+    const pollInterval = 500;
+    const deadline = Date.now() + timeoutMs;
+
+    // 1. Assign proxy from pool
+    const proxyAssignment = await this.proxyPool.assignProxy(taskId);
+
+    // 2. Build and enqueue task
+    const task = {
+      taskId,
+      batchId: 'chk-single',
+      username: creds.username,
+      password: creds.password,
+      proxyUrl: proxyAssignment?.proxyUrl || null,
+      proxyId: proxyAssignment?.proxyId || null,
+      retryCount: 0,
+      createdAt: Date.now(),
+      batchType: 'SINGLE_CHECK',
+      singleCheck: true,
+    };
+
+    await this.redis.executeCommand('rpush', JOB_QUEUE.tasks, JSON.stringify(task));
+
+    this.logger.info('Single check dispatched to queue', {
+      taskId,
+      username: creds.username,
+      proxyId: task.proxyId,
+      activeWorkers: this.activeWorkers.size,
+    });
+
+    // 3. Poll for result
+    while (Date.now() < deadline) {
+      const raw = await this.redis.executeCommand('get', resultKey);
+      if (raw) {
+        await this.redis.executeCommand('del', resultKey);
+        const result = JSON.parse(raw);
+        // Record proxy health
+        if (proxyAssignment) {
+          await this.proxyPool.recordProxyResult(
+            proxyAssignment.proxyId,
+            result.status === 'VALID'
+          );
+        }
+        this.logger.info('Single check result received from worker', {
+          taskId,
+          status: result.status,
+          durationMs: result.checkDurationMs,
+          workerId: result.workerId,
+        });
+        return { result, proxyAssignment };
+      }
+      await new Promise((r) => setTimeout(r, pollInterval));
+    }
+
+    // 4. Timeout — mark as cancelled so worker discards late result
+    await this.redis.executeCommand('setex', cancelledKey, SINGLE_CHECK_CANCELLED.ttl, '1');
+
+    this.logger.warn('Single check timed out — falling back to local', {
+      taskId,
+      timeoutMs,
+    });
+
+    return null;
   }
 
   /**

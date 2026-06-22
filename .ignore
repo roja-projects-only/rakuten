@@ -1,0 +1,3 @@
+# Allow OpenCode to read deepwork session state
+!.slim/deepwork/
+!.slim/deepwork/**

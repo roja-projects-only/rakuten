@@ -49,6 +49,19 @@ class POWServiceClient {
   }
 
   /**
+   * Update the POW service URL (e.g., from config service after startup)
+   * @param {string} url - New POW service URL
+   */
+  setServiceUrl(url) {
+    if (url && url !== this.serviceUrl) {
+      const oldUrl = this.serviceUrl;
+      this.serviceUrl = url;
+      // Reset connection test state so it re-tests with the new URL
+      log.info('POW service URL updated', { oldUrl, newUrl: url });
+    }
+  }
+
+  /**
    * Compute cres using POW service with fallback to local computation
    * @param {Object} params - POW parameters
    * @param {string} params.mask - Mask from mdata (hex prefix to match)

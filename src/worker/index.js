@@ -59,6 +59,20 @@ async function main() {
       log.warn(`Config service init failed (using env fallback): ${configErr.message}`);
     }
 
+    // Sync POW service URL from config service to POW client
+    try {
+      const configService = getConfigService();
+      if (configService.isInitialized()) {
+        const powUrl = configService.get('POW_SERVICE_URL');
+        if (powUrl) {
+          const powServiceClient = require('../shared/fingerprinting/powServiceClient');
+          powServiceClient.setServiceUrl(powUrl);
+        }
+      }
+    } catch (err) {
+      log.warn(`POW service URL sync failed: ${err.message}`);
+    }
+
     // 4. Create and run worker
     const worker = new WorkerNode(redisClient, {
       workerId: process.env.WORKER_ID,

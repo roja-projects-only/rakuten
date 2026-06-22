@@ -37,6 +37,7 @@ function buildCheckProgress(phase) {
     analyze: '🔍 Analyzing response...',
     ip: '🌐 Detecting exit IP...',
     capture: '📊 Capturing data...',
+    worker: '🖥 Processing on worker...',
   };
   return escapeV2(map[phase] || '⏳ Processing...');
 }

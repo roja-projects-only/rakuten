@@ -30,6 +30,8 @@ const {
   BATCH_CANCELLED,
   MESSAGE_TRACKING,
   PUBSUB_CHANNELS,
+  SINGLE_CHECK_RESULT,
+  SINGLE_CHECK_CANCELLED,
   generateWorkerId 
 } = require('../shared/redis/keys');
 const { getConfigService } = require('../shared/config/configService');
@@ -542,6 +544,11 @@ class WorkerNode {
       // Publish events for coordinator
       await this.publishResultEvents(result, checkResult);
       
+      // For single .chk checks dispatched from coordinator, store result for polling
+      if (task.singleCheck) {
+        await this.storeSingleCheckResult(task.taskId, result);
+      }
+      
       // Log structured task completion
       structuredLog.logTaskCompletion({
         taskId: result.taskId,
@@ -611,6 +618,11 @@ class WorkerNode {
       
       // Store error result
       await this.storeResult(errorResult);
+      
+      // For single .chk checks, store error result for coordinator pickup
+      if (task.singleCheck) {
+        await this.storeSingleCheckResult(task.taskId, errorResult);
+      }
       
       // Increment progress counter (errors count as completed)
       await this.incrementProgress(task.batchId);
@@ -978,6 +990,47 @@ class WorkerNode {
         error: error.message
       });
       // Don't throw - event publishing failure shouldn't fail the task
+    }
+  }
+
+  /**
+   * Store result for a single .chk check dispatched from coordinator.
+   * The coordinator polls check:result:{taskId} for the result.
+   * If the coordinator timed out (check:cancelled:{taskId} exists), skip storing.
+   * @param {string} taskId - Task ID
+   * @param {Object} result - Result object
+   */
+  async storeSingleCheckResult(taskId, result) {
+    try {
+      const cancelledKey = SINGLE_CHECK_CANCELLED.generate(taskId);
+      const cancelled = await this.redis.executeCommand('exists', cancelledKey);
+      if (cancelled) {
+        log.debug('Single check was cancelled by coordinator (timeout), discarding result', {
+          workerId: this.workerId,
+          taskId,
+        });
+        return;
+      }
+
+      const resultKey = SINGLE_CHECK_RESULT.generate(taskId);
+      await this.redis.executeCommand(
+        'setex',
+        resultKey,
+        SINGLE_CHECK_RESULT.ttl,
+        JSON.stringify(result)
+      );
+
+      log.debug('Single check result stored for coordinator pickup', {
+        workerId: this.workerId,
+        taskId,
+        status: result.status,
+      });
+    } catch (error) {
+      log.warn('Failed to store single check result', {
+        workerId: this.workerId,
+        taskId,
+        error: error.message,
+      });
     }
   }
 

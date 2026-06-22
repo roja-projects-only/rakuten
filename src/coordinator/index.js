@@ -57,6 +57,20 @@ async function main() {
       log.warn(`Config service init failed (using env fallback): ${err.message}`);
     }
 
+    // Sync POW service URL from config service to POW client
+    try {
+      const configService = getConfigService();
+      if (configService.isInitialized()) {
+        const powUrl = configService.get('POW_SERVICE_URL');
+        if (powUrl) {
+          const powServiceClient = require('../shared/fingerprinting/powServiceClient');
+          powServiceClient.setServiceUrl(powUrl);
+        }
+      }
+    } catch (err) {
+      log.warn(`POW service URL sync failed: ${err.message}`);
+    }
+
     // 4. Initialize Coordinator
     const coordinator = new Coordinator(redisClient, null, {
       channelId: config.FORWARD_CHANNEL_ID || null,
