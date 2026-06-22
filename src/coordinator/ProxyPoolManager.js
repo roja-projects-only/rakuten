@@ -115,18 +115,18 @@ class ProxyPoolManager {
    * @returns {Promise<Array<number>>} Array of healthy proxy indices
    */
   async _getHealthyProxyIndices() {
-    const healthyIndices = [];
+    if (this.proxies.length === 0) return [];
     
-    for (let i = 0; i < this.proxies.length; i++) {
-      const proxyId = this._generateProxyId(i);
-      const isHealthy = await this._isProxyHealthy(proxyId);
-      
-      if (isHealthy) {
-        healthyIndices.push(i);
-      }
-    }
+    // Parallel health checks — sequential Redis GETs per proxy add up fast
+    const results = await Promise.all(
+      this.proxies.map(async (_, i) => {
+        const proxyId = this._generateProxyId(i);
+        const isHealthy = await this._isProxyHealthy(proxyId);
+        return { index: i, healthy: isHealthy };
+      })
+    );
     
-    return healthyIndices;
+    return results.filter(r => r.healthy).map(r => r.index);
   }
 
   /**
