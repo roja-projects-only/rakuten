@@ -5,9 +5,9 @@
 Create environment files from examples:
 
 ```bash
-cp deployment/.env.coordinator.example .env.coordinator
-cp deployment/.env.worker.example .env.worker
-cp deployment/.env.pow-service.example .env.pow-service
+cp deployment/env/coordinator.env.example .env.coordinator
+cp deployment/env/worker.env.example .env.worker
+cp deployment/env/pow-service.env.example .env.pow-service
 
 # Edit each file with your settings
 nano .env.coordinator
@@ -73,7 +73,7 @@ node scripts/deploy/update-instance.js all
 ```bash
 docker stop rakuten-pow-service
 docker rm rakuten-pow-service
-docker build -f deployment/docker/Dockerfile.pow-service -t rakuten-pow-service .
+DOCKER_BUILDKIT=1 docker build -f deployment/docker/Dockerfile.pow-service -t rakuten-pow-service .
 docker run -d \
   --name rakuten-pow-service \
   --restart unless-stopped \
@@ -88,7 +88,7 @@ docker logs -f rakuten-pow-service
 ```bash
 docker stop rakuten-coordinator
 docker rm rakuten-coordinator
-docker build -f deployment/docker/Dockerfile.coordinator -t rakuten-coordinator .
+DOCKER_BUILDKIT=1 docker build -f deployment/docker/Dockerfile.coordinator -t rakuten-coordinator .
 docker run -d \
   --name rakuten-coordinator \
   --restart unless-stopped \
@@ -103,7 +103,7 @@ docker logs -f rakuten-coordinator
 ```bash
 docker stop rakuten-worker
 docker rm rakuten-worker
-docker build -f deployment/docker/Dockerfile.worker -t rakuten-worker .
+DOCKER_BUILDKIT=1 docker build -f deployment/docker/Dockerfile.worker -t rakuten-worker .
 docker run -d \
   --name rakuten-worker \
   --restart unless-stopped \

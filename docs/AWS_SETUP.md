@@ -17,7 +17,8 @@ Complete step-by-step guide for deploying the distributed Rakuten checker on AWS
 9. [Scaling](#scaling)
 10. [Common Operations](#common-operations)
 11. [Troubleshooting](#troubleshooting)
-12. [Cost Summary](#cost-summary)
+12. [Environment Variable Reference](#environment-variable-reference)
+13. [Cost Summary](#cost-summary)
 
 ---
 
@@ -110,7 +111,7 @@ Click **Create security group** again.
 
 | # | Type | Port range | Source | Description |
 |---|---|---|---|---|
-| 1 | Custom TCP | `9090` | **My IP** | Metrics endpoint |
+| 1 | Custom TCP | `9090` | **My IP** | Metrics / health endpoint |
 | 2 | SSH | `22` | **My IP** | SSH access |
 
 Click **Create security group**.
@@ -202,7 +203,7 @@ A browser terminal opens. Run commands **one block at a time**:
 **Block 1 — Install Docker & Git:**
 ```bash
 sudo apt update && sudo apt upgrade -y
-sudo apt install -y docker.io git
+sudo apt install -y docker.io docker-buildx-plugin git
 sudo systemctl enable docker && sudo systemctl start docker
 sudo usermod -aG docker ubuntu
 ```
@@ -216,30 +217,28 @@ newgrp docker
 ```bash
 git clone https://github.com/roja-projects-only/rakuten.git
 cd rakuten
-docker build -f deployment/docker/Dockerfile.pow-service -t rakuten-pow-service .
+DOCKER_BUILDKIT=1 docker build -f deployment/docker/Dockerfile.pow-service -t rakuten-pow-service .
 ```
-Takes ~2-3 minutes. Wait for `Successfully tagged rakuten-pow-service:latest`.
+Takes ~2-3 minutes. Wait for the build to complete.
+> `DOCKER_BUILDKIT=1` enables BuildKit, required for the cache-mount build steps.
 
-**Block 4 — Create env file:**
+**Block 4 — Create env file from template:**
 ```bash
-cat > .env.pow-service << 'EOF'
-PORT=3001
-LOG_LEVEL=info
-REDIS_URL=PASTE_YOUR_RAILWAY_REDIS_URL_HERE
-# Optional tuning:
-# POW_NUM_WORKERS=   (default: CPU-1)
-# POW_TASK_TIMEOUT=  (default: 30000 ms)
-EOF
-```
-
-**Block 5 — Edit with your real Railway Redis URL:**
-```bash
+cp deployment/env/pow-service.env.example .env.pow-service
 nano .env.pow-service
 ```
-- Arrow key to `PASTE_YOUR_RAILWAY_REDIS_URL_HERE`, delete it, paste your Railway Redis URL
-- Press **Ctrl+X** → **Y** → **Enter** to save
 
-**Block 6 — Run the container:**
+The template comes with sensible defaults. You only need to set **one value**:
+
+| Field | Replace with |
+|---|---|
+| `REDIS_URL` | Your Railway Redis URL (replace `redis://localhost:6379`) |
+
+The remaining fields (`PORT=3001`, `LOG_LEVEL=info`, `POW_TASK_TIMEOUT=30000`, etc.) are pre-configured. Set `POW_NUM_WORKERS` only if you want to override the auto-detected CPU count.
+
+Press **Ctrl+X** → **Y** → **Enter** to save.
+
+**Block 5 — Run the container:**
 ```bash
 docker run -d \
   --name rakuten-pow-service \
@@ -250,11 +249,21 @@ docker run -d \
 ```
 > `-p 8080:3001` maps host port 8080 → container port 3001
 
-**Block 7 — Verify:**
+**Block 6 — Verify:**
 ```bash
 curl http://localhost:8080/health
 ```
-Expected: `{"status":"healthy","timestamp":"...","uptime":...}`
+Expected response:
+```json
+{
+  "status": "healthy",
+  "timestamp": "...",
+  "uptime": 12345,
+  "hashImplementation": "native",
+  "redis": { "status": "connected" },
+  "workerPool": { "status": "healthy", "workers": { ... } }
+}
+```
 
 If it fails, check logs:
 ```bash
@@ -288,7 +297,7 @@ Click instance → **Connect** → **EC2 Instance Connect** → **Connect**.
 **Block 1 — Install Docker & Git:**
 ```bash
 sudo apt update && sudo apt upgrade -y
-sudo apt install -y docker.io git
+sudo apt install -y docker.io docker-buildx-plugin git
 sudo systemctl enable docker && sudo systemctl start docker
 sudo usermod -aG docker ubuntu
 ```
@@ -302,49 +311,37 @@ newgrp docker
 ```bash
 git clone https://github.com/roja-projects-only/rakuten.git
 cd rakuten
-docker build -f deployment/docker/Dockerfile.coordinator -t rakuten-coordinator .
+DOCKER_BUILDKIT=1 docker build -f deployment/docker/Dockerfile.coordinator -t rakuten-coordinator .
 ```
-Wait for `Successfully tagged rakuten-coordinator:latest`.
+Wait for the build to complete.
 
-**Block 4 — Create env file:**
+**Block 4 — Create env file from template:**
 ```bash
-cat > .env.coordinator << 'EOF'
-TELEGRAM_BOT_TOKEN=PASTE_BOT_TOKEN
-TARGET_LOGIN_URL=https://login.account.rakuten.com/sso/authorize?client_id=rakuten_ichiba_top_web&service_id=s245&response_type=code&scope=openid&redirect_uri=https%3A%2F%2Fwww.rakuten.co.jp%2F
-REDIS_URL=PASTE_YOUR_RAILWAY_REDIS_URL_HERE
-POW_SERVICE_URL=http://PASTE_POW_PRIVATE_IP:8080
-FORWARD_CHANNEL_ID=
-ALLOWED_USER_IDS=
-BATCH_CONCURRENCY=3
-BATCH_DELAY_MS=10
-BATCH_MAX_RETRIES=2
-TIMEOUT_MS=60000
-LOG_LEVEL=info
-METRICS_PORT=9090
-EOF
-```
-
-**Block 5 — Edit with real values:**
-```bash
+cp deployment/env/coordinator.env.example .env.coordinator
 nano .env.coordinator
 ```
 
-Replace these **3 required** placeholders:
-| Placeholder | Replace with |
-|---|---|
-| `PASTE_BOT_TOKEN` | Your Telegram bot token from @BotFather |
-| `PASTE_YOUR_RAILWAY_REDIS_URL_HERE` | Your Railway Redis URL |
-| `PASTE_POW_PRIVATE_IP` | Private IPv4 of the POW instance (from Phase 2) |
+Replace these **2 required** placeholders:
 
-Optional fields:
+| Field | Replace with |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | Your Telegram bot token from @BotFather (replace `replace-me`) |
+| `REDIS_URL` | Your Railway Redis URL (replace `redis://localhost:6379`) |
+
+Optional fields (leave empty if not needed):
+
 | Field | What to put |
 |---|---|
 | `FORWARD_CHANNEL_ID` | Channel ID to forward VALID results (e.g., `-1001234567890`) |
 | `ALLOWED_USER_IDS` | Comma-separated Telegram user IDs (e.g., `123456789,987654321`) |
+| `PROXY_SERVER` | Single proxy URL (legacy) |
+| `PROXY_POOL` | Comma-separated proxy URLs |
+
+The remaining fields (`BATCH_CONCURRENCY`, `BATCH_DELAY_MS`, `TIMEOUT_MS`, `METRICS_PORT`, etc.) are pre-configured with sensible defaults. See the [Environment Variable Reference](#environment-variable-reference) for all options.
 
 Press **Ctrl+X** → **Y** → **Enter** to save.
 
-**Block 6 — Run the container:**
+**Block 5 — Run the container:**
 ```bash
 docker run -d \
   --name rakuten-coordinator \
@@ -354,7 +351,7 @@ docker run -d \
   rakuten-coordinator
 ```
 
-**Block 7 — Verify:**
+**Block 6 — Verify:**
 ```bash
 docker logs -f rakuten-coordinator
 ```
@@ -392,7 +389,7 @@ Click instance → **Connect** → **EC2 Instance Connect** → **Connect**.
 **Block 1 — Install Docker & Git:**
 ```bash
 sudo apt update && sudo apt upgrade -y
-sudo apt install -y docker.io git
+sudo apt install -y docker.io docker-buildx-plugin git
 sudo systemctl enable docker && sudo systemctl start docker
 sudo usermod -aG docker ubuntu
 ```
@@ -406,37 +403,28 @@ newgrp docker
 ```bash
 git clone https://github.com/roja-projects-only/rakuten.git
 cd rakuten
-docker build -f deployment/docker/Dockerfile.worker -t rakuten-worker .
+DOCKER_BUILDKIT=1 docker build -f deployment/docker/Dockerfile.worker -t rakuten-worker .
 ```
-Wait for `Successfully tagged rakuten-worker:latest`.
+Wait for the build to complete.
 
-**Block 4 — Create env file:**
+**Block 4 — Create env file from template:**
 ```bash
-cat > .env.worker << 'EOF'
-REDIS_URL=PASTE_YOUR_RAILWAY_REDIS_URL_HERE
-POW_SERVICE_URL=http://PASTE_POW_PRIVATE_IP:8080
-TARGET_LOGIN_URL=https://login.account.rakuten.com/sso/authorize?client_id=rakuten_ichiba_top_web&service_id=s245&response_type=code&scope=openid&redirect_uri=https%3A%2F%2Fwww.rakuten.co.jp%2F
-WORKER_CONCURRENCY=3
-TIMEOUT_MS=60000
-BATCH_MAX_RETRIES=2
-LOG_LEVEL=info
-EOF
-```
-
-**Block 5 — Edit with real values:**
-```bash
+cp deployment/env/worker.env.example .env.worker
 nano .env.worker
 ```
 
-Replace:
-| Placeholder | Replace with |
+Set these **2 values**:
+
+| Field | Replace with |
 |---|---|
-| `PASTE_YOUR_RAILWAY_REDIS_URL_HERE` | Your Railway Redis URL |
-| `PASTE_POW_PRIVATE_IP` | Private IPv4 of the POW instance |
+| `REDIS_URL` | Your Railway Redis URL (replace `redis://localhost:6379`) |
+| `POW_SERVICE_URL` | `http://POW_PRIVATE_IP:8080` — replace with the POW instance's Private IPv4 (from Phase 2) and the host port `8080` |
+
+The template's `TARGET_LOGIN_URL` is already set to the correct Rakuten OAuth URL. The remaining fields (`WORKER_CONCURRENCY`, `TIMEOUT_MS`, `WORKER_TASK_TIMEOUT`, etc.) are pre-configured with sensible defaults. See the [Environment Variable Reference](#environment-variable-reference) for all options.
 
 Press **Ctrl+X** → **Y** → **Enter** to save.
 
-**Block 6 — Run the container:**
+**Block 5 — Run the container:**
 ```bash
 docker run -d \
   --name rakuten-worker \
@@ -445,7 +433,7 @@ docker run -d \
   rakuten-worker
 ```
 
-**Block 7 — Verify:**
+**Block 6 — Verify:**
 ```bash
 docker logs -f rakuten-worker
 ```
@@ -471,19 +459,36 @@ Repeat this entire Phase 4 on new EC2 instances. Each worker auto-registers with
 **From POW instance:**
 ```bash
 curl http://localhost:8080/health
-# → {"status":"healthy","timestamp":"...","uptime":...}
+# → {"status":"healthy","timestamp":"...","uptime":...,"hashImplementation":"native",...}
+
+curl http://localhost:8080/metrics
+# → Prometheus-format metrics
 ```
 
 **From Coordinator instance:**
 ```bash
 # Check coordinator health
 curl http://localhost:9090/health
+# → {"status":"healthy","timestamp":"...","coordinator":{...},"workers":{...},"queue":{...}}
 
-# Check POW is reachable
+# Check Prometheus metrics
+curl http://localhost:9090/metrics
+# → Prometheus-format metrics
+
+# Check POW is reachable from coordinator
 curl http://POW_PRIVATE_IP:8080/health
 
 # Check workers connected
 docker logs rakuten-coordinator | grep -i "worker"
+```
+
+**From Worker instance:**
+```bash
+# Check worker is connected to Redis
+docker logs rakuten-worker | grep -i "redis"
+
+# Check POW is reachable from worker
+curl http://POW_PRIVATE_IP:8080/health
 ```
 
 ### End-to-End Test
@@ -498,51 +503,38 @@ docker logs rakuten-coordinator | grep -i "worker"
 
 ## Updating Code
 
-When you push new code to the repo:
+The repo includes a **quick-update script** that automates the `git pull` → `docker build` → `docker restart` cycle on each EC2 instance.
 
-### Update POW Service
+### Quick Update (Recommended)
+
+SSH into the instance, then:
+
 ```bash
 cd ~/rakuten
-git pull
-docker build -f deployment/docker/Dockerfile.pow-service -t rakuten-pow-service .
-docker stop rakuten-pow-service
-docker rm rakuten-pow-service
-docker run -d \
-  --name rakuten-pow-service \
-  --restart unless-stopped \
-  --env-file .env.pow-service \
-  -p 8080:3001 \
-  rakuten-pow-service
+
+# Full rebuild (needed when package.json or Dockerfile changes)
+./scripts/deploy/quick-update.sh coordinator
+./scripts/deploy/quick-update.sh worker
+./scripts/deploy/quick-update.sh pow-service
+./scripts/deploy/quick-update.sh all
+
+# Fast update — JS-only changes (~5 seconds, skips docker build)
+./scripts/deploy/quick-update.sh coordinator --fast
+./scripts/deploy/quick-update.sh worker --fast
+./scripts/deploy/quick-update.sh pow-service --fast
 ```
 
-### Update Coordinator
+**When to use `--fast`:** Only when `package.json` has NOT changed. The script copies changed JS files into the running container and restarts it. For any dependency or Dockerfile change, use a full rebuild (omit `--fast`).
+
+### One-liner via SSH
+
 ```bash
-cd ~/rakuten
-git pull
-docker build -f deployment/docker/Dockerfile.coordinator -t rakuten-coordinator .
-docker stop rakuten-coordinator
-docker rm rakuten-coordinator
-docker run -d \
-  --name rakuten-coordinator \
-  --restart unless-stopped \
-  --env-file .env.coordinator \
-  -p 9090:9090 \
-  rakuten-coordinator
+ssh ubuntu@COORDINATOR_IP "cd ~/rakuten && ./scripts/deploy/quick-update.sh coordinator"
 ```
 
-### Update Worker
-```bash
-cd ~/rakuten
-git pull
-docker build -f deployment/docker/Dockerfile.worker -t rakuten-worker .
-docker stop rakuten-worker
-docker rm rakuten-worker
-docker run -d \
-  --name rakuten-worker \
-  --restart unless-stopped \
-  --env-file .env.worker \
-  rakuten-worker
-```
+### Manual Commands
+
+For the full manual `docker stop/rm/build/run` reference, see [docs/OPERATIONS.md](OPERATIONS.md).
 
 ---
 
@@ -610,6 +602,7 @@ redis-cli -u "redis://default:PASSWORD@HOST.railway.app:PORT"
 redis-cli -u "RAILWAY_REDIS_URL" KEYS "worker:*:heartbeat"   # connected workers
 redis-cli -u "RAILWAY_REDIS_URL" LLEN queue:tasks             # queued tasks
 redis-cli -u "RAILWAY_REDIS_URL" KEYS "progress:*"            # active batches
+redis-cli -u "RAILWAY_REDIS_URL" KEYS "queue:retry"           # retry queue length
 ```
 
 ---
@@ -689,7 +682,7 @@ docker restart rakuten-coordinator
 Spot instances can be reclaimed. If it happens:
 1. Launch a new instance (same Phase steps)
 2. Workers auto-deregister from Redis after heartbeat timeout
-3. POW service: update `POW_SERVICE_URL` in coordinator/worker `.env` files if the new IP changed, then restart them
+3. POW service: update `POW_SERVICE_URL` in worker `.env` files if the new IP changed, then restart workers
 
 ---
 
@@ -706,7 +699,7 @@ The current deployment builds Docker images directly on EC2 instances. For large
 
 2. **Build and push images** from a CI/CD pipeline or build server:
    ```bash
-   docker build -f deployment/docker/Dockerfile.pow-service -t $ECR_URI/rakuten/pow-service:latest .
+   DOCKER_BUILDKIT=1 docker build -f deployment/docker/Dockerfile.pow-service -t $ECR_URI/rakuten/pow-service:latest .
    docker push $ECR_URI/rakuten/pow-service:latest
    ```
 
@@ -718,44 +711,68 @@ The current deployment builds Docker images directly on EC2 instances. For large
 
 **When to switch:** ECR is worth it when you have 3+ instances per service, deploy more than a few times per day, or need consistent images across a fleet. For the current 3-instance setup with infrequent deploys, on-instance builds are acceptable.
 
+---
+
 ## Environment Variable Reference
+
+Env file templates live in `deployment/env/`. Copy them with `cp deployment/env/{service}.env.example .env.{service}` and edit as needed.
 
 ### Coordinator
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `TELEGRAM_BOT_TOKEN` | **Yes** | — | Bot token from @BotFather |
-| `TARGET_LOGIN_URL` | **Yes** | — | Rakuten OAuth URL |
+| `TARGET_LOGIN_URL` | **Yes** | — | Rakuten OAuth URL (pre-set in template) |
 | `REDIS_URL` | **Yes** | — | Railway Redis URL |
-| `POW_SERVICE_URL` | Recommended | — | POW service endpoint |
 | `FORWARD_CHANNEL_ID` | No | — | Channel ID to forward VALID results |
-| `ALLOWED_USER_IDS` | No | — | Comma-separated allowed user IDs |
-| `BATCH_CONCURRENCY` | No | `1` | Parallel batch workers |
-| `BATCH_DELAY_MS` | No | `50` | Delay between task chunks (ms) |
-| `BATCH_MAX_RETRIES` | No | `2` | Retry count for ERROR results |
-| `TIMEOUT_MS` | No | `60000` | HTTP request timeout (ms) |
+| `ALLOWED_USER_IDS` | No | — | Comma-separated allowed user IDs (empty = allow all) |
+| `NODE_ENV` | No | `production` | Node environment |
 | `LOG_LEVEL` | No | `info` | debug / info / warn / error |
-| `METRICS_PORT` | No | `9090` | Prometheus metrics port |
+| `TIMEOUT_MS` | No | `60000` | HTTP request timeout for credential checks (ms) |
+| `REDIS_COMMAND_TIMEOUT` | No | `60000` | Redis command timeout (must be > WORKER_QUEUE_TIMEOUT) |
+| `METRICS_PORT` | No | `9090` | Prometheus metrics / health endpoint port |
+| `METRICS_HOST` | No | `0.0.0.0` | Metrics server bind address |
+| `BATCH_CONCURRENCY` | No | `1` | Parallel batch workers |
+| `BATCH_MAX_RETRIES` | No | `2` | Retry count for ERROR results |
+| `BATCH_DELAY_MS` | No | `50` | Delay between task chunks (ms) |
+| `BATCH_HUMAN_DELAY_MS` | No | `0` | Additional human-like delay between checks (ms) |
+| `PROXY_SERVER` | No | — | Single proxy URL (legacy) |
+| `PROXY_POOL` | No | — | Comma-separated proxy URLs |
+| `PROCESSED_TTL_MS` | No | `2592000000` | Dedup cache TTL (30 days) |
+| `FORWARD_TTL_MS` | No | `2592000000` | Forward tracking TTL (30 days) |
 
 ### Worker
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `REDIS_URL` | **Yes** | — | Railway Redis URL |
-| `POW_SERVICE_URL` | Recommended | — | POW service endpoint |
-| `TARGET_LOGIN_URL` | Recommended | — | Override login URL |
-| `WORKER_CONCURRENCY` | No | `3` | Concurrent tasks (1-50) |
-| `TIMEOUT_MS` | No | `60000` | HTTP request timeout (ms) |
-| `BATCH_MAX_RETRIES` | No | `2` | Retry count |
+| `TARGET_LOGIN_URL` | **Yes** | — | Rakuten OAuth URL (pre-set in template) |
+| `POW_SERVICE_URL` | No | — | POW service endpoint (`http://POW_PRIVATE_IP:8080`). Falls back to slower local computation if unset |
+| `NODE_ENV` | No | `production` | Node environment |
 | `LOG_LEVEL` | No | `info` | Log level |
+| `TIMEOUT_MS` | No | `60000` | HTTP request timeout (ms) |
+| `REDIS_COMMAND_TIMEOUT` | No | `60000` | Redis command timeout (must be > WORKER_QUEUE_TIMEOUT) |
+| `WORKER_ID` | No | auto | Unique worker ID (auto-generated if empty) |
+| `WORKER_CONCURRENCY` | No | `3` | Concurrent tasks (1-50) |
+| `WORKER_TASK_TIMEOUT` | No | `120000` | Per-task timeout (ms) |
+| `WORKER_HEARTBEAT_INTERVAL` | No | `10000` | Redis heartbeat interval (ms) |
+| `WORKER_QUEUE_TIMEOUT` | No | `30000` | Queue poll timeout (ms) |
+| `WORKER_HTTP_PORT` | No | `3010` | Optional HTTP status endpoint port |
+| `POW_CLIENT_TIMEOUT` | No | `25000` | Client timeout for POW HTTP requests (ms) |
+| `BATCH_MAX_RETRIES` | No | `2` | Retry count |
+| `PROCESSED_TTL_MS` | No | `2592000000` | Dedup cache TTL (30 days) |
 
 ### POW Service
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `PORT` | No | `3001` | Internal HTTP port |
-| `REDIS_URL` | No | — | Cache computed results (recommended) |
+| `PORT` | No | `3001` | Internal HTTP port (mapped to host 8080) |
+| `NODE_ENV` | No | `production` | Node environment |
 | `LOG_LEVEL` | No | `info` | Log level |
+| `REDIS_URL` | No | — | Redis for result caching (service runs without it if missing) |
+| `REDIS_COMMAND_TIMEOUT` | No | `60000` | Redis command timeout (ms) |
+| `POW_NUM_WORKERS` | No | CPU count | Worker pool size (auto-detected if empty) |
+| `POW_TASK_TIMEOUT` | No | `30000` | Per-computation timeout (ms) |
 
 ---
 

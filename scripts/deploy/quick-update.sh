@@ -80,9 +80,9 @@ print_header() {
 # Get service config
 get_dockerfile() {
   case "$1" in
-    coordinator) echo "Dockerfile.coordinator" ;;
-    worker)      echo "Dockerfile.worker" ;;
-    pow-service) echo "Dockerfile.pow-service" ;;
+    coordinator) echo "deployment/docker/Dockerfile.coordinator" ;;
+    worker)      echo "deployment/docker/Dockerfile.worker" ;;
+    pow-service) echo "deployment/docker/Dockerfile.pow-service" ;;
   esac
 }
 
@@ -107,6 +107,14 @@ get_env_file() {
     coordinator) echo ".env.coordinator" ;;
     worker)      echo ".env.worker" ;;
     pow-service) echo ".env.pow-service" ;;
+  esac
+}
+
+get_env_template() {
+  case "$1" in
+    coordinator) echo "deployment/env/coordinator.env.example" ;;
+    worker)      echo "deployment/env/worker.env.example" ;;
+    pow-service) echo "deployment/env/pow-service.env.example" ;;
   esac
 }
 
@@ -171,7 +179,7 @@ update_service() {
   # Check env file exists
   if [ ! -f "$env_file" ]; then
     log_error "Environment file not found: $env_file"
-    log_info "Create it with: cp deployment/${env_file}.example $env_file && nano $env_file"
+    log_info "Create it with: cp $(get_env_template "$service") $env_file && nano $env_file"
     return 1
   fi
   
