@@ -226,6 +226,10 @@ class ProgressTracker {
       });
       
       // Edit Telegram message (catch "not modified" errors)
+      if (!this.telegram) {
+        this.logger.warn('Telegram client unavailable during progress update, skipping edit', { batchId });
+        return;
+      }
       try {
         await this.telegram.editMessageText(
           progressData.chatId,

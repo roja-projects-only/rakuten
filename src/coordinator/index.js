@@ -103,6 +103,10 @@ async function main() {
 
     // Wire telegram instance into coordinator for message editing
     coordinator.telegram = bot.telegram;
+    // Also wire into progress tracker (created before telegram was available)
+    if (coordinator.progressTracker) {
+      coordinator.progressTracker.telegram = bot.telegram;
+    }
 
     // 6. Start coordinator services (heartbeats, pub/sub, metrics, crash recovery)
     await coordinator.start();
