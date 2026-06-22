@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 # =============================================================================
 # POW SERVICE DOCKERFILE - Multi-stage build for production deployment
 # =============================================================================
@@ -29,11 +30,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install all dependencies (including dev dependencies for building)
-RUN npm install --include=dev
-
-# Remove dev dependencies (no source copy needed — production stage copies files directly)
-RUN npm prune --production && \
-    npm cache clean --force
+RUN --mount=type=cache,target=/root/.npm npm install
 
 # Production stage
 FROM node:22-alpine AS production

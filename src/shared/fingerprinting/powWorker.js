@@ -36,6 +36,13 @@ try {
   murmurHash128 = (buffer, seed) => MurmurHash3.x64.hash128(Array.from(buffer), seed);
 }
 
+// Log which hash implementation is active
+if (useNative) {
+  console.log('[pow-worker] Using native murmurhash (murmurhash-native)');
+} else {
+  console.warn('[pow-worker] WARNING: Using JS fallback murmurhash (murmurhash3js-revisited) — ~10x slower');
+}
+
 // Character set for suffix generation (alphanumeric)
 const CHARSET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 const CHARSET_LEN = CHARSET.length;
@@ -75,22 +82,6 @@ function fillRandomSuffix(keyLen) {
  */
 function bufferToString() {
   return hashBuffer.toString('utf8', 0, HASH_BUFFER_SIZE);
-}
-
-/**
- * Check if hash starts with mask (case-insensitive)
- */
-function checkMask(hash, mask) {
-  if (!mask) return true;
-  // Compare lowercase - hash is already lowercase from native
-  const maskLower = mask.toLowerCase();
-  for (let i = 0; i < maskLower.length; i++) {
-    if (hash.charCodeAt(i) !== maskLower.charCodeAt(i) && 
-        hash.toLowerCase().charCodeAt(i) !== maskLower.charCodeAt(i)) {
-      return false;
-    }
-  }
-  return true;
 }
 
 /**

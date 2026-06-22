@@ -117,12 +117,12 @@ build_docker_image() {
     log_info "Building Docker image..."
     
     # Assume we're in the project root
-    if [[ ! -f "Dockerfile.pow-service" ]]; then
-        log_error "Dockerfile.pow-service not found. Run this script from the project root."
+    if [[ ! -f "deployment/docker/Dockerfile.pow-service" ]]; then
+        log_error "deployment/docker/Dockerfile.pow-service not found. Run this script from the project root."
         exit 1
     fi
     
-    docker build -f Dockerfile.pow-service -t "$DOCKER_IMAGE" .
+    docker build -f deployment/docker/Dockerfile.pow-service -t "$DOCKER_IMAGE" .
     
     log_info "Docker image built successfully"
 }

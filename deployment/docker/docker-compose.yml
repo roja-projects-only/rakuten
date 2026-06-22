@@ -68,6 +68,11 @@ services:
       retries: 3
       start_period: 30s
     restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          cpus: '1.5'
+          memory: 2g
     networks:
       - rakuten-network
 

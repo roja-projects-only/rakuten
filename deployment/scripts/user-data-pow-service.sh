@@ -4,8 +4,8 @@
 # Update system
 yum update -y
 
-# Install Node.js 20
-curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
+# Install Node.js 22
+curl -fsSL https://rpm.nodesource.com/setup_22.x | bash -
 yum install -y nodejs git
 
 # Create application directory

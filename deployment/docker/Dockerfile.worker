@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 # Multi-stage build for Worker Node
 FROM node:22-alpine AS builder
 
@@ -11,7 +12,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install all dependencies (including native modules)
-RUN npm install
+RUN --mount=type=cache,target=/root/.npm npm ci
 
 # Production stage
 FROM node:22-alpine AS production

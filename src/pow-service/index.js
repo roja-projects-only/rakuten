@@ -22,6 +22,7 @@ class POWService {
     this.workerPool = null;
     this.app = null;
     this.server = null;
+    this.hashImplementation = 'unknown';
 
     this.stats = {
       requestsTotal: 0,
@@ -68,6 +69,16 @@ class POWService {
 
       this.workerPool.init();
       log.info('Worker pool initialized');
+
+      // Detect hash implementation for health endpoint
+      try {
+        require('murmurhash-native');
+        this.hashImplementation = 'native';
+        log.info('Hash implementation: native (murmurhash-native)');
+      } catch {
+        this.hashImplementation = 'js-fallback';
+        log.warn('Hash implementation: JS fallback (murmurhash3js-revisited) — ~10x slower');
+      }
     } catch (error) {
       log.error(`Worker pool init failed: ${error.message}`);
       throw error;
@@ -240,6 +251,7 @@ class POWService {
       status: 'healthy',
       timestamp: new Date().toISOString(),
       uptime: Date.now() - this.stats.startTime,
+      hashImplementation: this.hashImplementation,
     };
 
     if (this.redisClient) {

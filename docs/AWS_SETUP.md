@@ -693,6 +693,31 @@ Spot instances can be reclaimed. If it happens:
 
 ---
 
+## ECR Migration Path (Optional)
+
+The current deployment builds Docker images directly on EC2 instances. For larger fleets or more frequent deploys, consider migrating to Amazon ECR:
+
+1. **Create ECR repositories** for each service:
+   ```bash
+   aws ecr create-repository --repository-name rakuten/pow-service
+   aws ecr create-repository --repository-name rakuten/coordinator
+   aws ecr create-repository --repository-name rakuten/worker
+   ```
+
+2. **Build and push images** from a CI/CD pipeline or build server:
+   ```bash
+   docker build -f deployment/docker/Dockerfile.pow-service -t $ECR_URI/rakuten/pow-service:latest .
+   docker push $ECR_URI/rakuten/pow-service:latest
+   ```
+
+3. **Pull on EC2 instances** instead of building:
+   ```bash
+   aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $ECR_URI
+   docker pull $ECR_URI/rakuten/pow-service:latest
+   ```
+
+**When to switch:** ECR is worth it when you have 3+ instances per service, deploy more than a few times per day, or need consistent images across a fleet. For the current 3-instance setup with infrequent deploys, on-instance builds are acceptable.
+
 ## Environment Variable Reference
 
 ### Coordinator
