@@ -197,7 +197,7 @@ function guardInput(raw) {
  * @param {Object} [options] - Optional configuration
  * @returns {Telegraf} Configured bot instance
  */
-function initializeTelegramHandler(botToken, options = {}) {
+async function initializeTelegramHandler(botToken, options = {}) {
   const bot = new Telegraf(botToken);
   const configService = getConfigService();
 
@@ -631,6 +631,19 @@ function initializeTelegramHandler(botToken, options = {}) {
       log.warn(`Callback error (help): ${err.message}`);
     }
   });
+
+  // Clear any stale webhook before polling — if a webhook was previously
+  // set on this bot token, Telegram won't deliver updates via long polling.
+  try {
+    const webhookInfo = await bot.telegram.getWebhookInfo();
+    if (webhookInfo.url) {
+      log.warn(`Stale webhook detected (${webhookInfo.url}) — deleting it so polling can receive updates`);
+      await bot.telegram.deleteWebhook();
+      log.info('Stale webhook deleted');
+    }
+  } catch (err) {
+    log.warn(`Could not check/clear webhook: ${err.message} — polling will continue but may not receive messages if a webhook is set`);
+  }
 
   // Launch bot
   bot.launch();

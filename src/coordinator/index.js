@@ -80,7 +80,7 @@ async function main() {
       coordinator,
     };
 
-    const bot = initializeTelegramHandler(botToken, handlerOptions);
+    const bot = await initializeTelegramHandler(botToken, handlerOptions);
 
     // Wire telegram instance into coordinator for message editing
     coordinator.telegram = bot.telegram;
