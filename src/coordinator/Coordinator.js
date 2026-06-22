@@ -24,8 +24,6 @@ const {
   PROGRESS_TRACKER,
   JOB_QUEUE,
   PUBSUB_CHANNELS,
-  SINGLE_CHECK_RESULT,
-  SINGLE_CHECK_CANCELLED,
   generateBatchId
 } = require('../shared/redis/keys');
 
@@ -575,83 +573,6 @@ class Coordinator {
         error: error.message
       });
     }
-  }
-
-  /**
-   * Dispatch a single credential check to a worker via the Redis queue.
-   * Enqueues a task with singleCheck=true and polls for the result.
-   * Returns the result object, or null if the worker doesn't respond in time.
-   * @param {Object} creds - { username, password }
-   * @param {Object} options - { timeoutMs }
-   * @returns {Promise<Object|null>} Result object { status, capture, ipAddress, ... } or null on timeout
-   */
-  async dispatchSingleCheck(creds, options = {}) {
-    const taskId = `chk-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
-    const resultKey = SINGLE_CHECK_RESULT.generate(taskId);
-    const cancelledKey = SINGLE_CHECK_CANCELLED.generate(taskId);
-    const timeoutMs = options.timeoutMs || 60000;
-    const pollInterval = 500;
-    const deadline = Date.now() + timeoutMs;
-
-    // 1. Assign proxy from pool
-    const proxyAssignment = await this.proxyPool.assignProxy(taskId);
-
-    // 2. Build and enqueue task
-    const task = {
-      taskId,
-      batchId: 'chk-single',
-      username: creds.username,
-      password: creds.password,
-      proxyUrl: proxyAssignment?.proxyUrl || null,
-      proxyId: proxyAssignment?.proxyId || null,
-      retryCount: 0,
-      createdAt: Date.now(),
-      batchType: 'SINGLE_CHECK',
-      singleCheck: true,
-    };
-
-    await this.redis.executeCommand('rpush', JOB_QUEUE.tasks, JSON.stringify(task));
-
-    this.logger.info('Single check dispatched to queue', {
-      taskId,
-      username: creds.username,
-      proxyId: task.proxyId,
-      activeWorkers: this.activeWorkers.size,
-    });
-
-    // 3. Poll for result
-    while (Date.now() < deadline) {
-      const raw = await this.redis.executeCommand('get', resultKey);
-      if (raw) {
-        await this.redis.executeCommand('del', resultKey);
-        const result = JSON.parse(raw);
-        // Record proxy health
-        if (proxyAssignment) {
-          await this.proxyPool.recordProxyResult(
-            proxyAssignment.proxyId,
-            result.status === 'VALID'
-          );
-        }
-        this.logger.info('Single check result received from worker', {
-          taskId,
-          status: result.status,
-          durationMs: result.checkDurationMs,
-          workerId: result.workerId,
-        });
-        return { result, proxyAssignment };
-      }
-      await new Promise((r) => setTimeout(r, pollInterval));
-    }
-
-    // 4. Timeout — mark as cancelled so worker discards late result
-    await this.redis.executeCommand('setex', cancelledKey, SINGLE_CHECK_CANCELLED.ttl, '1');
-
-    this.logger.warn('Single check timed out — falling back to local', {
-      taskId,
-      timeoutMs,
-    });
-
-    return null;
   }
 
   /**

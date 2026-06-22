@@ -145,24 +145,6 @@ const JOB_QUEUE = {
 };
 
 /**
- * Single check result keys
- * Pattern: check:result:{taskId}, check:cancelled:{taskId}
- * TTL: 120 seconds
- * Purpose: Coordinator dispatches single .chk tasks to workers via queue:tasks;
- *          worker stores result in check:result:{taskId} for coordinator to poll.
- *          Coordinator sets check:cancelled:{taskId} on timeout to prevent late writes.
- */
-const SINGLE_CHECK_RESULT = {
-  generate: (taskId) => `check:result:${taskId}`,
-  ttl: 120 // 2 minutes in seconds
-};
-
-const SINGLE_CHECK_CANCELLED = {
-  generate: (taskId) => `check:cancelled:${taskId}`,
-  ttl: 120 // 2 minutes in seconds
-};
-
-/**
  * Batch cancellation keys
  * Pattern: batch:{batchId}:cancelled
  * TTL: 1 hour
@@ -308,8 +290,7 @@ module.exports = {
   BATCH_CANCELLED,
   WORKER_INFO,
   POW_CACHE,
-  SINGLE_CHECK_RESULT,
-  SINGLE_CHECK_CANCELLED,
+
   JOB_QUEUE,
   PUBSUB_CHANNELS,
   KEY_PATTERNS,

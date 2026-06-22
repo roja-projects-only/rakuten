@@ -483,62 +483,7 @@ async function initializeTelegramHandler(botToken, options = {}) {
       const runtimeConfig = getRuntimeConfig();
       const coordinator = options.coordinator;
 
-      // ── Worker dispatch (distributed mode) ─────────────────────────────────
-      // When workers are registered, dispatch the .chk task through the Redis
-      // queue so a worker processes it. Fall back to local check on timeout.
-      // dispatchSingleCheck handles its own proxy pool assignment.
-      if (coordinator && coordinator.activeWorkers.size > 0) {
-        await updateStatus(buildCheckProgress('worker'));
-
-        const dispatched = await coordinator.dispatchSingleCheck(creds, {
-          timeoutMs: runtimeConfig.timeoutMs,
-        });
-
-        if (dispatched) {
-          const { result: workerResult, proxyAssignment } = dispatched;
-          const durationMs = workerResult.checkDurationMs || (Date.now() - startedAt);
-          log.info(`[chk] finish status=${workerResult.status} user=${maskUser(creds.username)} time=${durationMs}ms (worker: ${workerResult.workerId})`);
-
-          const workerProcessorInfo = {
-            name: `worker-${(workerResult.workerId || '?').substring(0, 12)}`,
-            proxy: proxyAssignment?.proxyUrl ? maskProxyUrl(proxyAssignment.proxyUrl) : 'direct',
-          };
-
-          // Build and display result
-          if (workerResult.status === 'VALID' && workerResult.capture) {
-            const finalMessage = buildCheckAndCaptureResult(
-              workerResult, workerResult.capture, creds.username, durationMs,
-              creds.password, workerResult.ipAddress, workerProcessorInfo
-            );
-            await updateStatus(finalMessage);
-
-            log.info(`[chk] captured: points=${workerResult.capture.points} rank=${workerResult.capture.rank} cash=${workerResult.capture.cash} lastOrder=${workerResult.capture.latestOrder} orderId=${workerResult.capture.latestOrderId}`);
-            if (workerResult.capture.profile) {
-              const phones = [workerResult.capture.profile.mobilePhone, workerResult.capture.profile.homePhone, workerResult.capture.profile.fax].filter(Boolean).join('/') || 'n/a';
-              log.info(`[chk] profile: name=${workerResult.capture.profile.name} (${workerResult.capture.profile.nameKana || ''}) email=${workerResult.capture.profile.email} dob=${workerResult.capture.profile.dob} phone=${phones}`);
-            }
-            // Skip forwardValidToChannel — worker already published forward_event via pub/sub
-          } else {
-            await updateStatus(buildCheckResult(workerResult, creds.username, durationMs, creds.password, workerResult.ipAddress, workerProcessorInfo));
-          }
-
-          // Skip handleCredentialStatusChange — worker already published update_event via pub/sub
-          // (ChannelForwarder handles INVALID/BLOCKED channel message updates)
-
-          // Record proxy health for the pool
-          if (proxyAssignment) {
-            await coordinator.proxyPool.recordProxyResult(proxyAssignment.proxyId, workerResult.status === 'VALID');
-          }
-
-          // Worker already closed the session — nothing to clean up here
-          return;
-        }
-
-        // Timeout — fall through to local check
-        log.warn(`[chk] worker dispatch timed out, falling back to local check`);
-      }
-
-      // ── Proxy pool assignment (local fallback path) ────────────────────────
+      // ── Proxy pool assignment ──────────────────────────────────────────────
       // Try ProxyPoolManager first (round-robin with health tracking), fall back
       // to PROXY_SERVER (legacy single proxy) if pool is empty/unhealthy.
       let proxyUrl = runtimeConfig.proxy;
