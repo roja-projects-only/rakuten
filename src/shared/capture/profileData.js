@@ -11,7 +11,7 @@
 
 const { createLogger } = require('../logger');
 const { getCookieString } = require('../http/client');
-const { hasSsoForm, followSsoRedirects, skipEmailVerification } = require('./ssoFormHandler');
+const { hasSsoForm, followSsoRedirects, skipEmailVerification, skipSessionUpgrade } = require('./ssoFormHandler');
 
 const log = createLogger('profile-data');
 
@@ -226,7 +226,7 @@ async function fetchProfileData(client, jar, timeoutMs) {
       const initiateUrl2 = initiateResponse.request?.res?.responseUrl || initiateResponse.config?.url || '';
       log.debug(`Initiate response status: ${initiateResponse.status}, URL: ${initiateUrl2.substring(0, 80)}...`);
       
-      // Check if initiate redirected to verification/login page - try to skip
+      // Check if initiate redirected to verification/login/session-upgrade page
       if (initiateUrl2.includes('/verification/')) {
         log.info('Profile gateway initiate requires verification - attempting to skip...');
         const skipResult = await skipEmailVerification(client, initiateUrl2, timeoutMs);
@@ -235,6 +235,23 @@ async function fetchProfileData(client, jar, timeoutMs) {
           return null;
         }
         // Retry initiate after skip
+        const retryResponse = await client.get(initiateUrl, {
+          timeout: timeoutMs,
+          maxRedirects: 5,
+          headers: { 
+            'Accept': 'application/json, text/html, */*',
+            'Referer': 'https://profile.id.rakuten.co.jp/',
+          },
+        });
+        bearerToken = extractBearerToken(retryResponse.data);
+      } else if (initiateUrl2.includes('/session/upgrade')) {
+        log.info('Profile gateway initiate requires session upgrade - attempting to skip...');
+        const skipResult = await skipSessionUpgrade(client, initiateUrl2, timeoutMs);
+        if (!skipResult) {
+          log.warn('Could not skip session upgrade during initiate - skipping profile capture');
+          return null;
+        }
+        // Retry initiate after session upgrade skip
         const retryResponse = await client.get(initiateUrl, {
           timeout: timeoutMs,
           maxRedirects: 5,

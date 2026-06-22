@@ -35,11 +35,11 @@ async function completeSessionAlignment(session, outcome, timeoutMs) {
   try {
     log.debug('Completing session alignment');
     
-    // POST to sessionAlign endpoint with align_token
+    // POST to sessionAlign endpoint with align_token as URL-encoded form data
     const alignUrl = outcome.url || 'https://member.id.rakuten.co.jp/rms/nid/sessionAlign';
-    const alignResponse = await client.post(alignUrl, {
-      align_token: outcome.alignToken,
-    }, {
+    const alignResponse = await client.post(alignUrl,
+      new URLSearchParams({ align_token: outcome.alignToken }).toString(),
+    {
       timeout: timeoutMs,
       maxRedirects: 10,
       headers: {

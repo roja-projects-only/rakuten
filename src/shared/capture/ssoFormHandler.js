@@ -259,9 +259,76 @@ async function skipEmailVerification(client, verificationUrl, timeoutMs, options
   }
 }
 
+/**
+ * Skips the session upgrade challenge by POSTing to /v2/session/upgrade.
+ * The session upgrade page prompts the user to upgrade/verify their session
+ * before accessing profile data. This function accepts the upgrade token
+ * to skip the prompt and continue with the existing session.
+ *
+ * @param {Object} client - HTTP client
+ * @param {string} upgradeUrl - Full session/upgrade URL with token param
+ * @param {number} timeoutMs - Request timeout
+ * @returns {Promise<boolean>} true if session upgrade was skipped successfully
+ */
+async function skipSessionUpgrade(client, upgradeUrl, timeoutMs) {
+  try {
+    // Extract main token from URL: /session/upgrade?token=@St.ott-v2...
+    const tokenMatch = upgradeUrl.match(/[?&]token=([^&#]+)/);
+    if (!tokenMatch) {
+      log.warn('[skip-upgrade] No token found in session upgrade URL');
+      return false;
+    }
+
+    const mainToken = decodeURIComponent(tokenMatch[1]);
+    log.debug(`[skip-upgrade] Main token: ${mainToken.substring(0, 50)}...`);
+
+    // POST to /v2/session/upgrade with the token to skip
+    const skipUrl = `${LOGIN_BASE}/v2/session/upgrade`;
+    const skipPayload = {
+      token: mainToken,
+    };
+
+    log.debug(`[skip-upgrade] POSTing to ${skipUrl}`);
+
+    const skipResponse = await client.post(skipUrl, skipPayload, {
+      timeout: timeoutMs,
+      maxRedirects: 0,
+      validateStatus: (status) => status < 500,
+      headers: {
+        'Accept': '*/*',
+        'Accept-Language': 'en-US',
+        'Content-Type': 'application/json',
+        'Origin': LOGIN_BASE,
+        'Referer': upgradeUrl,
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'same-origin',
+      },
+    });
+
+    log.debug(`[skip-upgrade] Response status: ${skipResponse.status}`);
+
+    if (skipResponse.status !== 200) {
+      log.warn(`[skip-upgrade] Skip failed with status: ${skipResponse.status}`);
+      if (skipResponse.data) {
+        log.debug(`[skip-upgrade] Response: ${JSON.stringify(skipResponse.data).substring(0, 200)}`);
+      }
+      return false;
+    }
+
+    log.info('[skip-upgrade] Session upgrade skipped successfully');
+    return true;
+
+  } catch (error) {
+    log.warn('[skip-upgrade] Failed to skip session upgrade:', error.message);
+    return false;
+  }
+}
+
 module.exports = {
   parseSsoForm,
   hasSsoForm,
   followSsoRedirects,
   skipEmailVerification,
+  skipSessionUpgrade,
 };

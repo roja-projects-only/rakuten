@@ -39,17 +39,29 @@ async function captureViaApi(client, jar, timeoutMs) {
     // Cookies are handled automatically by impit's cookieJar integration.
     // No need to manually inject Cookie header.
 
-    // Request body - only request memberPointInfo
+    // Request body - memberPointInfo + spux view tracking
     const requestBody = {
       common: {
-        params: { source: 'pc' },
+        params: { source: 'pc', clientId: 'top' },
         exclude: [null]
       },
       features: {
         memberPointInfo: {
           exclude: [null]
-        }
-      }
+        },
+        spux: {
+          params: {
+            viewType: 'TOP_START_POINT',
+            source: 'pc',
+            enc: 'UTF-8',
+            carrierCode: 0,
+            analyticsAcc: 1,
+            analyticsAid: 1,
+            sortedService: false,
+            isServiceListRequired: true,
+          },
+        },
+      },
     };
 
     const response = await client.post(HEADER_INFO_API, requestBody, {
@@ -57,19 +69,31 @@ async function captureViaApi(client, jar, timeoutMs) {
       headers: {
         'Accept': '*/*',
         'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
+        'Priority': 'u=1, i',
         'authkey': HEADER_INFO_AUTHKEY,
         'Origin': 'https://www.rakuten.co.jp',
         'Referer': 'https://www.rakuten.co.jp/',
         'Sec-Fetch-Dest': 'empty',
         'Sec-Fetch-Mode': 'cors',
         'Sec-Fetch-Site': 'same-site',
+        // Override default/browser-impersonation headers that don't
+        // belong on a fetch/XHR call — empty string removes per impit docs.
+        'Connection': '',
+        'Upgrade-Insecure-Requests': '',
+        'DNT': '',
+        'Sec-Fetch-User': '',
       },
     });
     
     log.debug(`API response status: ${response.status}`);
     
     if (response.status !== 200 && response.status !== 207) {
-      log.warn(`API returned status ${response.status}`);
+      const bodyPreview = typeof response.data === 'string'
+        ? response.data.substring(0, 300)
+        : JSON.stringify(response.data).substring(0, 300);
+      log.warn(`API returned status ${response.status}, body: ${bodyPreview}`);
       return null;
     }
     

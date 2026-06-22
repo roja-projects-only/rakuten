@@ -24,6 +24,7 @@ temp/
 *.pem
 *.pub
 ssh-logs.bat
+*.har
 
 # Misc local files
 test-credentials.txt

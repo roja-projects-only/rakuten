@@ -473,8 +473,8 @@ async function initializeTelegramHandler(botToken, options = {}) {
       }
     };
 
+    let sessionToClose = null;
     try {
-      let sessionToClose = null;
       // Keep creds in state for follow-up capture summary (masked via spoiler later).
       ctx.state.lastUsername = creds.username;
       ctx.state.lastPassword = creds.password;
