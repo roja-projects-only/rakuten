@@ -346,6 +346,9 @@ BATCH_MAX_RETRIES=2
 BATCH_DELAY_MS=50
 BATCH_HUMAN_DELAY_MS=0
 
+# ─── POW Service (optional) ─────────────────────────────────────────────────
+POW_SERVICE_URL=http://POW_PRIVATE_IP:8080
+
 # ─── Proxy (optional) ──────────────────────────────────────────────────────────
 PROXY_SERVER=
 PROXY_POOL=
@@ -362,6 +365,8 @@ Replace these **2 required** placeholders:
 |---|---|
 | `PASTE_BOT_TOKEN` | Your Telegram bot token from @BotFather |
 | `PASTE_YOUR_RAILWAY_REDIS_URL_HERE` | Your Railway Redis URL |
+
+Then replace `POW_PRIVATE_IP` above with the **private IPv4 address** of your POW instance (from Phase 2). This is optional but recommended — without it the coordinator falls back to slower local POW computation.
 
 Optional fields (leave empty if not needed): `FORWARD_CHANNEL_ID`, `ALLOWED_USER_IDS`, `PROXY_SERVER`, `PROXY_POOL`. See the [Environment Variable Reference](#environment-variable-reference) for all options.
 
@@ -689,12 +694,19 @@ redis-cli -u "RAILWAY_REDIS_URL" KEYS "queue:retry"           # retry queue leng
 
 ### POW Service Not Reachable from Workers
 
-1. From a worker instance, test:
+1. From a worker instance, test using the **private** IP:
    ```bash
    curl http://POW_PRIVATE_IP:8080/health
    ```
 2. If it times out: check that `rakuten-pow-sg` has an inbound rule for port 8080 from `rakuten-worker-sg`
 3. Make sure both instances are in the **same VPC**
+4. **IMPORTANT**: Use the **private IPv4 address** of the POW instance, not the public IP. Security group rules reference SG IDs, which only work for intra-VPC traffic on private IPs. Connecting via public IP bypasses the SG rule.
+5. Verify the Docker port mapping is correct on the POW instance:
+   ```bash
+   docker ps --format "table {{.Names}}\t{{.Ports}}" | grep pow
+   # Should show: 0.0.0.0:8080->3001/tcp
+   ```
+6. If you changed `PORT` in `.env.pow-service`, make sure `-p HOST_PORT:CONTAINER_PORT` matches in the `docker run` command
 
 ### Coordinator Won't Start (Lock Error)
 
@@ -794,6 +806,7 @@ Env file templates live in `deployment/env/` as reference. The `cat > .env.*` bl
 | `PROXY_POOL` | No | — | Comma-separated proxy URLs |
 | `PROCESSED_TTL_MS` | No | `2592000000` | Dedup cache TTL (30 days) |
 | `FORWARD_TTL_MS` | No | `2592000000` | Forward tracking TTL (30 days) |
+| `POW_SERVICE_URL` | No | — | POW service endpoint (e.g. `http://POW_PRIVATE_IP:8080`). Falls back to slower local computation if unset |
 
 ### Worker
 
