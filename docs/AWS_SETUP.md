@@ -222,21 +222,24 @@ DOCKER_BUILDKIT=1 docker build -f deployment/docker/Dockerfile.pow-service -t ra
 Takes ~2-3 minutes. Wait for the build to complete.
 > `DOCKER_BUILDKIT=1` enables BuildKit, required for the cache-mount build steps.
 
-**Block 4 — Create env file from template:**
+**Block 4 — Create env file:**
 ```bash
-cp deployment/env/pow-service.env.example .env.pow-service
-nano .env.pow-service
+cat > .env.pow-service << 'EOF'
+PORT=3001
+NODE_ENV=production
+LOG_LEVEL=info
+REDIS_COMMAND_TIMEOUT=60000
+
+# Redis (optional — for result caching; service runs without it if missing)
+REDIS_URL=PASTE_YOUR_RAILWAY_REDIS_URL_HERE
+
+# Worker pool (leave POW_NUM_WORKERS empty to auto-detect CPU count)
+POW_NUM_WORKERS=
+POW_TASK_TIMEOUT=30000
+EOF
 ```
 
-The template comes with sensible defaults. You only need to set **one value**:
-
-| Field | Replace with |
-|---|---|
-| `REDIS_URL` | Your Railway Redis URL (replace `redis://localhost:6379`) |
-
-The remaining fields (`PORT=3001`, `LOG_LEVEL=info`, `POW_TASK_TIMEOUT=30000`, etc.) are pre-configured. Set `POW_NUM_WORKERS` only if you want to override the auto-detected CPU count.
-
-Press **Ctrl+X** → **Y** → **Enter** to save.
+Replace `PASTE_YOUR_RAILWAY_REDIS_URL_HERE` with your Railway Redis URL. The remaining fields are pre-configured with sensible defaults — see the [Environment Variable Reference](#environment-variable-reference) for all options.
 
 **Block 5 — Run the container:**
 ```bash
@@ -315,31 +318,52 @@ DOCKER_BUILDKIT=1 docker build -f deployment/docker/Dockerfile.coordinator -t ra
 ```
 Wait for the build to complete.
 
-**Block 4 — Create env file from template:**
+**Block 4 — Create env file:**
 ```bash
-cp deployment/env/coordinator.env.example .env.coordinator
-nano .env.coordinator
+cat > .env.coordinator << 'EOF'
+# ─── Required ──────────────────────────────────────────────────────────────────
+TELEGRAM_BOT_TOKEN=PASTE_BOT_TOKEN
+TARGET_LOGIN_URL=https://login.account.rakuten.com/sso/authorize?client_id=rakuten_ichiba_top_web&service_id=s245&response_type=code&scope=openid&redirect_uri=https%3A%2F%2Fwww.rakuten.co.jp%2F
+REDIS_URL=PASTE_YOUR_RAILWAY_REDIS_URL_HERE
+
+# ─── Runtime ───────────────────────────────────────────────────────────────────
+NODE_ENV=production
+LOG_LEVEL=info
+TIMEOUT_MS=60000
+REDIS_COMMAND_TIMEOUT=60000
+
+# ─── Telegram (optional) ───────────────────────────────────────────────────────
+FORWARD_CHANNEL_ID=
+ALLOWED_USER_IDS=
+
+# ─── Metrics ───────────────────────────────────────────────────────────────────
+METRICS_PORT=9090
+METRICS_HOST=0.0.0.0
+
+# ─── Batch Processing ──────────────────────────────────────────────────────────
+BATCH_CONCURRENCY=1
+BATCH_MAX_RETRIES=2
+BATCH_DELAY_MS=50
+BATCH_HUMAN_DELAY_MS=0
+
+# ─── Proxy (optional) ──────────────────────────────────────────────────────────
+PROXY_SERVER=
+PROXY_POOL=
+
+# ─── Cache TTL ─────────────────────────────────────────────────────────────────
+PROCESSED_TTL_MS=2592000000
+FORWARD_TTL_MS=2592000000
+EOF
 ```
 
 Replace these **2 required** placeholders:
 
-| Field | Replace with |
+| Placeholder | Replace with |
 |---|---|
-| `TELEGRAM_BOT_TOKEN` | Your Telegram bot token from @BotFather (replace `replace-me`) |
-| `REDIS_URL` | Your Railway Redis URL (replace `redis://localhost:6379`) |
+| `PASTE_BOT_TOKEN` | Your Telegram bot token from @BotFather |
+| `PASTE_YOUR_RAILWAY_REDIS_URL_HERE` | Your Railway Redis URL |
 
-Optional fields (leave empty if not needed):
-
-| Field | What to put |
-|---|---|
-| `FORWARD_CHANNEL_ID` | Channel ID to forward VALID results (e.g., `-1001234567890`) |
-| `ALLOWED_USER_IDS` | Comma-separated Telegram user IDs (e.g., `123456789,987654321`) |
-| `PROXY_SERVER` | Single proxy URL (legacy) |
-| `PROXY_POOL` | Comma-separated proxy URLs |
-
-The remaining fields (`BATCH_CONCURRENCY`, `BATCH_DELAY_MS`, `TIMEOUT_MS`, `METRICS_PORT`, etc.) are pre-configured with sensible defaults. See the [Environment Variable Reference](#environment-variable-reference) for all options.
-
-Press **Ctrl+X** → **Y** → **Enter** to save.
+Optional fields (leave empty if not needed): `FORWARD_CHANNEL_ID`, `ALLOWED_USER_IDS`, `PROXY_SERVER`, `PROXY_POOL`. See the [Environment Variable Reference](#environment-variable-reference) for all options.
 
 **Block 5 — Run the container:**
 ```bash
@@ -407,22 +431,49 @@ DOCKER_BUILDKIT=1 docker build -f deployment/docker/Dockerfile.worker -t rakuten
 ```
 Wait for the build to complete.
 
-**Block 4 — Create env file from template:**
+**Block 4 — Create env file:**
 ```bash
-cp deployment/env/worker.env.example .env.worker
-nano .env.worker
+cat > .env.worker << 'EOF'
+# ─── Required ──────────────────────────────────────────────────────────────────
+REDIS_URL=PASTE_YOUR_RAILWAY_REDIS_URL_HERE
+TARGET_LOGIN_URL=https://login.account.rakuten.com/sso/authorize?client_id=rakuten_ichiba_top_web&service_id=s245&response_type=code&scope=openid&redirect_uri=https%3A%2F%2Fwww.rakuten.co.jp%2F
+
+# ─── Runtime ───────────────────────────────────────────────────────────────────
+NODE_ENV=production
+LOG_LEVEL=info
+TIMEOUT_MS=60000
+REDIS_COMMAND_TIMEOUT=60000
+
+# ─── Worker Identity ───────────────────────────────────────────────────────────
+WORKER_ID=
+
+# ─── Concurrency / Performance ─────────────────────────────────────────────────
+WORKER_CONCURRENCY=3
+WORKER_TASK_TIMEOUT=120000
+WORKER_HEARTBEAT_INTERVAL=10000
+WORKER_QUEUE_TIMEOUT=30000
+WORKER_HTTP_PORT=3010
+
+# ─── POW Service ───────────────────────────────────────────────────────────────
+POW_SERVICE_URL=http://PASTE_POW_PRIVATE_IP:8080
+POW_CLIENT_TIMEOUT=25000
+
+# ─── Batch Processing ──────────────────────────────────────────────────────────
+BATCH_MAX_RETRIES=2
+
+# ─── Cache ─────────────────────────────────────────────────────────────────────
+PROCESSED_TTL_MS=2592000000
+EOF
 ```
 
-Set these **2 values**:
+Replace these **2 required** placeholders:
 
-| Field | Replace with |
+| Placeholder | Replace with |
 |---|---|
-| `REDIS_URL` | Your Railway Redis URL (replace `redis://localhost:6379`) |
-| `POW_SERVICE_URL` | `http://POW_PRIVATE_IP:8080` — replace with the POW instance's Private IPv4 (from Phase 2) and the host port `8080` |
+| `PASTE_YOUR_RAILWAY_REDIS_URL_HERE` | Your Railway Redis URL |
+| `PASTE_POW_PRIVATE_IP` | Private IPv4 of the POW instance (from Phase 2) |
 
-The template's `TARGET_LOGIN_URL` is already set to the correct Rakuten OAuth URL. The remaining fields (`WORKER_CONCURRENCY`, `TIMEOUT_MS`, `WORKER_TASK_TIMEOUT`, etc.) are pre-configured with sensible defaults. See the [Environment Variable Reference](#environment-variable-reference) for all options.
-
-Press **Ctrl+X** → **Y** → **Enter** to save.
+`TARGET_LOGIN_URL` is already set to the correct Rakuten OAuth URL. See the [Environment Variable Reference](#environment-variable-reference) for all options.
 
 **Block 5 — Run the container:**
 ```bash
@@ -715,7 +766,7 @@ The current deployment builds Docker images directly on EC2 instances. For large
 
 ## Environment Variable Reference
 
-Env file templates live in `deployment/env/`. Copy them with `cp deployment/env/{service}.env.example .env.{service}` and edit as needed.
+Env file templates live in `deployment/env/` as reference. The `cat > .env.*` blocks in each phase above create the same files inline so you can edit values directly.
 
 ### Coordinator
 
