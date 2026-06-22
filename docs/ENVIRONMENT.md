@@ -18,6 +18,7 @@ The system supports three services, each with its own entrypoint under `src/`:
 |----------|----------|---------|-------------|
 | `NODE_ENV` | No | `production` | Node.js environment (development, production, test) |
 | `LOG_LEVEL` | No | `info` | Logging level (error, warn, info, debug, trace) |
+| `LOG_FORMAT` | No | `human` | Log output format: `human` (ANSI colored, single-line) or `json` (single-line JSON to stdout). `JSON_LOGGING=true` is a legacy alias for `LOG_FORMAT=json` but `LOG_FORMAT` takes precedence if both are set. |
 | `TARGET_LOGIN_URL` | **Yes*** | — | Rakuten OAuth login URL |
 | `TIMEOUT_MS` | No | `60000` | HTTP request timeout for credential checks (ms) |
 
@@ -163,7 +164,12 @@ Enable debug logging for troubleshooting:
 
 ```bash
 LOG_LEVEL=debug
-JSON_LOGGING=true
+LOG_FORMAT=json        # JSON output for structured log processing
+```
+
+Or use the legacy alias:
+```bash
+JSON_LOGGING=true      # Legacy alias for LOG_FORMAT=json (LOG_FORMAT takes precedence)
 ```
 
 This provides detailed logs for all operations and service interactions.

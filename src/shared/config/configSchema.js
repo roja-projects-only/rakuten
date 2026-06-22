@@ -150,10 +150,17 @@ const CONFIG_SCHEMA = {
     description: 'Logging level',
     category: 'logging'
   },
+  LOG_FORMAT: {
+    type: 'enum',
+    default: 'human',
+    values: ['human', 'json'],
+    description: 'Log output format: human (single-line ANSI) or json (single-line JSON to stdout)',
+    category: 'logging'
+  },
   JSON_LOGGING: {
     type: 'bool',
     default: false,
-    description: 'Enable structured JSON logging',
+    description: 'Enable structured JSON logging (legacy alias for LOG_FORMAT=json)',
     category: 'logging'
   },
   ALLOWED_USER_IDS: {
@@ -228,10 +235,11 @@ function validateValue(key, value) {
     }
 
     case 'enum': {
-      if (!schema.values.includes(strValue)) {
+      const normalized = strValue.toLowerCase();
+      if (!schema.values.includes(normalized)) {
         return { valid: false, error: `${key} must be one of: ${schema.values.join(', ')}` };
       }
-      return { valid: true, parsedValue: strValue };
+      return { valid: true, parsedValue: normalized };
     }
 
     case 'url': {

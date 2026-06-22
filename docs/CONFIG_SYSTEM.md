@@ -65,8 +65,9 @@
 - `WORKER_CONCURRENCY` (1-50) - Concurrent tasks per worker
 
 ### Logging
-- `LOG_LEVEL` (error/warn/info/debug/trace) - Logging level
-- `JSON_LOGGING` (true/false) - Structured JSON logging
+- `LOG_LEVEL` (error/warn/info/debug/trace) - Logging level (read per-call — changes apply at runtime)
+- `LOG_FORMAT` (human|json) - Log output format: `human` (ANSI colored, single-line) or `json` (single-line JSON to stdout)
+- `JSON_LOGGING` (true/false) - **Legacy alias** for `LOG_FORMAT=json`. `LOG_FORMAT` takes precedence if both are set.
 
 ---
 

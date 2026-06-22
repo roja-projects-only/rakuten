@@ -273,6 +273,20 @@ const ENV_DEFINITIONS = {
     }
   },
 
+  LOG_FORMAT: {
+    required: false,
+    default: 'human',
+    description: 'Log output format: human (single-line ANSI) or json (single-line JSON to stdout)',
+    validate: (value) => {
+      const validFormats = ['human', 'json'];
+      const format = String(value).trim().toLowerCase();
+      if (!validFormats.includes(format)) {
+        throw new Error(`LOG_FORMAT must be one of: ${validFormats.join(', ')}`);
+      }
+      return format;
+    }
+  },
+
   // HTTP and Runtime Configuration
   TIMEOUT_MS: {
     required: false,

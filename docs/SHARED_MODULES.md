@@ -29,18 +29,20 @@ All shared modules live under `src/shared/` and are used by multiple services. T
 ## Logger Module
 
 **Location**: `src/shared/logger/`  
-**Purpose**: Structured logging
+**Purpose**: Unified logging with human-friendly and JSON output modes
 
 ### Files
-- `logger.js` — Main logger with scoped loggers (`createLogger('scope')`)
-- `structured.js` — Structured JSON logger for production
+- `logger.js` — Unified logger, single entry point: `createLogger(scope)`. Supports both human (ANSI colored, single-line) and JSON (single-line) output modes controlled by `LOG_FORMAT` env var.
+- `structured.js` — Thin compatibility wrapper: `createStructuredLogger(scope)` delegates to `createLogger()` and adds task-specific helpers. Importing from here is functionally equivalent to using `createLogger()` directly.
 
 ### Who Imports It
 - All modules in `src/shared/`, `src/coordinator/`, `src/worker/`, `src/pow-service/`, `src/telegram/`
 
 ### Rules for Modifying
-- Use `createLogger('scope')` pattern for new modules
+- Use `createLogger('scope')` pattern for new modules; `createStructuredLogger()` is available but not required for new code.
 - Log levels: error, warn, info, debug, trace
+- `LOG_LEVEL` is read per-call — runtime changes via the config service apply immediately (no restart required).
+- JSON output format: `{"timestamp","level","scope","message", ...context, "process":{pid,hostname,nodeVersion}}`. All levels go to stdout. Human mode sends error/warn to stderr, rest to stdout.
 - No `console.log` in runtime code — use logger module
 
 ---

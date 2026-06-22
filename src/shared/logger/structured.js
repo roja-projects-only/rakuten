@@ -1,391 +1,174 @@
 /**
- * Structured JSON Logger for Distributed Worker Architecture
- * 
- * Provides structured logging with JSON formatting for:
- * - Task completions with status, duration, proxy, worker ID
- * - Error tracking with error codes and context
- * - Performance metrics and monitoring data
- * - Distributed system correlation via trace IDs
+ * Structured logger wrapper.
+ *
+ * Thin compatibility layer over the unified createLogger() that preserves the
+ * task-specific helper API (logTaskCompletion, logError, etc.) used by
+ * Coordinator, WorkerNode, ProxyPoolManager, ProgressTracker, MetricsServer
+ * and MetricsManager.
+ *
+ * Output mode (human vs JSON) is controlled globally by LOG_FORMAT /
+ * JSON_LOGGING env vars — see logger.js. There is no per-instance
+ * console/json toggle; the options argument is accepted for backward
+ * compatibility and intentionally ignored.
  */
 
-const util = require('util');
-const { createLogger: createBaseLogger } = require('./logger');
+const { createLogger } = require('./logger');
 
-/**
- * Log levels with numeric weights for filtering
- */
-const LOG_LEVELS = {
-  error: 0,
-  warn: 1,
-  info: 2,
-  debug: 3,
-  trace: 4
-};
+function createStructuredLogger(scope = 'app', _options = {}) {
+  const base = createLogger(scope);
 
-/**
- * Get current log level from environment
- */
-function getCurrentLogLevel() {
-  const level = (process.env.LOG_LEVEL || 'info').toLowerCase();
-  return LOG_LEVELS.hasOwnProperty(level) ? level : 'info';
-}
+  function log(level, message, context = {}) {
+    if (typeof base[level] === 'function') base[level](message, context);
+  }
 
-/**
- * Check if a log level should be output
- */
-function shouldLog(level) {
-  const currentLevel = getCurrentLogLevel();
-  return LOG_LEVELS[level] <= LOG_LEVELS[currentLevel];
-}
+  return {
+    log,
+    error: (message, context) => log('error', message, context),
+    warn: (message, context) => log('warn', message, context),
+    info: (message, context) => log('info', message, context),
+    debug: (message, context) => log('debug', message, context),
+    trace: (message, context) => log('trace', message, context),
+    success: (message, context) => log('success', message, context),
 
-/**
- * Format structured log entry as JSON
- */
-function formatStructuredLog(level, scope, message, context = {}) {
-  const timestamp = new Date().toISOString();
-  
-  const logEntry = {
-    timestamp,
-    level: level.toUpperCase(),
-    scope,
-    message,
-    ...context
+    logTaskCompletion(taskData) {
+      const { taskId, batchId, username, status, duration, proxyId, workerId, errorCode, ipAddress } = taskData;
+      log('info', 'Task completed', {
+        event: 'task_completion',
+        taskId,
+        batchId,
+        username: username ? username.replace(/(.{3}).*(@.*)/, '$1***$2') : undefined,
+        status,
+        duration,
+        proxyId,
+        workerId,
+        errorCode,
+        ipAddress,
+        timestamp: Date.now(),
+      });
+    },
+
+    logError(message, error, context = {}) {
+      log('error', message, {
+        event: 'error',
+        errorCode: error.code || 'UNKNOWN_ERROR',
+        errorMessage: error.message,
+        stack: error.stack,
+        ...context,
+      });
+    },
+
+    logWorkerHeartbeat(workerData) {
+      const { workerId, tasksCompleted, concurrency, activeTasks, taskIds, utilization, uptime, memoryUsage } = workerData;
+      log('debug', 'Worker heartbeat', {
+        event: 'worker_heartbeat',
+        workerId,
+        tasksCompleted,
+        concurrency,
+        activeTasks,
+        taskIds,
+        utilization,
+        uptime,
+        memoryUsage,
+        timestamp: Date.now(),
+      });
+    },
+
+    logWorkerMetrics(metricsData) {
+      const { workerId, activeTasks, concurrency, utilization, tasksCompleted, tasksPerMinute, uptime, memory } = metricsData;
+      log('info', 'Worker metrics', {
+        event: 'worker_metrics',
+        workerId,
+        activeTasks,
+        concurrency,
+        utilization,
+        tasksCompleted,
+        tasksPerMinute,
+        uptime,
+        memory: memory ? {
+          heapUsedMB: Math.round(memory.heapUsed / 1024 / 1024),
+          heapTotalMB: Math.round(memory.heapTotal / 1024 / 1024),
+          rssMB: Math.round(memory.rss / 1024 / 1024),
+        } : undefined,
+        timestamp: Date.now(),
+      });
+    },
+
+    logBatchProgress(progressData) {
+      const { batchId, total, completed, percentage, estimatedTimeRemaining, throughput } = progressData;
+      log('info', 'Batch progress update', {
+        event: 'batch_progress',
+        batchId,
+        total,
+        completed,
+        percentage,
+        estimatedTimeRemaining,
+        throughput,
+        timestamp: Date.now(),
+      });
+    },
+
+    logProxyHealth(proxyData) {
+      const { proxyId, proxyUrl, healthy, consecutiveFailures, successRate, lastSuccess, lastFailure } = proxyData;
+      log('info', 'Proxy health update', {
+        event: 'proxy_health',
+        proxyId,
+        proxyUrl: proxyUrl ? proxyUrl.replace(/:\/\/.*@/, '://***@') : undefined,
+        healthy,
+        consecutiveFailures,
+        successRate,
+        lastSuccess,
+        lastFailure,
+        timestamp: Date.now(),
+      });
+    },
+
+    logCoordinatorFailover(failoverData) {
+      const { previousCoordinator, newCoordinator, reason, inProgressBatches, pendingForwards } = failoverData;
+      log('warn', 'Coordinator failover', {
+        event: 'coordinator_failover',
+        previousCoordinator,
+        newCoordinator,
+        reason,
+        inProgressBatches,
+        pendingForwards,
+        timestamp: Date.now(),
+      });
+    },
+
+    logMetrics(metricsData) {
+      log('info', 'Performance metrics', {
+        event: 'metrics',
+        ...metricsData,
+        timestamp: Date.now(),
+      });
+    },
+
+    logQueueDepthWarning(queueData) {
+      const { depth, threshold, activeWorkers, estimatedDrainTime } = queueData;
+      log('warn', 'Queue depth exceeds threshold', {
+        event: 'queue_depth_warning',
+        depth,
+        threshold,
+        activeWorkers,
+        estimatedDrainTime,
+        timestamp: Date.now(),
+      });
+    },
+
+    logErrorRateWarning(errorData) {
+      const { errorRate, threshold, windowSize, errorBreakdown } = errorData;
+      log('warn', 'Error rate exceeds threshold', {
+        event: 'error_rate_warning',
+        errorRate,
+        threshold,
+        windowSize,
+        errorBreakdown,
+        timestamp: Date.now(),
+      });
+    },
   };
-  
-  // Add process information
-  logEntry.process = {
-    pid: process.pid,
-    hostname: process.env.HOSTNAME || require('os').hostname(),
-    nodeVersion: process.version
-  };
-  
-  // Add trace ID if available (for distributed tracing)
-  if (context.traceId || process.env.TRACE_ID) {
-    logEntry.traceId = context.traceId || process.env.TRACE_ID;
-  }
-  
-  return JSON.stringify(logEntry);
-}
-
-/**
- * Enhanced logger with structured JSON output
- */
-class StructuredLogger {
-  constructor(scope = 'app', options = {}) {
-    this.scope = scope;
-    this.options = {
-      enableConsoleOutput: options.enableConsoleOutput !== false,
-      enableJsonOutput: options.enableJsonOutput !== false,
-      ...options
-    };
-    
-    // Create base logger for console output
-    this.baseLogger = createBaseLogger(scope);
-  }
-
-  /**
-   * Log with structured JSON format
-   */
-  log(level, message, context = {}) {
-    if (!shouldLog(level)) {
-      return;
-    }
-
-    // Console output (existing format)
-    if (this.options.enableConsoleOutput) {
-      this.baseLogger[level](message, context);
-    }
-
-    // JSON output to stdout (for log aggregation)
-    if (this.options.enableJsonOutput) {
-      const jsonLog = formatStructuredLog(level, this.scope, message, context);
-      console.log(jsonLog);
-    }
-  }
-
-  /**
-   * Log task completion with structured data
-   */
-  logTaskCompletion(taskData) {
-    const {
-      taskId,
-      batchId,
-      username,
-      status,
-      duration,
-      proxyId,
-      workerId,
-      errorCode,
-      ipAddress
-    } = taskData;
-
-    this.log('info', 'Task completed', {
-      event: 'task_completion',
-      taskId,
-      batchId,
-      username: username ? username.replace(/(.{3}).*(@.*)/, '$1***$2') : undefined, // Mask email
-      status,
-      duration,
-      proxyId,
-      workerId,
-      errorCode,
-      ipAddress,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * Log error with structured context
-   */
-  logError(message, error, context = {}) {
-    const errorContext = {
-      event: 'error',
-      errorCode: error.code || 'UNKNOWN_ERROR',
-      errorMessage: error.message,
-      stack: error.stack,
-      ...context
-    };
-
-    this.log('error', message, errorContext);
-  }
-
-  /**
-   * Log worker heartbeat
-   */
-  logWorkerHeartbeat(workerData) {
-    const {
-      workerId,
-      tasksCompleted,
-      concurrency,
-      activeTasks,
-      taskIds,
-      utilization,
-      uptime,
-      memoryUsage
-    } = workerData;
-
-    this.log('debug', 'Worker heartbeat', {
-      event: 'worker_heartbeat',
-      workerId,
-      tasksCompleted,
-      concurrency,
-      activeTasks,
-      taskIds,
-      utilization,
-      uptime,
-      memoryUsage,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * Log worker metrics for monitoring
-   */
-  logWorkerMetrics(metricsData) {
-    const {
-      workerId,
-      activeTasks,
-      concurrency,
-      utilization,
-      tasksCompleted,
-      tasksPerMinute,
-      uptime,
-      memory
-    } = metricsData;
-
-    this.log('info', 'Worker metrics', {
-      event: 'worker_metrics',
-      workerId,
-      activeTasks,
-      concurrency,
-      utilization,
-      tasksCompleted,
-      tasksPerMinute,
-      uptime,
-      memory: memory ? {
-        heapUsedMB: Math.round(memory.heapUsed / 1024 / 1024),
-        heapTotalMB: Math.round(memory.heapTotal / 1024 / 1024),
-        rssMB: Math.round(memory.rss / 1024 / 1024)
-      } : undefined,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * Log batch progress
-   */
-  logBatchProgress(progressData) {
-    const {
-      batchId,
-      total,
-      completed,
-      percentage,
-      estimatedTimeRemaining,
-      throughput
-    } = progressData;
-
-    this.log('info', 'Batch progress update', {
-      event: 'batch_progress',
-      batchId,
-      total,
-      completed,
-      percentage,
-      estimatedTimeRemaining,
-      throughput,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * Log proxy health change
-   */
-  logProxyHealth(proxyData) {
-    const {
-      proxyId,
-      proxyUrl,
-      healthy,
-      consecutiveFailures,
-      successRate,
-      lastSuccess,
-      lastFailure
-    } = proxyData;
-
-    this.log('info', 'Proxy health update', {
-      event: 'proxy_health',
-      proxyId,
-      proxyUrl: proxyUrl ? proxyUrl.replace(/:\/\/.*@/, '://***@') : undefined, // Mask credentials
-      healthy,
-      consecutiveFailures,
-      successRate,
-      lastSuccess,
-      lastFailure,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * Log coordinator failover
-   */
-  logCoordinatorFailover(failoverData) {
-    const {
-      previousCoordinator,
-      newCoordinator,
-      reason,
-      inProgressBatches,
-      pendingForwards
-    } = failoverData;
-
-    this.log('warn', 'Coordinator failover', {
-      event: 'coordinator_failover',
-      previousCoordinator,
-      newCoordinator,
-      reason,
-      inProgressBatches,
-      pendingForwards,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * Log performance metrics
-   */
-  logMetrics(metricsData) {
-    this.log('info', 'Performance metrics', {
-      event: 'metrics',
-      ...metricsData,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * Log queue depth warning
-   */
-  logQueueDepthWarning(queueData) {
-    const { depth, threshold, activeWorkers, estimatedDrainTime } = queueData;
-
-    this.log('warn', 'Queue depth exceeds threshold', {
-      event: 'queue_depth_warning',
-      depth,
-      threshold,
-      activeWorkers,
-      estimatedDrainTime,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * Log error rate warning
-   */
-  logErrorRateWarning(errorData) {
-    const { errorRate, threshold, windowSize, errorBreakdown } = errorData;
-
-    this.log('warn', 'Error rate exceeds threshold', {
-      event: 'error_rate_warning',
-      errorRate,
-      threshold,
-      windowSize,
-      errorBreakdown,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * Create child logger with additional scope
-   */
-  child(childScope, options = {}) {
-    const newScope = childScope ? `${this.scope}:${childScope}` : this.scope;
-    return new StructuredLogger(newScope, { ...this.options, ...options });
-  }
-
-  // Standard log level methods
-  error(message, context) { this.log('error', message, context); }
-  warn(message, context) { this.log('warn', message, context); }
-  info(message, context) { this.log('info', message, context); }
-  debug(message, context) { this.log('debug', message, context); }
-  trace(message, context) { this.log('trace', message, context); }
-}
-
-/**
- * Create structured logger instance
- */
-function createStructuredLogger(scope = 'app', options = {}) {
-  return new StructuredLogger(scope, options);
-}
-
-/**
- * Middleware for adding trace ID to logs
- */
-function withTraceId(traceId, fn) {
-  const originalTraceId = process.env.TRACE_ID;
-  process.env.TRACE_ID = traceId;
-  
-  try {
-    return fn();
-  } finally {
-    if (originalTraceId) {
-      process.env.TRACE_ID = originalTraceId;
-    } else {
-      delete process.env.TRACE_ID;
-    }
-  }
-}
-
-/**
- * Generate correlation ID for distributed tracing
- */
-function generateTraceId() {
-  const timestamp = Date.now().toString(36);
-  const random = Math.random().toString(36).substring(2, 10);
-  return `${timestamp}-${random}`;
 }
 
 module.exports = {
-  StructuredLogger,
   createStructuredLogger,
-  withTraceId,
-  generateTraceId,
-  formatStructuredLog,
-  LOG_LEVELS,
-  getCurrentLogLevel,
-  shouldLog
 };

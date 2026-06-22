@@ -154,7 +154,8 @@ docs/                     # Project documentation
 | `BATCH_DELAY_MS` | ❌ | `50` | Delay between request chunks (ms) |
 | `BATCH_HUMAN_DELAY_MS` | ❌ | `0` | Human delay multiplier for batch (0=skip, 0.1=10%) |
 | `PROXY_SERVER` | ❌ | - | Proxy URL (any format) |
-| `LOG_LEVEL` | ❌ | `info` | Logging: error\|warn\|info\|debug |
+| `LOG_LEVEL` | ❌ | `info` | Logging: error\|warn\|info\|debug (changes apply at runtime) |
+| `LOG_FORMAT` | ❌ | `human` | Log output format: `human` (ANSI colored) or `json` (single-line JSON). `JSON_LOGGING=true` is a legacy alias for `LOG_FORMAT=json`. |
 | `WORKER_CONCURRENCY` | ❌ | `3` | Concurrent tasks per worker |
 | `POW_SERVICE_URL` | ❌ | - | POW service endpoint |
 
