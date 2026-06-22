@@ -563,6 +563,9 @@ SSH into the instance, then:
 ```bash
 cd ~/rakuten
 
+# First time only — make the script executable (if needed):
+chmod +x scripts/deploy/quick-update.sh
+
 # Full rebuild (needed when package.json or Dockerfile changes)
 ./scripts/deploy/quick-update.sh coordinator
 ./scripts/deploy/quick-update.sh worker
