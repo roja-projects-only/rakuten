@@ -5,4 +5,5 @@ module.exports = {
   powCache: require('./powCache'),
   bioGenerator: require('./bioGenerator'),
   ratGenerator: require('./ratGenerator'),
+  browserProfile: require('./browserProfile'),
 };

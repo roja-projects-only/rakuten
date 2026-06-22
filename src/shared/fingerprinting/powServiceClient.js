@@ -14,7 +14,6 @@
  * =============================================================================
  */
 
-const axios = require('axios');
 const { createLogger } = require('../logger');
 const { solvePow, generateRandomCres } = require('./challengeGenerator');
 
@@ -42,22 +41,6 @@ class POWServiceClient {
       localCacheHits: 0,
       localCacheMisses: 0
     };
-    
-    // Create axios instance with default config
-    // IMPORTANT: Disable proxy for internal service calls
-    this.httpClient = axios.create({
-      baseURL: this.serviceUrl,
-      timeout: this.timeout,
-      headers: {
-        'Content-Type': 'application/json',
-        'User-Agent': 'POW-Client/1.0.0'
-      },
-      // Explicitly disable proxy for internal service communication
-      proxy: false,
-      // Ensure no proxy agents are used
-      httpsAgent: undefined,
-      httpAgent: undefined
-    });
     
     log.info('POW service client initialized', { 
       serviceUrl: this.serviceUrl, 
@@ -118,12 +101,12 @@ class POWServiceClient {
       
     } catch (error) {
       // Log the service failure
-      if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+      if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND' || error instanceof TypeError) {
         log.warn('POW service unavailable, falling back to local computation', { 
           serviceUrl: this.serviceUrl,
           error: error.message 
         });
-      } else if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+      } else if (error.code === 'ECONNABORTED' || error.message.includes('timeout') || error.name === 'AbortError' || error.name === 'TimeoutError') {
         this.stats.requestsTimeout++;
         log.warn('POW service timeout, falling back to local computation', { 
           timeout: this.timeout,
@@ -149,17 +132,16 @@ class POWServiceClient {
    */
   async requestFromService(params, retryCount = 0) {
     try {
-      const response = await this.httpClient.post('/compute', params);
-      
-      if (response.status !== 200) {
-        throw new Error(`POW service returned status ${response.status}`);
-      }
-      
-      if (!response.data || !response.data.cres) {
-        throw new Error('POW service returned invalid response');
-      }
-      
-      return response.data;
+      const response = await fetch(`${this.serviceUrl}/compute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'User-Agent': 'POW-Client/1.0.0' },
+        body: JSON.stringify(params),
+        signal: AbortSignal.timeout(this.timeout),
+      });
+      const data = await response.json();
+      if (response.status !== 200) throw new Error(`POW service returned status ${response.status}`);
+      if (!data || !data.cres) throw new Error('POW service returned invalid response');
+      return data;
       
     } catch (error) {
       // If this is a retryable error and we haven't exceeded max retries
@@ -228,13 +210,15 @@ class POWServiceClient {
    * @returns {boolean} True if retryable
    */
   isRetryableError(error) {
-    // Retry on network errors, timeouts, and 5xx server errors
+    // Retry on network errors, timeouts
     return (
       error.code === 'ECONNRESET' ||
       error.code === 'ECONNABORTED' ||
       error.code === 'ETIMEDOUT' ||
       error.message.includes('timeout') ||
-      (error.response && error.response.status >= 500)
+      error.name === 'TimeoutError' ||
+      error.name === 'AbortError' ||
+      error instanceof TypeError
     );
   }
 
@@ -328,7 +312,9 @@ class POWServiceClient {
    */
   async testConnection() {
     try {
-      const response = await this.httpClient.get('/health', { timeout: 2000 });
+      const response = await fetch(`${this.serviceUrl}/health`, {
+        signal: AbortSignal.timeout(2000),
+      });
       return response.status === 200;
     } catch (error) {
       log.debug('POW service connection test failed', { error: error.message });

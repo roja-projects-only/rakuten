@@ -15,7 +15,6 @@
 const { createLogger } = require('../logger');
 const { createClient } = require('redis');
 const { performance } = require('perf_hooks');
-const axios = require('axios');
 
 const log = createLogger('pow-cache-test');
 
@@ -114,8 +113,8 @@ class POWCacheHitRateTest {
     log.info('🔍 Validating POW service availability...');
     
     try {
-      const response = await axios.get(`${this.powServiceUrl}/health`, {
-        timeout: 5000
+      const response = await fetch(`${this.powServiceUrl}/health`, {
+        signal: AbortSignal.timeout(5000)
       });
       
       if (response.status !== 200) {
@@ -123,10 +122,11 @@ class POWCacheHitRateTest {
       }
       
       log.info('✅ POW service is available');
-      log.info(`Health status: ${JSON.stringify(response.data)}`);
+      const healthData = await response.json();
+      log.info(`Health status: ${JSON.stringify(healthData)}`);
       
     } catch (error) {
-      if (error.code === 'ECONNREFUSED') {
+      if (error.code === 'ECONNREFUSED' || error instanceof TypeError) {
         throw new Error(`POW service not reachable at ${this.powServiceUrl}. Please ensure it's running.`);
       }
       throw new Error(`POW service validation failed: ${error.message}`);
@@ -208,19 +208,23 @@ class POWCacheHitRateTest {
       try {
         const startTime = performance.now();
         
-        const response = await axios.post(`${this.powServiceUrl}/compute`, {
-          mask: pattern.mask,
-          key: pattern.key,
-          seed: pattern.seed
-        }, {
-          timeout: 10000
+        const response = await fetch(`${this.powServiceUrl}/compute`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mask: pattern.mask,
+            key: pattern.key,
+            seed: pattern.seed
+          }),
+          signal: AbortSignal.timeout(10000)
         });
         
         const endTime = performance.now();
         const responseTime = endTime - startTime;
         
         if (response.status === 200) {
-          const { cres, cached, computeTimeMs } = response.data;
+          const data = await response.json();
+          const { cres, cached, computeTimeMs } = data;
           
           if (cached) {
             cacheHits++;
@@ -298,19 +302,23 @@ class POWCacheHitRateTest {
         try {
           const startTime = performance.now();
           
-          const response = await axios.post(`${this.powServiceUrl}/compute`, {
-            mask: pattern.mask,
-            key: pattern.key,
-            seed: pattern.seed
-          }, {
-            timeout: 10000
+          const response = await fetch(`${this.powServiceUrl}/compute`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              mask: pattern.mask,
+              key: pattern.key,
+              seed: pattern.seed
+            }),
+            signal: AbortSignal.timeout(10000)
           });
           
           const endTime = performance.now();
           const responseTime = endTime - startTime;
           
           if (response.status === 200) {
-            const { cres, cached, computeTimeMs } = response.data;
+            const data = await response.json();
+            const { cres, cached, computeTimeMs } = data;
             
             if (cached) {
               cacheHits++;
@@ -363,9 +371,15 @@ class POWCacheHitRateTest {
     
     // First request - should be a cache miss
     log.info('Making initial request (should be cache miss)...');
-    const response1 = await axios.post(`${this.powServiceUrl}/compute`, testPattern, { timeout: 10000 });
+    const response1 = await fetch(`${this.powServiceUrl}/compute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(testPattern),
+      signal: AbortSignal.timeout(10000)
+    });
+    const data1 = await response1.json();
     
-    if (!response1.data.cached) {
+    if (!data1.cached) {
       log.info('✅ Initial request was cache miss as expected');
     } else {
       log.warn('⚠️  Initial request was cache hit (unexpected)');
@@ -373,9 +387,15 @@ class POWCacheHitRateTest {
     
     // Second request immediately - should be cache hit
     log.info('Making immediate second request (should be cache hit)...');
-    const response2 = await axios.post(`${this.powServiceUrl}/compute`, testPattern, { timeout: 10000 });
+    const response2 = await fetch(`${this.powServiceUrl}/compute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(testPattern),
+      signal: AbortSignal.timeout(10000)
+    });
+    const data2 = await response2.json();
     
-    if (response2.data.cached) {
+    if (data2.cached) {
       log.info('✅ Immediate second request was cache hit as expected');
     } else {
       log.warn('⚠️  Immediate second request was cache miss (unexpected)');
@@ -401,8 +421,8 @@ class POWCacheHitRateTest {
     
     // Store TTL test results
     this.cacheMetrics.ttlTest = {
-      initialCached: response1.data.cached,
-      secondCached: response2.data.cached,
+      initialCached: data1.cached,
+      secondCached: data2.cached,
       cacheExists,
       cacheTTL,
       ttlWithinRange,

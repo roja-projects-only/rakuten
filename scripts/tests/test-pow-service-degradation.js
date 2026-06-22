@@ -19,7 +19,6 @@ const JobQueueManager = require('../shared/coordinator/JobQueueManager');
 const ProxyPoolManager = require('../shared/coordinator/ProxyPoolManager');
 const WorkerNode = require('../shared/worker/WorkerNode');
 const { spawn } = require('child_process');
-const axios = require('axios');
 
 const log = createLogger('pow-degradation-test');
 
@@ -110,12 +109,12 @@ class POWServiceDegradationTest {
       let healthResponse = null;
       
       try {
-        const response = await axios.get(`http://localhost:${powServicePort}/health`, {
-          timeout: 5000
+        const response = await fetch(`http://localhost:${powServicePort}/health`, {
+          signal: AbortSignal.timeout(5000)
         });
         
         serviceHealthy = response.status === 200;
-        healthResponse = response.data;
+        healthResponse = await response.json();
         
       } catch (error) {
         log.warn('POW service health check failed', { error: error.message });
@@ -294,8 +293,8 @@ class POWServiceDegradationTest {
       let serviceDown = false;
       
       try {
-        await axios.get(`http://localhost:${this.testResults.powServiceStart.port}/health`, {
-          timeout: 2000
+        await fetch(`http://localhost:${this.testResults.powServiceStart.port}/health`, {
+          signal: AbortSignal.timeout(2000)
         });
       } catch (error) {
         serviceDown = true; // Expected - service should be down
@@ -523,12 +522,12 @@ class POWServiceDegradationTest {
       let healthResponse = null;
       
       try {
-        const response = await axios.get(`http://localhost:${powServicePort}/health`, {
-          timeout: 5000
+        const response = await fetch(`http://localhost:${powServicePort}/health`, {
+          signal: AbortSignal.timeout(5000)
         });
         
         serviceRestarted = response.status === 200;
-        healthResponse = response.data;
+        healthResponse = await response.json();
         
       } catch (error) {
         log.warn('POW service restart health check failed', { error: error.message });

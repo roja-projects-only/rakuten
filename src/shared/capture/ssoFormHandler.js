@@ -11,7 +11,7 @@
 
 const { createLogger } = require('../logger');
 const { computeCresFromMdataAsync, generateSessionToken } = require('../fingerprinting/challengeGenerator');
-const { generateFingerprint } = require('../fingerprinting/ratGenerator');
+const { generateSessionFingerprint, generateProfile } = require('../fingerprinting/browserProfile');
 const { generateFullRatData } = require('../payloads');
 
 const log = createLogger('sso-form');
@@ -117,7 +117,7 @@ async function followSsoRedirects(client, html, currentUrl, timeoutMs, maxIterat
  * @param {number} timeoutMs - Request timeout
  * @returns {Promise<{ html: string, url: string }|null>} Result after skip, or null if failed
  */
-async function skipEmailVerification(client, verificationUrl, timeoutMs) {
+async function skipEmailVerification(client, verificationUrl, timeoutMs, options = {}) {
   try {
     // Extract main token from URL: /verification/email?token=@St.ott-v2...
     const tokenMatch = verificationUrl.match(/[?&]token=([^&#]+)/);
@@ -125,14 +125,16 @@ async function skipEmailVerification(client, verificationUrl, timeoutMs) {
       log.warn('[skip-verify] No token found in verification URL');
       return null;
     }
-    
+
     const mainToken = decodeURIComponent(tokenMatch[1]);
     log.debug(`[skip-verify] Main token: ${mainToken.substring(0, 50)}...`);
-    
-    // Generate correlation ID for this request
+
+    // Use session-stable fingerprint + coherent profile if provided;
+    // otherwise generate a coherent profile for this interaction context.
     const correlationId = require('crypto').randomUUID();
-    const fingerprint = generateFingerprint();
-    const ratData = generateFullRatData(correlationId, fingerprint);
+    const fingerprint = options.fingerprint || generateSessionFingerprint();
+    const profile = options.profile || generateProfile();
+    const ratData = generateFullRatData(correlationId, fingerprint, profile);
     
     // Step 1: Call /util/gc to get challenge token (using LOGIN_START like login flow)
     let challengeToken = null;

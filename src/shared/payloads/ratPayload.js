@@ -2,32 +2,36 @@
  * =============================================================================
  * RAT PAYLOAD - Rakuten Analytics Tracking fingerprint data
  * =============================================================================
- * 
+ *
  * Generates full RAT fingerprint data for login requests.
- * Structure captured from real Chrome DevTools requests - Dec 2025
- * Total payload size should be ~8500 bytes to match real requests.
- * 
+ * Structure captured from real Chrome DevTools requests - Dec 2025.
+ * Values are parameterized by a coherent browser profile so that UA, platform,
+ * GPU, memory, screen, timezone, and language are internally consistent.
+ *
  * =============================================================================
  */
 
-const { generateFingerprint } = require('../fingerprinting/ratGenerator');
+const { deriveHardwareFingerprint } = require('../fingerprinting/browserProfile');
 
 /**
  * Generates full RAT (Rakuten Analytics Tracking) fingerprint data.
  * @param {string} correlationId - Correlation ID for request
- * @param {string} fingerprint - Generated fingerprint hash
+ * @param {string} fingerprint - Session-stable fingerprint hash
+ * @param {Object} profile - Coherent browser profile from browserProfile.generateProfile()
  * @returns {Object} Full RAT payload
  */
-function generateFullRatData(correlationId, fingerprint) {
+function generateFullRatData(correlationId, fingerprint, profile) {
+  const p = profile || {};
+  const fonts = p.fonts || [];
+  const videoCard = p.videoCard || { vendor: 'Google Inc. (NVIDIA)', renderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)' };
+  const math = p.math || {};
+  const audio = p.audio || 124.04347527516074;
+  const plugins = p.plugins || [];
+
   return {
     components: {
       fonts: {
-        value: [
-          'Agency FB', 'Calibri', 'Century', 'Century Gothic', 'Franklin Gothic',
-          'Haettenschweiler', 'Lucida Bright', 'Lucida Sans', 'MS Outlook',
-          'MS Reference Specialty', 'MS UI Gothic', 'MT Extra', 'Marlett',
-          'Monotype Corsiva', 'Pristina', 'Segoe UI Light'
-        ],
+        value: fonts,
         duration: Math.floor(Math.random() * 20) + 80,
       },
       domBlockers: { duration: Math.floor(Math.random() * 20) + 70 },
@@ -38,29 +42,27 @@ function generateFullRatData(correlationId, fingerprint) {
         },
         duration: Math.floor(Math.random() * 20) + 75,
       },
-      audio: { value: 124.04347527516074, duration: 1 },
+      audio: { value: audio, duration: 1 },
       screenFrame: { value: [0, 0, 0, 0], duration: 0 },
       osCpu: { duration: 0 },
-      languages: { value: [['en-US']], duration: 0 },
+      languages: { value: [[p.acceptLanguage ? p.acceptLanguage.split(',')[0] : 'en-US']], duration: 0 },
       colorDepth: { value: 24, duration: 0 },
-      deviceMemory: { value: 8, duration: 0 },
-      screenResolution: { value: [1920, 1080], duration: 0 },
-      hardwareConcurrency: { value: 12, duration: 0 },
-      timezone: { value: 'Asia/Manila', duration: 4 },
+      deviceMemory: { value: p.deviceMemory || 8, duration: 0 },
+      screenResolution: { value: p.screenResolution || [1920, 1080], duration: 0 },
+      hardwareConcurrency: { value: p.hardwareConcurrency || 12, duration: 0 },
+      timezone: { value: p.timezone || 'America/New_York', duration: 4 },
       sessionStorage: { value: true, duration: 0 },
       localStorage: { value: true, duration: 0 },
       indexedDB: { value: true, duration: 0 },
       openDatabase: { value: false, duration: 0 },
       cpuClass: { duration: 0 },
-      platform: { value: 'Win32', duration: 0 },
+      platform: { value: p.platform || 'Win32', duration: 0 },
       plugins: {
-        value: [
-          { name: 'PDF Viewer', description: 'Portable Document Format', mimeTypes: [{ type: 'application/pdf', suffixes: 'pdf' }, { type: 'text/pdf', suffixes: 'pdf' }] },
-          { name: 'Chrome PDF Viewer', description: 'Portable Document Format', mimeTypes: [{ type: 'application/pdf', suffixes: 'pdf' }, { type: 'text/pdf', suffixes: 'pdf' }] },
-          { name: 'Chromium PDF Viewer', description: 'Portable Document Format', mimeTypes: [{ type: 'application/pdf', suffixes: 'pdf' }, { type: 'text/pdf', suffixes: 'pdf' }] },
-          { name: 'Microsoft Edge PDF Viewer', description: 'Portable Document Format', mimeTypes: [{ type: 'application/pdf', suffixes: 'pdf' }, { type: 'text/pdf', suffixes: 'pdf' }] },
-          { name: 'WebKit built-in PDF', description: 'Portable Document Format', mimeTypes: [{ type: 'application/pdf', suffixes: 'pdf' }, { type: 'text/pdf', suffixes: 'pdf' }] },
-        ],
+        value: plugins.map((pl) => ({
+          name: pl.name,
+          description: pl.description,
+          mimeTypes: pl.mimeTypes,
+        })),
         duration: 0,
       },
       touchSupport: { value: { maxTouchPoints: 0, touchEvent: false, touchStart: false }, duration: 0 },
@@ -76,21 +78,37 @@ function generateFullRatData(correlationId, fingerprint) {
       hdr: { value: false, duration: 0 },
       math: {
         value: {
-          acos: 1.4473588658278522, acosh: 709.889355822726, acoshPf: 355.291251501643,
-          asin: 0.12343746096704435, asinh: 0.881373587019543, asinhPf: 0.8813735870195429,
-          atanh: 0.5493061443340548, atanhPf: 0.5493061443340548, atan: 0.4636476090008061,
-          sin: 0.8178819121159085, sinh: 1.1752011936438014, sinhPf: 2.534342107873324,
-          cos: -0.8390715290095377, cosh: 1.5430806348152437, coshPf: 1.5430806348152437,
-          tan: -1.4214488238747245, tanh: 0.7615941559557649, tanhPf: 0.7615941559557649,
-          exp: 2.718281828459045, expm1: 1.718281828459045, expm1Pf: 1.718281828459045,
-          log1p: 2.3978952727983707, log1pPf: 2.3978952727983707, powPI: 1.9275814160560206e-50
+          acos: math.acos || 1.4473588658278522,
+          acosh: math.acosh || 709.889355822726,
+          acoshPf: math.acoshPf || 355.291251501643,
+          asin: math.asin || 0.12343746096704435,
+          asinh: math.asinh || 0.881373587019543,
+          asinhPf: math.asinhPf || 0.8813735870195429,
+          atanh: math.atanh || 0.5493061443340548,
+          atanhPf: math.atanhPf || 0.5493061443340548,
+          atan: math.atan || 0.4636476090008061,
+          sin: math.sin || 0.8178819121159085,
+          sinh: math.sinh || 1.1752011936438014,
+          sinhPf: math.sinhPf || 2.534342107873324,
+          cos: math.cos || -0.8390715290095377,
+          cosh: math.cosh || 1.5430806348152437,
+          coshPf: math.coshPf || 1.5430806348152437,
+          tan: math.tan || -1.4214488238747245,
+          tanh: math.tanh || 0.7615941559557649,
+          tanhPf: math.tanhPf || 0.7615941559557649,
+          exp: math.exp || 2.718281828459045,
+          expm1: math.expm1 || 1.718281828459045,
+          expm1Pf: math.expm1Pf || 1.718281828459045,
+          log1p: math.log1p || 2.3978952727983707,
+          log1pPf: math.log1pPf || 2.3978952727983707,
+          powPI: math.powPI || 1.9275814160560206e-50,
         },
         duration: 1,
       },
       videoCard: {
         value: {
-          vendor: 'Google Inc. (NVIDIA)',
-          renderer: 'ANGLE (NVIDIA, NVIDIA GeForce GTX 1080 Ti (0x00001B06) Direct3D11 vs_5_0 ps_5_0, D3D11)'
+          vendor: videoCard.vendor,
+          renderer: videoCard.renderer,
         },
         duration: 5,
       },
@@ -146,7 +164,7 @@ function generateFullRatData(correlationId, fingerprint) {
     },
     hash: fingerprint,
     hashesOther: {
-      hashHardware: generateFingerprint(),
+      hashHardware: deriveHardwareFingerprint(fingerprint),
     },
   };
 }

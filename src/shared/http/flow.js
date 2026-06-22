@@ -19,7 +19,7 @@
 const fs = require('fs');
 const path = require('path');
 const { extractFormFields, isRedirect, getRedirectUrl } = require('./analyzer');
-const { generateCorrelationId, generateFingerprint } = require('../fingerprinting/ratGenerator');
+const { generateCorrelationId } = require('../fingerprinting/ratGenerator');
 const { humanDelay } = require('../fingerprinting/bioGenerator');
 const { generateChallengeToken, generateSessionToken } = require('../fingerprinting/challengeGenerator');
 const powServiceClient = require('../fingerprinting/powServiceClient');
@@ -122,9 +122,12 @@ function sleepMs(ms) {
 async function postUtilGcWithRetries(client, { gcUrl, gcPayload, timeoutMs, headers, logPrefix }) {
   for (let attempt = 1; attempt <= UTIL_GC_MAX_ATTEMPTS; attempt++) {
     try {
+      // __noRetry: true — postUtilGcWithRetries handles its own retry logic;
+      // the adapter's withRetry wrapper is skipped to avoid double-retry.
       const gcResponse = await client.post(gcUrl, gcPayload, {
         timeout: timeoutMs,
         headers,
+        __noRetry: true,
       });
       const hasToken = gcResponse.status === 200 && gcResponse.data?.token;
       if (hasToken) {
@@ -292,10 +295,10 @@ async function submitEmailStep(session, email, context, timeoutMs) {
   log.debug('Submitting email');
   touchSession(session);
   
-  // Generate fingerprinting data
+  // Generate fingerprinting data — use session-stable fingerprint + coherent profile
   const startTime = Date.now();
-  const fingerprint = generateFingerprint();
-  const ratData = generateFullRatData(correlationId, fingerprint);
+  const fingerprint = session.fingerprint;
+  const ratData = generateFullRatData(correlationId, fingerprint, session.profile);
   const bioData = generateRealBioData(startTime);
   
   // Add human delay before submission
@@ -545,10 +548,10 @@ async function submitPasswordStep(session, password, emailStepResult, username, 
   
   // Add human delay before submission
   await humanDelay(1000, 2000, { batchMode: session.batchMode });
-  
-  // Generate fingerprint data for /util/gc call
-  const fingerprint = generateFingerprint();
-  const ratData = generateFullRatData(correlationId, fingerprint);
+
+  // Generate fingerprint data for /util/gc call — reuse session-stable fingerprint
+  const fingerprint = session.fingerprint;
+  const ratData = generateFullRatData(correlationId, fingerprint, session.profile);
   
   // Call /util/gc to get challenge token for password step
   let challengeToken = null;
@@ -727,14 +730,14 @@ async function submitPasswordStep(session, password, emailStepResult, username, 
  * @returns {Promise<Object|null>} Updated result or null if failed
  */
 async function skipEmailVerificationStep(session, verifyToken, correlationId, timeoutMs) {
-  // Use direct client for verification skip to save proxy bandwidth
-  const client = session.directClient || session.client;
-  
+  // Use proxied client for /util/gc to maintain IP coherence within the login session
+  const client = session.proxiedClient || session.client;
+
   touchSession(session);
-  
-  // Generate fingerprint data for /util/gc call
-  const fingerprint = generateFingerprint();
-  const ratData = generateFullRatData(correlationId, fingerprint);
+
+  // Generate fingerprint data for /util/gc call — reuse session-stable fingerprint
+  const fingerprint = session.fingerprint;
+  const ratData = generateFullRatData(correlationId, fingerprint, session.profile);
   
   // Call /util/gc to get challenge token
   let challengeToken = null;

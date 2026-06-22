@@ -38,3 +38,5 @@ test-credentials.txt
 # OS
 .DS_Store
 Thumbs.db
+# Deepwork session state
+.slim/deepwork/

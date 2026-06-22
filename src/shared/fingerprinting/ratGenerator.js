@@ -12,6 +12,7 @@
  */
 
 const { createLogger } = require('../logger');
+const { generateSessionFingerprint, deriveHardwareFingerprint } = require('./browserProfile');
 
 const log = createLogger('rat-gen');
 
@@ -102,12 +103,12 @@ function generateCorrelationId() {
 /**
  * Generates a browser fingerprint hash.
  * Produces a 32-character hex string like MD5 hash.
+ * NOTE: This should be called ONCE per session and reused for all requests
+ * in that session. Real browsers have one stable fingerprint.
  * @returns {string} Fingerprint hash (32-char hex)
  */
 function generateFingerprint() {
-  const crypto = require('crypto');
-  const randomData = crypto.randomBytes(16).toString('hex');
-  return randomData; // 32-char hex string like "e7e08a8942ed6789bc069ad1815a3515"
+  return generateSessionFingerprint();
 }
 
 /**
@@ -145,5 +146,7 @@ module.exports = {
   generateRatData,
   generateCorrelationId,
   generateFingerprint,
+  generateSessionFingerprint,
+  deriveHardwareFingerprint,
   updateRatState,
 };

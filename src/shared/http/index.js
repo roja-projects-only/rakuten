@@ -5,5 +5,4 @@ module.exports = {
   htmlAnalyzer: require('./analyzer'),
   ipFetcher: require('./ipFetcher'),
   retryInterceptor: require('./retryInterceptor'),
-  proxyTracker: require('./proxyTracker'),
 };

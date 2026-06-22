@@ -10,7 +10,6 @@
  */
 
 const { createLogger } = require('../logger');
-const { getCookieString } = require('../http/client');
 
 const log = createLogger('api-capture');
 
@@ -37,9 +36,9 @@ const RANK_MAP = {
  */
 async function captureViaApi(client, jar, timeoutMs) {
   try {
-    // Get cookies for the API request
-    const cookieString = await getCookieString(jar, 'https://www.rakuten.co.jp/');
-    
+    // Cookies are handled automatically by impit's cookieJar integration.
+    // No need to manually inject Cookie header.
+
     // Request body - only request memberPointInfo
     const requestBody = {
       common: {
@@ -52,9 +51,7 @@ async function captureViaApi(client, jar, timeoutMs) {
         }
       }
     };
-    
-    log.debug(`API request with cookies: ${cookieString.substring(0, 50)}...`);
-    
+
     const response = await client.post(HEADER_INFO_API, requestBody, {
       timeout: timeoutMs,
       headers: {
@@ -66,7 +63,6 @@ async function captureViaApi(client, jar, timeoutMs) {
         'Sec-Fetch-Dest': 'empty',
         'Sec-Fetch-Mode': 'cors',
         'Sec-Fetch-Site': 'same-site',
-        'Cookie': cookieString,
       },
     });
     

@@ -15,6 +15,7 @@
 const { CookieJar } = require('tough-cookie');
 const { createHttpClient } = require('./client');
 const { createLogger } = require('../logger');
+const { generateProfile, generateSessionFingerprint } = require('../fingerprinting/browserProfile');
 
 const log = createLogger('session-mgr');
 
@@ -38,21 +39,28 @@ function createSession(options = {}) {
   const sessionId = generateSessionId();
   const sharedJar = new CookieJar();
 
+  // Generate a coherent browser profile + stable fingerprint for this session.
+  // These are reused for all requests in the session to mimic a real browser.
+  const profile = options.profile || generateProfile();
+  const fingerprint = options.fingerprint || generateSessionFingerprint();
+
   // Always create a direct client; create a proxied client only when proxy is provided
-  const direct = createHttpClient({ ...options, proxy: null, jar: sharedJar });
+  const direct = createHttpClient({ ...options, proxy: null, jar: sharedJar, profile });
   const proxied = options.proxy
-    ? createHttpClient({ ...options, jar: sharedJar })
+    ? createHttpClient({ ...options, jar: sharedJar, profile })
     : null;
 
   // Default session client is the direct client for speed; login flow can opt into proxiedClient
   const client = direct.client;
-  
+
   const session = {
     id: sessionId,
     client,
     proxiedClient: proxied ? proxied.client : null,
     directClient: direct.client,
     jar: sharedJar,
+    profile,
+    fingerprint,
     createdAt: Date.now(),
     lastUsedAt: Date.now(),
     requestCount: 0,

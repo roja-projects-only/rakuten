@@ -1,43 +1,29 @@
 /**
  * =============================================================================
- * HTTP CLIENT - AXIOS-BASED REQUEST HANDLER WITH COOKIE MANAGEMENT
+ * HTTP CLIENT - IMPIT-BASED REQUEST HANDLER WITH TLS IMPERSONATION
  * =============================================================================
- * 
+ *
  * Provides a configured HTTP client with:
- * - Automatic cookie jar management
- * - Browser-like headers
- * - User-Agent rotation
- * - Proxy support
- * - Request/response interceptors
- * 
- * NOTE: When using a proxy, we use manual cookie handling via interceptors
- * because axios-cookiejar-support doesn't work with custom HTTP agents.
- * 
+ * - Chrome TLS/JA3/JA4 fingerprint impersonation via impit (Rust native)
+ * - Automatic cookie management via tough-cookie jar (passed to impit)
+ * - Coherent browser profile headers (UA, sec-ch-ua, Accept-Language, etc.)
+ * - Proxy support (HTTP, HTTPS, SOCKS4, SOCKS5) with TLS error tolerance
+ * - Axios-compatible API (client.get/post) for minimal caller changes
+ * - Network-error retry with exponential backoff
+ * - Connection pooling (one Impit instance = one connection pool)
+ *
+ * The adapter exposes an axios-like interface so flow.js, capture modules,
+ * and ipFetcher.js can use client.get/post with the same config shape.
+ *
  * =============================================================================
  */
 
-const axios = require('axios');
+const { Impit } = require('impit');
 const { CookieJar } = require('tough-cookie');
-const { wrapper } = require('axios-cookiejar-support');
-const UserAgent = require('user-agents');
-const { HttpsProxyAgent } = require('https-proxy-agent');
-const { HttpProxyAgent } = require('http-proxy-agent');
 const { createLogger } = require('../logger');
-const { attachProxyRedirectCookieHandling } = require('./proxyTracker');
-const { attachRetryInterceptor } = require('./retryInterceptor');
+const { withRetry } = require('./retryInterceptor');
 
 const log = createLogger('http-client');
-
-// Track if we've already warned about TLS bypass
-let tlsBypassWarned = false;
-
-// Suppress Node.js TLS warning globally
-process.on('warning', (warning) => {
-  if (warning.name === 'Warning' && warning.message.includes('NODE_TLS_REJECT_UNAUTHORIZED')) {
-    // Silently ignore TLS warnings
-    return;
-  }
-});
 
 /**
  * Parses various proxy formats into a standard config object.
@@ -53,10 +39,10 @@ process.on('warning', (warning) => {
  */
 function parseProxy(proxy) {
   if (!proxy || typeof proxy !== 'string') return null;
-  
+
   const trimmed = proxy.trim();
   if (!trimmed) return null;
-  
+
   // Try parsing as URL first (handles http://, socks5://, etc.)
   if (trimmed.includes('://')) {
     try {
@@ -74,8 +60,6 @@ function parseProxy(proxy) {
       }
       return result;
     } catch (_) {
-      // URL parse failed — may be scheme://host:port:user:pass format
-      // Strip the scheme and try host:port:user:pass on the remainder
       const withoutScheme = trimmed.replace(/^[a-zA-Z][a-zA-Z0-9+\-.]*:\/\//, '');
       const schemeParts = withoutScheme.split(':');
       if (schemeParts.length === 4) {
@@ -84,29 +68,23 @@ function parseProxy(proxy) {
           return {
             host: schemeParts[0],
             port,
-            auth: {
-              username: schemeParts[2],
-              password: schemeParts[3],
-            },
+            auth: { username: schemeParts[2], password: schemeParts[3] },
           };
         }
       }
     }
   }
-  
+
   // Format: user:pass@host:port
   const atMatch = trimmed.match(/^([^:]+):([^@]+)@([^:]+):(\d+)$/);
   if (atMatch) {
     return {
       host: atMatch[3],
       port: parseInt(atMatch[4], 10),
-      auth: {
-        username: atMatch[1],
-        password: atMatch[2],
-      },
+      auth: { username: atMatch[1], password: atMatch[2] },
     };
   }
-  
+
   // Format: host:port:user:pass
   const fourParts = trimmed.split(':');
   if (fourParts.length === 4) {
@@ -115,34 +93,25 @@ function parseProxy(proxy) {
       return {
         host: fourParts[0],
         port,
-        auth: {
-          username: fourParts[2],
-          password: fourParts[3],
-        },
+        auth: { username: fourParts[2], password: fourParts[3] },
       };
     }
   }
-  
+
   // Format: host:port
   const twoParts = trimmed.split(':');
   if (twoParts.length === 2) {
     const port = parseInt(twoParts[1], 10);
     if (!isNaN(port)) {
-      return {
-        host: twoParts[0],
-        port,
-      };
+      return { host: twoParts[0], port };
     }
   }
-  
+
   // Try adding http:// and parse as URL
   try {
     const url = new URL(`http://${trimmed}`);
     if (url.hostname && url.port) {
-      const result = {
-        host: url.hostname,
-        port: parseInt(url.port, 10),
-      };
+      const result = { host: url.hostname, port: parseInt(url.port, 10) };
       if (url.username && url.password) {
         result.auth = {
           username: decodeURIComponent(url.username),
@@ -152,213 +121,231 @@ function parseProxy(proxy) {
       return result;
     }
   } catch (_) {}
-  
+
   log.warn(`Unable to parse proxy format: ${trimmed}`);
   return null;
 }
 
 /**
- * Creates a new HTTP client instance with cookie jar and browser-like configuration.
+ * Converts a parsed proxy config to a URL string for impit's proxyUrl option.
+ * @param {string} proxy - Proxy string in any format
+ * @returns {string|undefined} Proxy URL string or undefined if no proxy
+ */
+function parseProxyToUrl(proxy) {
+  if (!proxy) return undefined;
+  const parsed = parseProxy(proxy);
+  if (!parsed) return undefined;
+  const protocol = parsed.protocol || 'http';
+  const auth = parsed.auth
+    ? `${encodeURIComponent(parsed.auth.username)}:${encodeURIComponent(parsed.auth.password)}@`
+    : '';
+  return `${protocol}://${auth}${parsed.host}:${parsed.port}`;
+}
+
+/**
+ * Converts a fetch Headers object to a plain object with lowercase keys.
+ * Handles set-cookie as an array (matching axios behavior).
+ * @param {Headers} headers - Fetch Headers object
+ * @returns {Object} Plain object with lowercase header keys
+ */
+function headersToObject(headers) {
+  const obj = {};
+  try {
+    headers.forEach((value, key) => {
+      obj[key.toLowerCase()] = value;
+    });
+  } catch (_) {
+    // Fallback: try get() for known headers
+    const known = ['content-type', 'set-cookie', 'location', 'content-length'];
+    for (const h of known) {
+      const v = headers.get(h);
+      if (v) obj[h] = v;
+    }
+  }
+  // Ensure set-cookie is an array (axios behavior)
+  if (typeof headers.getSetCookie === 'function') {
+    const setCookies = headers.getSetCookie();
+    if (setCookies && setCookies.length > 0) {
+      obj['set-cookie'] = setCookies;
+    }
+  }
+  return obj;
+}
+
+/**
+ * Builds default browser-like headers from a profile.
+ * @param {Object} profile - Browser profile from browserProfile.generateProfile()
+ * @returns {Object} Default headers
+ */
+function buildDefaultHeaders(profile) {
+  const p = profile || {};
+  return {
+    'User-Agent': p.userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    'Accept-Language': p.acceptLanguage || 'en-US,en;q=0.9',
+    'Accept-Encoding': p.acceptEncoding || 'gzip, deflate, br, zstd',
+    'DNT': '1',
+    'Connection': 'keep-alive',
+    'Upgrade-Insecure-Requests': '1',
+    ...(p.secChUa ? {
+      'sec-ch-ua': p.secChUa,
+      'sec-ch-ua-mobile': p.secChUaMobile || '?0',
+      'sec-ch-ua-platform': p.secChUaPlatform,
+    } : {}),
+  };
+}
+
+/**
+ * Performs a single HTTP request via impit and returns an axios-like response.
+ * @param {Impit} impit - Impit instance
+ * @param {string} method - HTTP method (GET, POST)
+ * @param {string} url - Request URL
+ * @param {*} data - Request body (for POST)
+ * @param {Object} config - Request config (headers, timeout, maxRedirects, __noRetry)
+ * @param {Object} defaultHeaders - Default headers from client
+ * @param {Object} jar - tough-cookie CookieJar (for manual Set-Cookie on manual redirects)
+ * @returns {Promise<Object>} Axios-like response
+ */
+async function performRequest(impit, method, url, data, config, defaultHeaders, jar) {
+  // Merge headers: defaults < per-request
+  const headers = { ...defaultHeaders, ...(config.headers || {}) };
+
+  // Serialize body and set Content-Type
+  let body = undefined;
+  if (data !== undefined && data !== null) {
+    if (typeof data === 'string' || Buffer.isBuffer(data)) {
+      body = data;
+    } else if (data instanceof URLSearchParams) {
+      body = data.toString();
+      if (!headers['Content-Type'] && !headers['content-type']) {
+        headers['Content-Type'] = 'application/x-www-form-urlencoded';
+      }
+    } else {
+      body = JSON.stringify(data);
+      if (!headers['Content-Type'] && !headers['content-type']) {
+        headers['Content-Type'] = 'application/json';
+      }
+    }
+  }
+
+  // Per-request timeout
+  const timeout = config.timeout;
+
+  // Redirect handling: maxRedirects: 0 → manual; else follow (instance max applies)
+  const redirect = config.maxRedirects === 0 ? 'manual' : 'follow';
+
+  // Build fetch options
+  const fetchOpts = { method, headers, redirect };
+  if (timeout) fetchOpts.timeout = timeout;
+  if (body !== undefined) fetchOpts.body = body;
+
+  // Execute with optional retry (withRetry returns a function — must call it)
+  const doFetch = () => impit.fetch(url, fetchOpts);
+  const response = config.__noRetry ? await doFetch() : await withRetry(doFetch, { retries: 3 })();
+
+  // Parse response body (can only read once)
+  const contentType = response.headers.get('content-type') || '';
+  let parsedData;
+  if (contentType.includes('application/json')) {
+    try {
+      parsedData = await response.json();
+    } catch (_) {
+      parsedData = await response.text();
+    }
+  } else {
+    parsedData = await response.text();
+  }
+
+  // For manual-redirect responses, extract Set-Cookie into the jar
+  // (impit only auto-processes cookies when following redirects)
+  if (redirect === 'manual' && jar) {
+    const setCookies = typeof response.headers.getSetCookie === 'function'
+      ? response.headers.getSetCookie()
+      : [];
+    for (const cookie of setCookies) {
+      try { await jar.setCookie(cookie, url); } catch (_) {}
+    }
+  }
+
+  // Build axios-like response object
+  const headersObj = headersToObject(response.headers);
+
+  return {
+    status: response.status,
+    statusText: response.statusText,
+    data: parsedData,
+    headers: headersObj,
+    config: { url, method, headers },
+    request: { res: { responseUrl: response.url || url } },
+  };
+}
+
+/**
+ * Creates a new HTTP client instance with TLS impersonation and cookie management.
  * @param {Object} options - Client configuration options
- * @param {string} [options.proxy] - Proxy in any format (host:port, user:pass@host:port, http://..., etc.)
+ * @param {string} [options.proxy] - Proxy in any format (host:port, user:pass@host:port, http://..., socks5://...)
  * @param {number} [options.timeout=60000] - Request timeout in milliseconds
- * @param {string} [options.userAgent] - Custom User-Agent (random if not provided)
+ * @param {string} [options.userAgent] - Custom User-Agent (profile UA used if not provided)
  * @param {CookieJar} [options.jar] - Existing cookie jar to reuse across clients
- * @returns {Object} Axios instance with cookie jar
+ * @param {Object} [options.profile] - Browser profile from browserProfile.generateProfile()
+ * @returns {{ client: Object, jar: CookieJar }} Axios-compatible client and cookie jar
  */
 function createHttpClient(options = {}) {
   const {
     proxy = null,
     timeout = 60000,
-    userAgent = new UserAgent().toString(),
+    userAgent = null,
     jar: externalJar = null,
+    profile = null,
   } = options;
 
   // Create cookie jar for session management
   const jar = externalJar || new CookieJar();
-  
-  // Determine if we need manual cookie handling (when using proxy)
-  const proxyConfig = proxy ? parseProxy(proxy) : null;
-  const useManualCookies = !!proxyConfig;
-  
-  // Create axios instance - only wrap with cookie support if NO proxy
-  let client;
-  if (useManualCookies) {
-    // Manual cookie handling for proxy support
-    client = axios.create({
-      timeout,
-      withCredentials: true,
-      maxRedirects: 5,
-      validateStatus: (status) => status < 600,
-    });
+
+  // Determine browser preset and proxy URL from profile
+  const browser = profile?.impitBrowser || 'chrome131';
+  const proxyUrl = proxy ? parseProxyToUrl(proxy) : undefined;
+
+  // Override profile UA if custom UA provided
+  const effectiveProfile = userAgent && profile
+    ? { ...profile, userAgent }
+    : profile || { userAgent: userAgent };
+
+  // Build default headers from profile
+  const defaultHeaders = buildDefaultHeaders(effectiveProfile);
+  if (userAgent) defaultHeaders['User-Agent'] = userAgent;
+
+  // Create impit instance with TLS impersonation + cookie jar + proxy
+  const impit = new Impit({
+    browser,
+    proxyUrl,
+    cookieJar: jar,
+    ignoreTlsErrors: true, // Required for proxies with SSL interception (BrightData, etc.)
+    followRedirects: true,
+    maxRedirects: 10,
+    timeout,
+    headers: defaultHeaders,
+  });
+
+  if (proxyUrl) {
+    const parsed = parseProxy(proxy);
+    log.debug(`Proxy configured (impit): ${parsed?.host}:${parsed?.port}${parsed?.auth ? ' (with auth)' : ''} [browser=${browser}]`);
   } else {
-    // Use axios-cookiejar-support when no proxy
-    client = wrapper(axios.create({
-      timeout,
-      jar,
-      withCredentials: true,
-      maxRedirects: 5,
-      validateStatus: (status) => status < 600,
-    }));
+    log.debug(`HTTP client created [browser=${browser}]`);
   }
 
-  // Configure proxy with tunnel agents
-  if (proxyConfig) {
-    const proxyProtocol = proxyConfig.protocol || 'http';
-    let proxyUrl;
-    if (proxyConfig.auth) {
-      proxyUrl = `${proxyProtocol}://${encodeURIComponent(proxyConfig.auth.username)}:${encodeURIComponent(proxyConfig.auth.password)}@${proxyConfig.host}:${proxyConfig.port}`;
-    } else {
-      proxyUrl = `${proxyProtocol}://${proxyConfig.host}:${proxyConfig.port}`;
-    }
-    
-    // Create tunnel agents for proper HTTPS proxying
-    // Disable SSL verification to allow proxies with SSL interception (BrightData, etc.)
-    // This is necessary because residential proxies often use self-signed certs
-    const httpsAgent = new HttpsProxyAgent(proxyUrl);
-    const httpAgent = new HttpProxyAgent(proxyUrl);
-    
-    client.defaults.httpsAgent = httpsAgent;
-    client.defaults.httpAgent = httpAgent;
-    client.defaults.proxy = false; // Disable axios built-in proxy
-    
-    // Disable TLS verification globally for this proxy session
-    // This is required for BrightData and similar proxies that perform SSL interception
-    if (!tlsBypassWarned) {
-      log.debug('SSL certificate verification disabled for proxy connections');
-      tlsBypassWarned = true;
-      // Suppress Node.js TLS warning
-      process.removeAllListeners('warning');
-    }
-    process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-    
-    log.debug(`Proxy configured (tunnel): ${proxyConfig.host}:${proxyConfig.port}${proxyConfig.auth ? ' (with auth)' : ''}`);
-    
-    // Attach retry interceptor for unstable proxy connections
-    // Must be attached BEFORE cookie interceptors so retries preserve cookie state
-    attachRetryInterceptor(client, {
-      retries: 3,
-      retryDelay: 1000,
-      retryDelayMax: 8000,
-      exponentialBackoff: true,
-    });
-  }
-
-  // Attach redirect-aware cookie handling only for proxy mode so we capture Set-Cookie from every hop
-  if (useManualCookies) {
-    attachProxyRedirectCookieHandling(client, jar);
-  }
-
-  // Set default headers (browser-like)
-  client.defaults.headers.common['User-Agent'] = userAgent;
-  client.defaults.headers.common['Accept-Language'] = 'en-US,en;q=0.9,ja;q=0.8';
-  client.defaults.headers.common['Accept-Encoding'] = 'gzip, deflate, br';
-  client.defaults.headers.common['DNT'] = '1';
-  client.defaults.headers.common['Connection'] = 'keep-alive';
-  client.defaults.headers.common['Upgrade-Insecure-Requests'] = '1';
-
-  // Manual cookie handling interceptors (only when using proxy)
-  if (useManualCookies) {
-    // Request interceptor - add cookies from jar
-    client.interceptors.request.use(
-      async (config) => {
-        try {
-          const url = config.url;
-          // Build full URL for cookie lookup
-          const fullUrl = url.startsWith('http') ? url : `${config.baseURL || ''}${url}`;
-          const cookieString = await jar.getCookieString(fullUrl);
-          if (cookieString) {
-            config.headers = config.headers || {};
-            // Merge with existing Cookie header if present
-            const existingCookie = config.headers['Cookie'] || config.headers['cookie'] || '';
-            config.headers['Cookie'] = existingCookie ? `${existingCookie}; ${cookieString}` : cookieString;
-          }
-        } catch (err) {
-          log.debug(`Cookie injection error: ${err.message}`);
-        }
-        log.debug(`${config.method.toUpperCase()} ${config.url}`);
-        return config;
-      },
-      (error) => {
-        log.error('Request error:', error.message);
-        return Promise.reject(error);
-      }
-    );
-
-    // Response interceptor - save cookies to jar
-    client.interceptors.response.use(
-      async (response) => {
-        try {
-          const url = response.config.url;
-          const fullUrl = url.startsWith('http') ? url : `${response.config.baseURL || ''}${url}`;
-          const setCookieHeaders = response.headers['set-cookie'];
-          if (setCookieHeaders) {
-            const cookies = Array.isArray(setCookieHeaders) ? setCookieHeaders : [setCookieHeaders];
-            for (const cookie of cookies) {
-              try {
-                await jar.setCookie(cookie, fullUrl);
-              } catch (cookieErr) {
-                log.debug(`Failed to set cookie: ${cookieErr.message}`);
-              }
-            }
-          }
-        } catch (err) {
-          log.debug(`Cookie extraction error: ${err.message}`);
-        }
-        log.debug(`${response.status} ${response.config.url}`);
-        return response;
-      },
-      async (error) => {
-        // Also try to extract cookies from error responses
-        if (error.response) {
-          try {
-            const url = error.config.url;
-            const fullUrl = url.startsWith('http') ? url : `${error.config.baseURL || ''}${url}`;
-            const setCookieHeaders = error.response.headers['set-cookie'];
-            if (setCookieHeaders) {
-              const cookies = Array.isArray(setCookieHeaders) ? setCookieHeaders : [setCookieHeaders];
-              for (const cookie of cookies) {
-                try {
-                  await jar.setCookie(cookie, fullUrl);
-                } catch (_) {}
-              }
-            }
-          } catch (_) {}
-          log.warn(`${error.response.status} ${error.config.url}`);
-        } else {
-          log.error('Response error:', error.message);
-        }
-        return Promise.reject(error);
-      }
-    );
-  } else {
-    // Standard logging interceptors (no proxy case)
-    client.interceptors.request.use(
-      (config) => {
-        log.debug(`${config.method.toUpperCase()} ${config.url}`);
-        return config;
-      },
-      (error) => {
-        log.error('Request error:', error.message);
-        return Promise.reject(error);
-      }
-    );
-
-    client.interceptors.response.use(
-      (response) => {
-        log.debug(`${response.status} ${response.config.url}`);
-        return response;
-      },
-      (error) => {
-        if (error.response) {
-          log.warn(`${error.response.status} ${error.config.url}`);
-        } else {
-          log.error('Response error:', error.message);
-        }
-        return Promise.reject(error);
-      }
-    );
-  }
+  // Build axios-compatible adapter
+  const client = {
+    defaults: { headers: { common: defaultHeaders } },
+    // Stub interceptors for backward compatibility (not used — cookies/retry handled internally)
+    interceptors: {
+      request: { use: () => 0, eject: () => {} },
+      response: { use: () => 0, eject: () => {} },
+    },
+    get: (url, config = {}) => performRequest(impit, 'GET', url, undefined, config, defaultHeaders, jar),
+    post: (url, data, config = {}) => performRequest(impit, 'POST', url, data, config, defaultHeaders, jar),
+    put: (url, data, config = {}) => performRequest(impit, 'PUT', url, data, config, defaultHeaders, jar),
+    delete: (url, config = {}) => performRequest(impit, 'DELETE', url, undefined, config, defaultHeaders, jar),
+  };
 
   return { client, jar };
 }
@@ -419,6 +406,7 @@ async function setCookies(jar, setCookieHeaders, url) {
 module.exports = {
   createHttpClient,
   parseProxy,
+  parseProxyToUrl,
   getCookies,
   getCookieString,
   setCookies,
