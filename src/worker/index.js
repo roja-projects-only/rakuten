@@ -62,12 +62,17 @@ async function main() {
     // Sync POW service URL from config service to POW client
     try {
       const configService = getConfigService();
+      let powUrl = null;
       if (configService.isInitialized()) {
-        const powUrl = configService.get('POW_SERVICE_URL');
-        if (powUrl) {
-          const powServiceClient = require('../shared/fingerprinting/powServiceClient');
-          powServiceClient.setServiceUrl(powUrl);
-        }
+        powUrl = configService.get('POW_SERVICE_URL');
+      }
+      // Fall back to env if config service doesn't have it
+      if (!powUrl && process.env.POW_SERVICE_URL) {
+        powUrl = process.env.POW_SERVICE_URL;
+      }
+      if (powUrl) {
+        const powServiceClient = require('../shared/fingerprinting/powServiceClient');
+        powServiceClient.setServiceUrl(powUrl);
       }
     } catch (err) {
       log.warn(`POW service URL sync failed: ${err.message}`);

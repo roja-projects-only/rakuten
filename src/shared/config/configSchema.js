@@ -169,7 +169,26 @@ const CONFIG_SCHEMA = {
     description: 'Comma-separated Telegram user IDs allowed to use the bot',
     category: 'logging',
     allowEmpty: true
-  }
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // POW SERVICE
+  // ═══════════════════════════════════════════════════════════════════════════
+  POW_SERVICE_URL: {
+    type: 'string',
+    default: '',
+    allowEmpty: true,
+    description: 'POW service HTTP endpoint (e.g. http://pow-service:3001)',
+    category: 'system'
+  },
+  POW_CLIENT_TIMEOUT: {
+    type: 'int',
+    default: 25000,
+    min: 5000,
+    max: 60000,
+    description: 'Client timeout for POW HTTP requests (ms)',
+    category: 'system'
+  },
 };
 
 /**
