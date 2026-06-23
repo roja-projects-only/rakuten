@@ -165,7 +165,14 @@ class ProgressTracker {
         this.logger.warn('Progress update for unknown batch', { batchId });
         return;
       }
-      
+
+      // If batch was aborted, stop editing the progress message —
+      // abortBatch/sendAbortedMessage already showed the final state.
+      if (progressData.aborted) {
+        this.logger.debug('Progress update skipped (batch aborted)', { batchId });
+        return;
+      }
+
       // Fetch current completed count from Redis
       const counterKey = PROGRESS_TRACKER.generateCounter(batchId);
       const completedStr = await this.redis.executeCommand('get', counterKey);
@@ -751,12 +758,12 @@ class ProgressTracker {
         data.abortedAt = Date.now();
         await this.redis.executeCommand('setex', key, PROGRESS_TRACKER.ttl, JSON.stringify(data));
         
-        // Update local cache
+        // Update local cache so handleProgressUpdate sees the aborted flag
         this.activeTrackers.set(batchId, data);
-        
-        // Send summary (not aborted) so user sees results gathered so far
-        await this.sendSummary(batchId);
-        
+
+        // Show aborted summary with valid creds found so far
+        await this.sendAbortedMessage(batchId);
+
         this.logger.info('Batch aborted', { batchId });
       }
     } catch (error) {
@@ -800,7 +807,13 @@ class ProgressTracker {
         BLOCKED: parseInt(countsData.BLOCKED) || 0,
         ERROR: parseInt(countsData.ERROR) || 0
       };
-      
+
+      // Read the completed counter from Redis for an accurate processed count
+      // (local cache may be up to 8s stale due to throttling)
+      const counterKey = PROGRESS_TRACKER.generateCounter(batchId);
+      const completedStr = await this.redis.executeCommand('get', counterKey);
+      const processed = parseInt(completedStr) || progressData.completed || 0;
+
       const validCredsKey = PROGRESS_TRACKER.generateValidCreds(batchId);
       const validCredsData = await this.redis.executeCommand('lrange', validCredsKey, 0, -1);
       const validCreds = validCredsData.map(data => {
@@ -810,14 +823,18 @@ class ProgressTracker {
           return null;
         }
       }).filter(Boolean);
-      
+
+      // Calculate elapsed time
+      const elapsed = Date.now() - progressData.startTime;
+
       // Use the standard aborted message format
       const { buildBatchAborted } = require('../telegram/messages');
       const abortedMessage = buildBatchAborted({
         filename: progressData.filename,
         total: progressData.total,
-        processed: progressData.completed,
+        processed,
         counts,
+        elapsedMs: elapsed,
         validCreds
       });
       
@@ -837,7 +854,7 @@ class ProgressTracker {
       
       this.logger.info('Batch aborted message sent', {
         batchId,
-        processed: progressData.completed,
+        processed,
         total: progressData.total,
         validCount: validCreds.length
       });
