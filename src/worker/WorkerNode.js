@@ -47,14 +47,14 @@ function getWorkerConfig() {
   const configService = getConfigService();
   if (configService.isInitialized()) {
     return {
-      concurrency: configService.get('WORKER_CONCURRENCY') || 3,
+      concurrency: configService.get('WORKER_CONCURRENCY') || 8,
       processedTtlMs: configService.get('PROCESSED_TTL_MS') || undefined,
       httpPort: configService.get('WORKER_HTTP_PORT') || undefined
     };
   }
   // Fallback to env
   return {
-    concurrency: parseInt(process.env.WORKER_CONCURRENCY, 10) || 3,
+    concurrency: parseInt(process.env.WORKER_CONCURRENCY, 10) || 8,
     processedTtlMs: parseInt(process.env.PROCESSED_TTL_MS, 10) || undefined,
     httpPort: parseInt(process.env.WORKER_HTTP_PORT, 10) || undefined
   };
@@ -75,6 +75,7 @@ class WorkerNode {
     this.activeTasks = new Map(); // taskId -> { promise, startedAt, task }
     this.activeTaskCount = 0;
     this.shutdown = false;
+    this.cancelCache = new Map(); // Map<batchId, {value: boolean, expiresAt: number}> — 1s TTL
     this.tasksCompleted = 0;
     this.startTime = Date.now();
 
@@ -136,6 +137,8 @@ class WorkerNode {
             if (task) {
               // Fire-and-forget with concurrency limit
               this.spawnTaskProcessor(task);
+              // Don't sleep — immediately try to fill another slot
+              continue;
             }
           } else {
             // At capacity - wait for any task to complete before checking queue
@@ -145,9 +148,9 @@ class WorkerNode {
             }
           }
           
-          // Small delay to prevent busy waiting (reduced for faster task pickup)
+          // Only sleep when no task was dequeued (queue empty or at capacity)
           if (!this.shutdown) {
-            await this.sleep(10);
+            await this.sleep(1);
           }
           
         } catch (error) {
@@ -533,11 +536,8 @@ class WorkerNode {
         }
       }
       
-      // Store result in Result_Store with 30-day TTL
-      await this.storeResult(result);
-      
-      // Increment progress counter
-      await this.incrementProgress(batchId);
+      // Store result in Result_Store with 30-day TTL (pipelined with counts and progress)
+      await this.storeResultPipelined(result);
       
       // Publish events for coordinator
       await this.publishResultEvents(result, checkResult);
@@ -609,11 +609,8 @@ class WorkerNode {
         taskId: task.taskId
       };
       
-      // Store error result
-      await this.storeResult(errorResult);
-      
-      // Increment progress counter (errors count as completed)
-      await this.incrementProgress(task.batchId);
+      // Store error result (pipelined with counts and progress)
+      await this.storeResultPipelined(errorResult);
       
       // Log structured task completion for error
       structuredLog.logTaskCompletion({
@@ -713,35 +710,66 @@ class WorkerNode {
   }
 
   /**
-   * Store result in Redis Result_Store and update progress tracking
+   * Store result in Redis via pipeline (SETEX + HINCRBY + INCR + optional LPUSH/EXPIRE)
+   * Reduces Redis round-trips by batching independent writes into one pipeline.exec().
+   * markProcessedStatus is kept separate (uses its own write-buffer batching).
    * @param {Object} result - Result object to store
    */
-  async storeResult(result) {
+  async storeResultPipelined(result) {
     try {
       const resultKey = RESULT_CACHE.generate(result.status, result.username, result.password);
       const resultData = JSON.stringify(result);
+      const batchId = result.batchId;
       
-      // Store result with immediate verification
-      await this.redis.executeCommand(
-        'setex',
-        resultKey,
-        RESULT_CACHE.ttl,
-        resultData
-      );
+      const pipeline = this.redis.pipeline();
       
-      // Immediately verify the result was stored
-      const verification = await this.redis.executeCommand('get', resultKey);
-      if (!verification) {
-        throw new Error(`Failed to verify result storage for key: ${resultKey}`);
+      // SETEX result cache (30-day TTL)
+      pipeline.setex(resultKey, RESULT_CACHE.ttl, resultData);
+      
+      // HINCRBY counts for this status
+      const countsKey = PROGRESS_TRACKER.generateCounts(batchId);
+      pipeline.hincrby(countsKey, result.status, 1);
+      
+      // INCR progress counter
+      const counterKey = PROGRESS_TRACKER.generateCounter(batchId);
+      pipeline.incr(counterKey);
+      
+      // If VALID: LPUSH to valid creds list + EXPIRE
+      if (result.status === 'VALID') {
+        const validCredsKey = PROGRESS_TRACKER.generateValidCreds(batchId);
+        const credData = JSON.stringify({
+          username: result.username,
+          password: result.password,
+          ipAddress: result.ipAddress || 'Unknown'
+        });
+        pipeline.lpush(validCredsKey, credData);
+        pipeline.expire(validCredsKey, PROGRESS_TRACKER.ttl);
       }
-
-      log.info(`Result stored and verified in cache`, {
+      
+      await pipeline.exec();
+      
+      // Consolidated logging
+      log.info(`Result stored in cache`, {
         workerId: this.workerId,
         resultKey,
         status: result.status,
         username: result.username,
         ttl: RESULT_CACHE.ttl
       });
+      
+      log.debug(`Updated ${result.status} count and progress for batch ${batchId}`, {
+        workerId: this.workerId,
+        batchId,
+        status: result.status
+      });
+      
+      if (result.status === 'VALID') {
+        log.debug(`Added valid credential to list for batch ${batchId}`, {
+          workerId: this.workerId,
+          batchId,
+          username: result.username
+        });
+      }
       
     } catch (error) {
       log.error('CRITICAL: Failed to store result in cache', {
@@ -752,52 +780,10 @@ class WorkerNode {
         error: error.message,
         stack: error.stack
       });
-      
-      // This is critical - if we can't store results, deduplication won't work
-      // Try one more time with a different approach
-      try {
-        const resultKey = RESULT_CACHE.generate(result.status, result.username, result.password);
-        const resultData = JSON.stringify(result);
-        
-        // Use SET with EX instead of SETEX
-        await this.redis.executeCommand('set', resultKey, resultData, 'EX', RESULT_CACHE.ttl);
-        
-        log.warn('Result stored using fallback method', {
-          workerId: this.workerId,
-          resultKey,
-          status: result.status
-        });
-        
-      } catch (fallbackError) {
-        log.error('CRITICAL: Fallback result storage also failed', {
-          workerId: this.workerId,
-          taskId: result.taskId,
-          username: result.username,
-          fallbackError: fallbackError.message
-        });
-        
-        // Don't throw - but this is a serious issue that needs attention
-      }
+      // Don't throw - but this is a serious issue that needs attention
     }
 
-    // Always update progress metrics, even if cache storage fell back
-    try {
-      await this.updateResultCounts(result);
-      if (result.status === 'VALID') {
-        await this.addValidCredential(result);
-      }
-    } catch (error) {
-      log.warn('Progress metric update failed', {
-        workerId: this.workerId,
-        taskId: result.taskId,
-        batchId: result.batchId,
-        status: result.status,
-        error: error.message
-      });
-    }
-
-    // Mirror into processed store so Telegram dedupe works in distributed mode
-    // Skip ERROR status so credentials can be retried in future batches
+    // Mirror into processed store (separate — uses its own write-buffer batching)
     if (result.status !== 'ERROR') {
       try {
         const credKey = makeKey(result.username, result.password);
@@ -812,89 +798,6 @@ class WorkerNode {
           error: error.message
         });
       }
-    }
-  }
-
-  /**
-   * Update result counts for batch progress tracking
-   * @param {Object} result - Result object
-   */
-  async updateResultCounts(result) {
-    try {
-      const countsKey = PROGRESS_TRACKER.generateCounts(result.batchId);
-      await this.redis.executeCommand('hincrby', countsKey, result.status, 1);
-      
-      log.debug(`Updated ${result.status} count for batch ${result.batchId}`, {
-        workerId: this.workerId,
-        batchId: result.batchId,
-        status: result.status
-      });
-      
-    } catch (error) {
-      log.error('Failed to update result counts', {
-        workerId: this.workerId,
-        batchId: result.batchId,
-        status: result.status,
-        error: error.message
-      });
-      // Don't throw - count tracking failure shouldn't fail the task
-    }
-  }
-
-  /**
-   * Add valid credential to the list for progress display
-   * @param {Object} result - Result object with VALID status
-   */
-  async addValidCredential(result) {
-    try {
-      const validCredsKey = PROGRESS_TRACKER.generateValidCreds(result.batchId);
-      const credData = JSON.stringify({
-        username: result.username,
-        password: result.password,
-        ipAddress: result.ipAddress || 'Unknown'
-      });
-      
-      await this.redis.executeCommand('lpush', validCredsKey, credData);
-      await this.redis.executeCommand('expire', validCredsKey, PROGRESS_TRACKER.ttl);
-      
-      log.debug(`Added valid credential to list for batch ${result.batchId}`, {
-        workerId: this.workerId,
-        batchId: result.batchId,
-        username: result.username
-      });
-      
-    } catch (error) {
-      log.error('Failed to add valid credential to list', {
-        workerId: this.workerId,
-        batchId: result.batchId,
-        username: result.username,
-        error: error.message
-      });
-      // Don't throw - valid creds tracking failure shouldn't fail the task
-    }
-  }
-
-  /**
-   * Increment progress counter for batch
-   * @param {string} batchId - Batch identifier
-   */
-  async incrementProgress(batchId) {
-    try {
-      const counterKey = PROGRESS_TRACKER.generateCounter(batchId);
-      await this.redis.executeCommand('incr', counterKey);
-      
-      log.debug(`Incremented progress for batch ${batchId}`, {
-        workerId: this.workerId,
-        batchId
-      });
-      
-    } catch (error) {
-      log.error('Failed to increment progress counter', {
-        workerId: this.workerId,
-        batchId,
-        error: error.message
-      });
-      // Don't throw - progress tracking failure shouldn't fail the task
     }
   }
 
@@ -987,10 +890,28 @@ class WorkerNode {
    * @returns {Promise<boolean>} True if batch is cancelled
    */
   async isBatchCancelled(batchId) {
+    // Check in-memory cache first (1s TTL)
+    const cached = this.cancelCache.get(batchId);
+    if (cached && Date.now() < cached.expiresAt) {
+      return cached.value;
+    }
+    // Clean up expired entry if present
+    if (cached) {
+      this.cancelCache.delete(batchId);
+    }
+    
     try {
       const cancelKey = BATCH_CANCELLED.generate(batchId);
       const result = await this.redis.executeCommand('get', cancelKey);
-      return result !== null;
+      const isCancelled = result !== null;
+      
+      // Cache result with 1s TTL
+      this.cancelCache.set(batchId, {
+        value: isCancelled,
+        expiresAt: Date.now() + 1000
+      });
+      
+      return isCancelled;
     } catch (error) {
       log.error('Error checking batch cancellation status', {
         workerId: this.workerId,

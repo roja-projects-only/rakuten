@@ -40,6 +40,9 @@ class ProxyPoolManager {
     this.redis = redisClient;
     this.proxies = this._loadProxiesFromConfig(proxies);
     this.roundRobinIndex = 0;
+    this.healthyIndicesCache = null;   // cached array of healthy indices
+    this.healthyCacheAt = 0;           // timestamp of last cache refresh
+    this.healthyCacheTTL = 2000;       // 2 second TTL
     
     log.info(`ProxyPoolManager initialized with ${this.proxies.length} proxies`);
   }
@@ -74,6 +77,7 @@ class ProxyPoolManager {
   reloadProxies() {
     const oldCount = this.proxies.length;
     this.proxies = this._loadProxiesFromConfig([]);
+    this.healthyIndicesCache = null;  // Invalidate cache on proxy list change
     log.info(`Proxies reloaded: ${oldCount} -> ${this.proxies.length}`);
   }
 
@@ -117,6 +121,11 @@ class ProxyPoolManager {
   async _getHealthyProxyIndices() {
     if (this.proxies.length === 0) return [];
     
+    // Return cached result if fresh
+    if (this.healthyIndicesCache !== null && (Date.now() - this.healthyCacheAt) < this.healthyCacheTTL) {
+      return this.healthyIndicesCache;
+    }
+    
     // Parallel health checks — sequential Redis GETs per proxy add up fast
     const results = await Promise.all(
       this.proxies.map(async (_, i) => {
@@ -126,7 +135,13 @@ class ProxyPoolManager {
       })
     );
     
-    return results.filter(r => r.healthy).map(r => r.index);
+    const healthyIndices = results.filter(r => r.healthy).map(r => r.index);
+    
+    // Cache the result
+    this.healthyIndicesCache = healthyIndices;
+    this.healthyCacheAt = Date.now();
+    
+    return healthyIndices;
   }
 
   /**
@@ -215,6 +230,7 @@ class ProxyPoolManager {
         if (health.healthy === false) {
           log.info(`Proxy ${proxyId} restored to active rotation after success`);
           health.healthy = true;
+          this.healthyIndicesCache = null;  // Invalidate cache on health transition
           
           // Log structured proxy health change
           structuredLog.logProxyHealth({
@@ -236,6 +252,7 @@ class ProxyPoolManager {
         if (health.consecutiveFailures >= 3 && health.healthy !== false) {
           log.warn(`Proxy ${proxyId} marked unhealthy after ${health.consecutiveFailures} consecutive failures`);
           health.healthy = false;
+          this.healthyIndicesCache = null;  // Invalidate cache on health transition
           
           // Log structured proxy health change
           structuredLog.logProxyHealth({

@@ -15,7 +15,8 @@
  */
 
 const { createLogger } = require('../logger');
-const { solvePow, generateRandomCres } = require('./challengeGenerator');
+const { generateRandomCres } = require('./challengeGenerator');
+const powWorkerPool = require('./powWorkerPool');
 
 const log = createLogger('pow-client');
 
@@ -187,7 +188,11 @@ class POWServiceClient {
     try {
       log.debug('Computing POW locally', params);
       
-      const result = solvePow(params);
+      const result = await powWorkerPool.solve({
+        key: params.key,
+        seed: params.seed,
+        mask: params.mask
+      });
       const cres = result.stringToHash;
       
       // Cache the result in local memory only (not Redis)
