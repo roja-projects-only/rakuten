@@ -754,8 +754,8 @@ class ProgressTracker {
         // Update local cache
         this.activeTrackers.set(batchId, data);
         
-        // Send aborted message to Telegram
-        await this.sendAbortedMessage(batchId);
+        // Send summary (not aborted) so user sees results gathered so far
+        await this.sendSummary(batchId);
         
         this.logger.info('Batch aborted', { batchId });
       }
