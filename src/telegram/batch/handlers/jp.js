@@ -92,6 +92,7 @@ function registerJpHandler(bot) {
       count: batch.count,
       skipped: batch.skipped,
       sourceMessageId: Number(msgId),
+      fileUrl: file.fileUrl,
     });
 
     const msg = escapeV2(`🇯🇵 JP Domains Mode\n`) +

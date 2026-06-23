@@ -5,7 +5,7 @@ const { checkCredentials } = require('../shared/http/checker');
 const { closeSession } = require('../shared/http/sessionManager');
 const { captureAccountData } = require('../shared/capture');
 const { registerBatchHandlers, abortActiveBatch, hasActiveBatch } = require('./batch');
-const { registerCombineHandlers, hasSession: hasCombineSession, addFileToSession, TELEGRAM_FILE_LIMIT_BYTES } = require('./combineHandler');
+const { registerCombineHandlers, hasSession: hasCombineSession, addFileToSession } = require('./combineHandler');
 const { abortCombineBatch, hasCombineBatch, getActiveCombineBatch } = require('./combineBatchRunner');
 const { registerExportHandler } = require('./exportHandler');
 const { registerConfigHandler } = require('./configHandler');
@@ -198,7 +198,12 @@ function guardInput(raw) {
  * @returns {Telegraf} Configured bot instance
  */
 async function initializeTelegramHandler(botToken, options = {}) {
-  const bot = new Telegraf(botToken);
+  const telegrafOptions = {};
+  if (options.apiRoot) {
+    telegrafOptions.telegram = { apiRoot: options.apiRoot };
+    log.info(`Using local Bot API server: ${options.apiRoot}`);
+  }
+  const bot = new Telegraf(botToken, telegrafOptions);
   const configService = getConfigService();
 
   const getRuntimeConfig = () => {

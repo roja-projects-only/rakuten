@@ -8,10 +8,12 @@ const { escapeV2, codeV2, boldV2, spoilerCodeV2, formatBytes, formatDurationMs, 
 
 /**
  * Builds file too large message.
+ * @param {number} [maxBytes] - File size limit in bytes (for dynamic limit display)
  * @returns {string} Message
  */
-function buildFileTooLarge() {
-  return escapeV2('⚠️ File too large for Telegram bot download (max ~20MB). For bigger lists, host the file and use `.ulp <url>` instead.');
+function buildFileTooLarge(maxBytes) {
+  const limitStr = maxBytes ? formatBytes(maxBytes) : '~20MB';
+  return escapeV2(`⚠️ File too large for Telegram bot download (max ${limitStr}). For bigger lists, host the file and use \`.ulp <url>\` instead.`);
 }
 
 /**

@@ -16,10 +16,9 @@ const {
 } = require('../messages');
 const { hasSession: hasCombineSession, addFileToSession, getOrCreateSession } = require('../combineHandler');
 const { setPendingFile } = require('./batchState');
+const { getTelegramFileLimitBytes } = require('../../shared/batch/constants');
 
 const log = createLogger('batch-doc');
-
-const TELEGRAM_FILE_LIMIT_BYTES = 20 * 1024 * 1024;
 
 /**
  * Registers document (file upload) handler.
@@ -35,8 +34,9 @@ function registerDocumentHandler(bot) {
 
     log.info(`File received name=${doc.file_name || 'unknown'} size=${doc.file_size || 0}`);
 
-    if (doc.file_size && doc.file_size > TELEGRAM_FILE_LIMIT_BYTES) {
-      await ctx.reply(buildFileTooLarge(), {
+    const fileLimit = getTelegramFileLimitBytes();
+    if (doc.file_size && doc.file_size > fileLimit) {
+      await ctx.reply(buildFileTooLarge(fileLimit), {
         parse_mode: 'MarkdownV2',
         reply_to_message_id: sourceMessageId,
       });
@@ -116,5 +116,4 @@ function registerDocumentHandler(bot) {
 
 module.exports = {
   registerDocumentHandler,
-  TELEGRAM_FILE_LIMIT_BYTES,
 };

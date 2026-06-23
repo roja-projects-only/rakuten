@@ -220,6 +220,41 @@ const ENV_DEFINITIONS = {
     }
   },
 
+  TELEGRAM_API_ROOT: {
+    required: false,
+    description: 'Local Telegram Bot API server URL (e.g., http://localhost:8081). Enables >20MB file downloads when set.',
+    validate: (value) => {
+      if (value && !value.startsWith('http://') && !value.startsWith('https://')) {
+        throw new Error('TELEGRAM_API_ROOT must start with http:// or https://');
+      }
+      return value;
+    }
+  },
+
+  TELEGRAM_API_ID: {
+    required: false,
+    description: 'Telegram API ID from my.telegram.org (required by local Bot API server)',
+    sensitive: true,
+    validate: (value) => {
+      if (value && !/^\d+$/.test(String(value))) {
+        throw new Error('TELEGRAM_API_ID must be numeric');
+      }
+      return value;
+    }
+  },
+
+  TELEGRAM_API_HASH: {
+    required: false,
+    description: 'Telegram API hash from my.telegram.org (required by local Bot API server)',
+    sensitive: true,
+    validate: (value) => {
+      if (value && !/^[a-f0-9]{32}$/i.test(String(value))) {
+        throw new Error('TELEGRAM_API_HASH must be a 32-character hex string');
+      }
+      return value;
+    }
+  },
+
   TARGET_LOGIN_URL: {
     required: false, // Only required in coordinator mode
     description: 'Target OAuth login URL',

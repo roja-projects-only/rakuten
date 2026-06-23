@@ -140,7 +140,8 @@ async function runDistributedBatch(ctx, batch, msgId, statusMsg, options, helper
       result.queued,
       chatId,
       statusMsg.message_id,
-      batch.filename
+      batch.filename,
+      batch.fileUrl || null
     );
     
     // Subscribe to progress updates for this batch

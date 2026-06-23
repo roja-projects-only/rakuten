@@ -95,6 +95,7 @@ function registerHotmailHandler(bot) {
       count: batch.count,
       skipped: batch.skipped,
       sourceMessageId: Number(msgId),
+      fileUrl: file.fileUrl,
     });
 
     await ctx.reply(

@@ -9,8 +9,14 @@ The Rakuten Telegram Credential Checker is a distributed system for validating R
 │   Coordinator   │    │   POW Service   │    │     Redis       │
 │  (Telegram Bot) │◄──►│ (Proof of Work) │    │ (Coordination)  │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
-         │                                              ▲
-         ▼                                              │
+        │                                              ▲
+        │                                              │
+┌───────┴─────────┐                                    │
+│ Telegram Bot API │ (optional, local server)          │
+│  (>20MB uploads) │                                    │
+└─────────────────┘                                    │
+        │                                              │
+        ▼                                              │
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
 │    Worker 1     │    │    Worker 2     │    │    Worker N     │
 │ (Credential     │    │ (Credential     │    │ (Credential     │
@@ -81,6 +87,17 @@ Configuration: `PORT` (default 3001 for local runs; Docker sets `PORT=8080` and 
 Key file: `index.js` — Single-file service with inline POWService class (worker thread pool, Redis cache).
 
 Optional Redis dependency (caching only). Does NOT own: credential checking, Telegram bot.
+
+### Telegram Bot API Server (Optional)
+**Docker image**: `aiogram/telegram-bot-api:latest`
+
+Optional local Bot API server that increases the file download limit from 20MB to 2000MB. When `TELEGRAM_API_ROOT` is set on the coordinator, the bot routes all Telegram API calls through this server instead of the cloud API.
+
+Requires `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` from https://my.telegram.org. Runs with `--local` mode (`TELEGRAM_LOCAL=1`) which enables large file downloads. The server's data directory (`/var/lib/telegram-bot-api`) is shared with the coordinator via a named volume so that `file://` URLs from `getFileLink` can be read directly from the filesystem.
+
+Configuration: `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_BOT_TOKEN` (for healthcheck), `TELEGRAM_LOCAL=1`, `TELEGRAM_HTTP_PORT=8081`.
+
+Depends on: nothing. The coordinator depends on this service when `TELEGRAM_API_ROOT` is configured.
 
 ### Shared Modules
 All live under `src/shared/`.

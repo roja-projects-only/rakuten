@@ -96,6 +96,7 @@ async function main() {
       targetUrl: configService.isInitialized()
         ? configService.get('TARGET_LOGIN_URL')
         : process.env.TARGET_LOGIN_URL,
+      apiRoot: config.TELEGRAM_API_ROOT || process.env.TELEGRAM_API_ROOT || null,
       coordinator,
     };
 

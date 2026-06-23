@@ -31,6 +31,9 @@ cd rakuten && ./scripts/deploy/quick-update.sh worker
 cd rakuten && ./scripts/deploy/quick-update.sh pow
 cd rakuten && ./scripts/deploy/quick-update.sh all
 
+# Telegram Bot API Server (optional, for >20MB file uploads)
+cd rakuten && ./scripts/deploy/quick-update.sh telegram-bot-api
+
 # Fast update — JS-only changes (~5 seconds, skips docker build)
 cd rakuten && ./scripts/deploy/quick-update.sh coordinator --fast
 cd rakuten && ./scripts/deploy/quick-update.sh worker --fast
@@ -44,6 +47,7 @@ cd rakuten && ./scripts/deploy/quick-update.sh all --fast
 node scripts/deploy/update-instance.js coordinator
 node scripts/deploy/update-instance.js worker
 node scripts/deploy/update-instance.js pow
+node scripts/deploy/update-instance.js telegram-bot-api
 node scripts/deploy/update-instance.js all
 ```
 
@@ -142,6 +146,7 @@ docker ps --filter "name=rakuten"
 docker logs -f rakuten-coordinator
 docker logs -f rakuten-worker
 docker logs -f rakuten-pow-service
+docker logs -f rakuten-telegram-bot-api
 
 # Check container stats
 docker stats --filter "name=rakuten"
@@ -174,10 +179,10 @@ docker image prune -f
 
 ```bash
 # Stop all
-docker stop rakuten-coordinator rakuten-worker rakuten-pow-service
+docker stop rakuten-coordinator rakuten-worker rakuten-pow-service rakuten-telegram-bot-api
 
 # Remove all
-docker rm -f rakuten-coordinator rakuten-worker rakuten-pow-service
+docker rm -f rakuten-coordinator rakuten-worker rakuten-pow-service rakuten-telegram-bot-api
 
 # Rebuild and start
 ./scripts/deploy/quick-update.sh all

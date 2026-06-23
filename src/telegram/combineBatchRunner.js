@@ -193,6 +193,7 @@ async function runCombineBatch(ctx, batch, options, helpers, checkCredentials) {
     skipped,
     aborted: false,
     processed: 0,
+    fileUrls: batch.fileUrls || null,
   };
   
   // Create promise to track batch completion
@@ -407,6 +408,12 @@ async function runCombineBatch(ctx, batch, options, helpers, checkCredentials) {
     } finally {
       // Flush any buffered Redis writes before completing
       await flushWriteBuffer().catch(() => {});
+      
+      // Delete source files from the Bot API server's filesystem (local mode only)
+      if (batchData.fileUrls) {
+        const { cleanupLocalFiles } = require('../../shared/batch/fileCleanup');
+        await cleanupLocalFiles(batchData.fileUrls).catch(() => {});
+      }
       
       activeCombineBatches.delete(chatId);
       batchCompleteResolve(); // Signal batch completion

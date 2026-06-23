@@ -37,7 +37,7 @@ class ProgressTracker {
    * @param {string} filename - Batch filename for display
    * @returns {Promise<void>}
    */
-  async initBatch(batchId, totalTasks, chatId, messageId, filename = null) {
+  async initBatch(batchId, totalTasks, chatId, messageId, filename = null, fileUrl = null) {
     const progressData = {
       batchId,
       total: totalTasks,
@@ -45,6 +45,7 @@ class ProgressTracker {
       chatId,
       messageId,
       filename: filename || `batch-${batchId}`,
+      fileUrl,
       startTime: Date.now(),
       counts: { VALID: 0, INVALID: 0, BLOCKED: 0, ERROR: 0 },
       validCreds: []
@@ -507,6 +508,15 @@ class ProgressTracker {
         stack: error.stack
       });
     } finally {
+      // Delete the source file(s) from the Bot API server's filesystem (local mode only)
+      if (progressData && progressData.fileUrl) {
+        const { cleanupLocalFile, cleanupLocalFiles } = require('../shared/batch/fileCleanup');
+        if (Array.isArray(progressData.fileUrl)) {
+          await cleanupLocalFiles(progressData.fileUrl).catch(() => {});
+        } else {
+          await cleanupLocalFile(progressData.fileUrl).catch(() => {});
+        }
+      }
       // Always clean up to stop further progress polling even if Telegram returns 429
       await this._cleanupSilently(batchId, 'sendSummary:finalize');
     }
@@ -838,6 +848,15 @@ class ProgressTracker {
         error: error.message
       });
     } finally {
+      // Delete the source file(s) from the Bot API server's filesystem (local mode only)
+      if (progressData && progressData.fileUrl) {
+        const { cleanupLocalFile, cleanupLocalFiles } = require('../shared/batch/fileCleanup');
+        if (Array.isArray(progressData.fileUrl)) {
+          await cleanupLocalFiles(progressData.fileUrl).catch(() => {});
+        } else {
+          await cleanupLocalFile(progressData.fileUrl).catch(() => {});
+        }
+      }
       await this._cleanupSilently(batchId, 'sendAborted:finalize');
     }
   }

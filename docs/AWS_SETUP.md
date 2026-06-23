@@ -557,6 +557,70 @@ curl http://POW_PRIVATE_IP:8080/health
 
 ---
 
+## Telegram Bot API Server (Optional — >20MB File Uploads)
+
+The local Telegram Bot API server increases the file download limit from 20MB to 2000MB. This is optional — without it, the bot works normally with the 20MB cloud API limit.
+
+### Prerequisites
+
+1. Go to https://my.telegram.org and log in with your Telegram account
+2. Go to "API development tools" and create an application
+3. Note down your `api_id` and `api_hash`
+
+### Setup
+
+Add these variables to your `.env.coordinator` file:
+
+```bash
+TELEGRAM_API_ROOT=http://localhost:8081
+TELEGRAM_API_ID=your_api_id
+TELEGRAM_API_HASH=your_api_hash
+```
+
+> **Note**: All three variables go in `.env.coordinator`. There is no separate env file for the Bot API server — it shares the coordinator's env file.
+
+### Deploy the Bot API Server
+
+The `telegram-bot-api` service is included in `docker-compose.yml` and `quick-update.sh`:
+
+```bash
+# Using quick-update.sh
+./scripts/deploy/quick-update.sh telegram-bot-api
+
+# Or using docker-compose
+docker compose -f deployment/docker/docker-compose.yml up -d telegram-bot-api
+```
+
+The Bot API server:
+- Uses the `aiogram/telegram-bot-api:latest` Docker image
+- Runs with `--local` mode (enables >20MB downloads and >50MB uploads)
+- Listens on port 8081
+- Stores files in a shared Docker volume (`telegram-bot-api-data`) at `/var/lib/telegram-bot-api`
+- The coordinator container mounts this volume so it can read `file://` URLs
+
+### File Cleanup
+
+Downloaded files are automatically deleted from the Bot API server's filesystem after each batch completes (both normal completion and abort). No manual cleanup or sidecar container is needed.
+
+### Verify
+
+```bash
+# Check the Bot API server is running
+docker ps --filter name=rakuten-telegram-bot-api
+
+# Check logs
+docker logs -f rakuten-telegram-bot-api
+
+# Test the API endpoint
+curl http://localhost:8081/bot$TELEGRAM_BOT_TOKEN/getMe
+```
+
+### Without the Bot API Server
+
+If you don't set `TELEGRAM_API_ROOT`, the bot uses the cloud Telegram API with a 20MB file download limit. Files larger than 20MB will be rejected with a message suggesting `.ulp <url>` as an alternative.
+
+---
+
 ## Updating Code
 
 The repo includes a **quick-update script** that automates the `git pull` → `docker stop`/`rm` → `docker build` → `docker run` cycle on each EC2 instance (full mode), or a `docker cp` → `docker commit` → container recreate (`--fast` mode).

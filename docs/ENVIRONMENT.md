@@ -57,6 +57,9 @@ The system supports three services, each with its own entrypoint under `src/`:
 | `PROXY_HEALTH_CHECK_INTERVAL` | No | `30000` | Proxy health-check interval (ms) |
 | `PROCESSED_TTL_MS` | No | `2592000000` | Cache TTL (30 days) |
 | `FORWARD_TTL_MS` | No | `2592000000` | Forward tracking TTL (30 days) |
+| `TELEGRAM_API_ROOT` | No | — | Local Bot API server URL (e.g., `http://localhost:8081`). When set, enables file downloads up to 2000MB instead of the 20MB cloud API limit |
+| `TELEGRAM_API_ID` | No | — | Telegram API ID from my.telegram.org (for local Bot API server) |
+| `TELEGRAM_API_HASH` | No | — | Telegram API hash from my.telegram.org (for local Bot API server) |
 
 ### Worker
 
@@ -99,6 +102,16 @@ POW_SERVICE_URL=http://pow-service:3001
 FORWARD_CHANNEL_ID=-1001234567890
 METRICS_PORT=9090
 ```
+
+### Local Bot API Server (Optional)
+
+To increase the file download limit from 20MB to 2000MB, run a local [Telegram Bot API server](https://github.com/tdlib/telegram-bot-api) with `--local` mode:
+
+1. Obtain `api_id` and `api_hash` from https://my.telegram.org
+2. Add `TELEGRAM_API_ROOT`, `TELEGRAM_API_ID`, and `TELEGRAM_API_HASH` to `.env.coordinator` (all three go in the coordinator env file — the Bot API server container shares it)
+3. Mount the Bot API server's data directory (`/var/lib/telegram-bot-api`) into the coordinator container (handled automatically by docker-compose and quick-update.sh)
+
+When `TELEGRAM_API_ROOT` is set, the bot uses the local server for all Telegram API calls, and the file size limit is automatically raised from 20MB to 2000MB. Downloaded files are automatically deleted from the Bot API server's filesystem after each batch completes.
 
 ### Worker
 
@@ -151,6 +164,8 @@ Common validation errors and solutions:
 These variables contain sensitive information and should be secured:
 
 - `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_API_ID`
+- `TELEGRAM_API_HASH`
 - `REDIS_PASSWORD`
 - `REDIS_URL` (if contains password)
 

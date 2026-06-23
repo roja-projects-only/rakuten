@@ -1,7 +1,10 @@
+const fs = require('fs').promises;
+const { fileURLToPath } = require('url');
 const { Markup } = require('telegraf');
 const { parseColonCredential, isAllowedHotmailUser } = require('../shared/batch/parse');
 const { createLogger } = require('../shared/logger');
 const { generateBatchId } = require('../shared/redis/keys');
+const { getTelegramFileLimitBytes } = require('../shared/batch/constants');
 const {
   escapeV2,
   codeV2,
@@ -21,8 +24,7 @@ const SESSION_TTL_MS = 30 * 60 * 1000;
 // Max files per session
 const MAX_FILES = 20;
 
-// Telegram file limit
-const TELEGRAM_FILE_LIMIT_BYTES = 20 * 1024 * 1024;
+
 
 /**
  * Creates or retrieves a combine session for a chat
@@ -255,17 +257,33 @@ async function processSessionFiles(ctx, session) {
   
   for (const file of session.files) {
     try {
-      const response = await fetch(file.fileUrl);
-      if (!response.ok) {
-        log.warn(`Failed to download file: ${file.filename}`);
-        continue;
+      let text;
+      if (file.fileUrl.startsWith('file://')) {
+        const filePath = fileURLToPath(file.fileUrl);
+        const stat = await fs.stat(filePath);
+        if (stat.size > getTelegramFileLimitBytes()) {
+          log.warn(`File too large, skipping: ${file.filename}`);
+          continue;
+        }
+        const buffer = await fs.readFile(filePath);
+        text = buffer.toString('utf8');
+      } else {
+        const response = await fetch(file.fileUrl);
+        if (!response.ok) {
+          log.warn(`Failed to download file: ${file.filename}`);
+          continue;
+        }
+        text = await response.text();
       }
-      const text = await response.text();
       const creds = parseCredentialsFromText(text);
       allCreds.push(...creds);
       log.debug(`Parsed ${creds.length} credentials from ${file.filename}`);
     } catch (err) {
-      log.warn(`Error processing file ${file.filename}: ${err.message}`);
+      if (err.code === 'ENOENT') {
+        log.warn(`File not found: ${file.filename} - ${err.message}. If running outside Docker, ensure the Bot API data volume is mounted.`);
+      } else {
+        log.warn(`Error processing file ${file.filename}: ${err.message}`);
+      }
     }
   }
   
@@ -429,6 +447,7 @@ function registerCombineHandlers(bot, options, helpers) {
       type,
       count: filtered.length,
       filename: `combined_${session.files.length}_files`,
+      fileUrls: session.files.map(f => f.fileUrl).filter(Boolean),
     };
     
     const typeEmoji = { hotmail: '📧', ulp: '📄', jp: '🇯🇵', all: '📋' };
@@ -549,7 +568,8 @@ function registerCombineHandlers(bot, options, helpers) {
           result.queued,
           chatId,
           statusMsg.message_id,
-          batch.filename
+          batch.filename,
+          batch.fileUrls || null
         );
         coordinator.progressTracker.startTracking(batchId, batch.filename);
       } else {
@@ -643,5 +663,4 @@ module.exports = {
   addFileToSession,
   clearSession,
   getOrCreateSession,
-  TELEGRAM_FILE_LIMIT_BYTES,
 };

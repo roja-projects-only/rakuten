@@ -1,8 +1,20 @@
+const fs = require('fs').promises;
+const { fileURLToPath } = require('url');
 const { MAX_BYTES_HOTMAIL } = require('./constants');
 const { parseColonCredential, isAllowedHotmailUser } = require('./parse');
 const { getWithRedirect } = require('./http');
 
-function downloadFileToBuffer(url, maxBytes = MAX_BYTES_HOTMAIL) {
+async function downloadFileToBuffer(url, maxBytes = MAX_BYTES_HOTMAIL) {
+  // Local Bot API server returns file:// URLs for files on its filesystem
+  if (url.startsWith('file://')) {
+    const filePath = fileURLToPath(url);
+    const stat = await fs.stat(filePath);
+    if (stat.size > maxBytes) {
+      throw new Error('File exceeds max allowed size');
+    }
+    return fs.readFile(filePath);
+  }
+
   return new Promise((resolve, reject) => {
     const chunks = [];
     let total = 0;

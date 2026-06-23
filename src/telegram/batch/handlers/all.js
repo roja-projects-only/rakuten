@@ -92,6 +92,7 @@ function registerAllHandler(bot) {
       count: batch.count,
       skipped: batch.skipped,
       sourceMessageId: Number(msgId),
+      fileUrl: file.fileUrl,
     });
 
     const msg = escapeV2(`📋 ALL Mode (no filter)\n`) +
