@@ -108,6 +108,10 @@ async function main() {
     if (coordinator.progressTracker) {
       coordinator.progressTracker.telegram = bot.telegram;
     }
+    // Also wire into channel forwarder (created before telegram was available)
+    if (coordinator.channelForwarder) {
+      coordinator.channelForwarder.telegram = bot.telegram;
+    }
 
     // 6. Start coordinator services (heartbeats, pub/sub, metrics, crash recovery)
     await coordinator.start();
