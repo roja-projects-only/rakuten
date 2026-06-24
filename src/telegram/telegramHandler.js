@@ -10,6 +10,7 @@ const { abortCombineBatch, hasCombineBatch, getActiveCombineBatch } = require('.
 const { registerExportHandler } = require('./exportHandler');
 const { registerConfigHandler } = require('./configHandler');
 const { registerStatusHandler } = require('./statusHandler');
+const { registerForwardActionHandler } = require('./forwardActionHandler');
 const { forwardValidToChannel, handleCredentialStatusChange } = require('./channelForwarder');
 const { getRedisClient, initProcessedStore } = require('../shared/batch/processedStore');
 const { getConfigService } = require('../shared/config/configService');
@@ -656,6 +657,9 @@ async function initializeTelegramHandler(botToken, options = {}) {
     }
   });
 
+  // Register forward action handler (forwarded success message detection + actions)
+  registerForwardActionHandler(bot, options);
+
   // Clear any stale webhook before polling — if a webhook was previously
   // set on this bot token, Telegram won't deliver updates via long polling.
   try {
@@ -684,4 +688,5 @@ module.exports = {
   isValidEmail,
   parseAllowedUserIds,
   isUserAllowed,
+  maskProxyUrl,
 };

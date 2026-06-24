@@ -20,6 +20,7 @@ const static_ = require('./static');
 const checkMessages = require('./checkMessages');
 const captureMessages = require('./captureMessages');
 const batchMessages = require('./batchMessages');
+const forwardActionMessages = require('./forwardActionMessages');
 
 module.exports = {
   // Helpers
@@ -36,4 +37,7 @@ module.exports = {
   
   // Batch messages
   ...batchMessages,
+
+  // Forward action messages
+  ...forwardActionMessages,
 };
