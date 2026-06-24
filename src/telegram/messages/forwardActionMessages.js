@@ -198,8 +198,8 @@ function buildAddressChangeForm(name, nameKana) {
 
   const parts = [];
 
-  parts.push('お届け先変更の理由：');
-  parts.push(reason);
+  parts.push(`お届け先変更の理由：${reason}`);
+  parts.push('');
   parts.push('・変更後のお届け先に関する情報');
   parts.push(`氏名（漢字、フリガナ）：${nameDisplay}`);
   parts.push(`郵便番号：${DESTINATION_POSTAL_CODE}`);
