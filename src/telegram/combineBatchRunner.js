@@ -251,6 +251,7 @@ async function runCombineBatch(ctx, batch, options, helpers, checkCredentials) {
     try {
       await ctx.telegram.editMessageText(chatId, statusMsg.message_id, undefined, text, {
         parse_mode: 'MarkdownV2',
+        ...Markup.inlineKeyboard([[Markup.button.callback('⏹ Stop', `combine_abort_${chatId}`)]]),
       });
     } catch (err) {
       if (!err.message?.includes('message is not modified')) {
@@ -390,6 +391,7 @@ async function runCombineBatch(ctx, batch, options, helpers, checkCredentials) {
     try {
       await ctx.telegram.editMessageText(chatId, statusMsg.message_id, undefined, summary, {
         parse_mode: 'MarkdownV2',
+        ...Markup.inlineKeyboard([]),
       });
     } catch (err) {
       log.warn('Summary edit failed:', err.message);

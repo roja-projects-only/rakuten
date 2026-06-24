@@ -356,6 +356,50 @@ async function initializeTelegramHandler(botToken, options = {}) {
     await ctx.reply(escapeV2('⚠️ No active batch or combine session to stop.'), { parse_mode: 'MarkdownV2' });
   });
 
+  // Handle batch_stop button callback (persistent stop button on batch progress)
+  bot.action(/batch_stop_(.+)/, async (ctx) => {
+    try {
+      await ctx.answerCbQuery('Stopping batch...');
+    } catch (err) {
+      log.warn(`answerCbQuery failed (batch_stop): ${err.message}`);
+    }
+
+    const batchId = ctx.match[1];
+
+    // Coordinator distributed batch
+    if (options.coordinator) {
+      try {
+        const cancelResult = await options.coordinator.cancelBatch(batchId);
+        await options.coordinator.progressTracker.abortBatch(batchId);
+
+        const details = cancelResult.drained > 0 || cancelResult.leasesCleared > 0
+          ? ` (cleared ${cancelResult.drained} queued, ${cancelResult.leasesCleared} in-progress)`
+          : '';
+        log.info(`[batch_stop] cancelled batch ${batchId}`, cancelResult);
+
+        // Edit the progress message to show "stopping..." state
+        try {
+          await ctx.telegram.editMessageText(
+            ctx.chat?.id,
+            ctx.update?.callback_query?.message?.message_id,
+            undefined,
+            escapeV2(`⏹ Stopping batch ${batchId}${details}...`),
+            { parse_mode: 'MarkdownV2', ...Markup.inlineKeyboard([]) }
+          );
+        } catch (editErr) {
+          log.debug(`[batch_stop] edit failed: ${editErr.message}`);
+        }
+      } catch (err) {
+        log.error(`[batch_stop] failed: ${err.message}`);
+        try {
+          await ctx.reply(escapeV2(`❌ Failed to stop batch: ${err.message}`), {
+            parse_mode: 'MarkdownV2',
+          });
+        } catch (_) {}
+      }
+    }
+  });
+
   // Handle .proxy command - show proxy configuration status
   bot.hears(/^\.proxy$/i, async (ctx) => {
     const runtimeConfig = getRuntimeConfig();

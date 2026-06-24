@@ -138,6 +138,13 @@ function registerForwardActionHandler(bot, options = {}) {
       log.warn(`answerCbQuery failed (fwd_recheck): ${err.message}`);
     }
 
+    // Delete the prompt message (with buttons)
+    try {
+      await ctx.deleteMessage();
+    } catch (err) {
+      log.warn(`deleteMessage failed (fwd_recheck): ${err.message}`);
+    }
+
     const actionId = ctx.match[1];
 
     // Defer long work to avoid Telegraf timeout
@@ -299,6 +306,13 @@ function registerForwardActionHandler(bot, options = {}) {
       await ctx.answerCbQuery('Generating address form...');
     } catch (err) {
       log.warn(`answerCbQuery failed (fwd_addrfill): ${err.message}`);
+    }
+
+    // Delete the prompt message (with buttons)
+    try {
+      await ctx.deleteMessage();
+    } catch (err) {
+      log.warn(`deleteMessage failed (fwd_addrfill): ${err.message}`);
     }
 
     const actionId = ctx.match[1];

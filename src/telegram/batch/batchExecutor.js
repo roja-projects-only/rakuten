@@ -13,6 +13,7 @@
  */
 
 const { createLogger } = require('../../shared/logger');
+const { Markup } = require('telegraf');
 const {
   makeKey,
   markProcessedStatus,
@@ -130,6 +131,7 @@ async function runDistributedBatch(ctx, batch, msgId, statusMsg, options, helper
     
     await ctx.telegram.editMessageText(chatId, statusMsg.message_id, undefined, text, {
       parse_mode: 'MarkdownV2',
+      ...Markup.inlineKeyboard([[Markup.button.callback('⏹ Stop', `batch_stop_${batchId}`)]]),
     });
     
     log.info(`Batch queued successfully: ${batchId}`);

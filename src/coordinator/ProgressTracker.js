@@ -95,6 +95,18 @@ class ProgressTracker {
   }
 
   /**
+   * Build inline keyboard with a stop button for the batch progress message.
+   * @param {string} batchId - Batch identifier
+   * @returns {Object} Markup object with reply_markup property
+   */
+  _stopKeyboard(batchId) {
+    const { Markup } = require('../telegram/messages/helpers');
+    return Markup.inlineKeyboard([
+      [Markup.button.callback('⏹ Stop', `batch_stop_${batchId}`)],
+    ]);
+  }
+
+  /**
    * Get progress data for a batch
    * @param {string} batchId - Batch identifier
    * @returns {Promise<Object|null>} Progress data or null if not found
@@ -244,7 +256,7 @@ class ProgressTracker {
           progressData.messageId,
           undefined,
           progressMessage,
-          { parse_mode: 'MarkdownV2' }
+          { parse_mode: 'MarkdownV2', ...this._stopKeyboard(batchId) }
         );
         
         this.logger.debug('Progress message updated successfully', { batchId });
@@ -486,13 +498,14 @@ class ProgressTracker {
         validCreds
       });
       
-      // Edit the progress message to show final summary
+      // Edit the progress message to show final summary (remove stop button)
+      const { Markup } = require('../telegram/messages/helpers');
       await this.telegram.editMessageText(
         progressData.chatId,
         progressData.messageId,
         undefined,
         summaryMessage,
-        { parse_mode: 'MarkdownV2' }
+        { parse_mode: 'MarkdownV2', ...Markup.inlineKeyboard([]) }
       );
       
       // Unpin the progress message
@@ -838,13 +851,14 @@ class ProgressTracker {
         validCreds
       });
       
-      // Edit the progress message to show aborted status
+      // Edit the progress message to show aborted status (remove stop button)
+      const { Markup } = require('../telegram/messages/helpers');
       await this.telegram.editMessageText(
         progressData.chatId,
         progressData.messageId,
         undefined,
         abortedMessage,
-        { parse_mode: 'MarkdownV2' }
+        { parse_mode: 'MarkdownV2', ...Markup.inlineKeyboard([]) }
       );
       
       // Unpin the progress message
