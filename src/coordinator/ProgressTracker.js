@@ -457,6 +457,15 @@ class ProgressTracker {
         return;
       }
 
+      // If batch was aborted, skip the summary — sendAbortedMessage already
+      // showed the final state. This prevents a race where a progress update
+      // sees completed >= total between cancelBatch and abortBatch.
+      if (progressData.aborted) {
+        this.logger.debug('Skipping summary - batch was aborted', { batchId });
+        await this._cleanupSilently(batchId, 'sendSummary:aborted');
+        return;
+      }
+
       // If Telegram client is not ready (e.g., during crash recovery), skip edits but still clean up
       if (!this.telegram) {
         this.logger.warn('Telegram client unavailable during sendSummary, skipping edit', { batchId });

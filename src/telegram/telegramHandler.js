@@ -369,26 +369,16 @@ async function initializeTelegramHandler(botToken, options = {}) {
     // Coordinator distributed batch
     if (options.coordinator) {
       try {
-        const cancelResult = await options.coordinator.cancelBatch(batchId);
+        // Abort FIRST — sets aborted flag in Redis so handleProgressUpdate/sendSummary
+        // won't race us with a summary edit. sendAbortedMessage edits the progress
+        // message to the "stopped" state. Then cancelBatch drains the queue.
         await options.coordinator.progressTracker.abortBatch(batchId);
+        const cancelResult = await options.coordinator.cancelBatch(batchId);
 
         const details = cancelResult.drained > 0 || cancelResult.leasesCleared > 0
           ? ` (cleared ${cancelResult.drained} queued, ${cancelResult.leasesCleared} in-progress)`
           : '';
-        log.info(`[batch_stop] cancelled batch ${batchId}`, cancelResult);
-
-        // Edit the progress message to show "stopping..." state
-        try {
-          await ctx.telegram.editMessageText(
-            ctx.chat?.id,
-            ctx.update?.callback_query?.message?.message_id,
-            undefined,
-            escapeV2(`⏹ Stopping batch ${batchId}${details}...`),
-            { parse_mode: 'MarkdownV2', ...Markup.inlineKeyboard([]) }
-          );
-        } catch (editErr) {
-          log.debug(`[batch_stop] edit failed: ${editErr.message}`);
-        }
+        log.info(`[batch_stop] cancelled batch ${batchId}${details}`, cancelResult);
       } catch (err) {
         log.error(`[batch_stop] failed: ${err.message}`);
         try {
