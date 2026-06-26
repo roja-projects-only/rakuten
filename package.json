@@ -55,5 +55,8 @@
   },
   "optionalDependencies": {
     "murmurhash-native": "^3.5.1"
+  },
+  "devDependencies": {
+    "firecrawl": "^4.28.3"
   }
 }
