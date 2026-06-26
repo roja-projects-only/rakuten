@@ -11,17 +11,13 @@ const log = createLogger('firecrawl:extract');
 // Constants
 // ---------------------------------------------------------------------------
 
-/** API-like path fragments (lowercase, checked via .includes()) */
-const API_PATH_PATTERNS = [
-  '/api/', '/rest/', '/v1/', '/v2/', '/v3/',
-  '/service/', '/gateway/', '/ichiba/', '/user/',
-  '/cart/', '/order/', '/product/', '/search/',
-  '/auth/', '/sso/', '/login/', '/account/',
-  '/payment/', '/shipping/', '/graphql',
-];
+
 
 /** Subdomain prefixes that identify API hosts */
-const API_SUBDOMAIN_PATTERNS = ['api.', 'gateway.', 'token.', 'challenger.'];
+const API_SUBDOMAIN_PATTERNS = ['api.', 'gateway.', 'webservice.', 'token.', 'challenger.'];
+
+/** Hosts that match an API subdomain pattern but are NOT API endpoints (exclusion list). */
+const API_HOST_EXCLUSIONS = ['webservice.faq.rakuten.net'];
 
 /** File extensions that are definitely not API endpoints */
 const STATIC_EXT_RE = /\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2)([?#]|$)/i;
@@ -55,11 +51,20 @@ const GROUP_ORDER = [
 // ---------------------------------------------------------------------------
 
 /**
- * Check if a URL looks like an API endpoint.
+ * Check if a URL looks like an API endpoint using a two-stage filter.
  *
- * Matches common API path fragments (/api/, /v1/, /graphql, etc.) and
- * subdomain indicators (api., gateway., etc.).  Excludes static assets
- * (.js, .css, .png, etc.).
+ * Stage 1 (host): If the hostname starts with a known API subdomain
+ *   (api., gateway., webservice., token., challenger.), the URL passes
+ *   regardless of path structure. This catches real Rakuten APIs like
+ *   webservice.rakuten.co.jp/explorer/api/IchibaItem/Search whose path
+ *   does NOT start with /api/.
+ *
+ * Stage 2 (path): If the host is NOT API-known, require the pathname
+ *   to START WITH an API prefix (/api/, /rest/, /v1/, /v2/, /v3/,
+ *   /graphql). Mid-path substring matches are rejected (prevents
+ *   search.rakuten.co.jp/search/mall/api/551169 false positives).
+ *
+ * Static asset extensions (.js, .css, .png, etc.) are always excluded.
  *
  * @param {string} url - The URL to inspect.
  * @returns {boolean} `true` if the URL appears to be an API endpoint.
@@ -73,22 +78,22 @@ function isApiLike(url) {
     // Exclude static asset extensions
     if (STATIC_EXT_RE.test(pathname)) return false;
 
-    // Check pathname fragments.
-    // For patterns ending in '/' (e.g. /login/, /search/), also match
-    // the bare path (e.g. /login, /search) since those are also valid
-    // API endpoints.
-    for (const pattern of API_PATH_PATTERNS) {
-      if (pathname.includes(pattern)) return true;
-      if (pattern.endsWith('/')) {
-        const prefix = pattern.slice(0, -1);
-        if (pathname === prefix) return true;
-        if (pathname.startsWith(prefix + '/')) return true;
-      }
-    }
+    // Exclude known non-API hosts that match subdomain patterns (e.g. FAQ help centers)
+    if (API_HOST_EXCLUSIONS.includes(hostname)) return false;
 
-    // Check subdomain patterns
+    // Stage 1: API-known host passes regardless of path
     for (const pattern of API_SUBDOMAIN_PATTERNS) {
       if (hostname.startsWith(pattern) || hostname.includes('.' + pattern)) return true;
+    }
+
+    // Stage 2: non-API-known host must be a Rakuten domain AND have an API-like path prefix
+    if (!hostname.endsWith('.rakuten.co.jp') && !hostname.endsWith('.rakuten.com') && !hostname.endsWith('.rakuten.ne.jp')) {
+      return false;
+    }
+
+    const API_PREFIXES = ['/api/', '/rest/', '/v1/', '/v2/', '/v3/', '/graphql'];
+    for (const prefix of API_PREFIXES) {
+      if (pathname === prefix.replace(/\/$/, '') || pathname.startsWith(prefix)) return true;
     }
 
     return false;
@@ -111,6 +116,11 @@ function isApiLike(url) {
  */
 function normalizeUrl(urlStr, baseUrl) {
   if (!urlStr || (typeof urlStr === 'string' && !urlStr.trim())) return null;
+  // Reject template placeholders (e.g. {{destination}}, %7B%7B...%7D%7D)
+  if (urlStr.includes('{{') || urlStr.includes('%7B%7B')) return null;
+  // Reject regex extraction artifacts: unencoded parentheses are not valid in
+  // real API URL paths (e.g. "app.request.attributes.get(" from JS source).
+  if (urlStr.includes('(') || urlStr.includes(')')) return null;
   try {
     const u = new URL(urlStr, baseUrl);
 
@@ -231,6 +241,9 @@ function extractFromText(text, sourceLabel, baseUrl) {
       let u;
       try { u = new URL(normalized); } catch { continue; }
 
+      // Skip root-path inferred endpoints (navigation, not API calls)
+      if (u.pathname === '/' && pattern.inferred) continue;
+
       seen.set(key, {
         method: method.toUpperCase(),
         path: u.pathname,
@@ -284,11 +297,11 @@ function extractEndpoints(scrapeResult) {
     const normalized = normalizeUrl(link.url, baseUrl);
     if (!normalized) continue;
 
-    const key = normalized.toLowerCase();
-    if (dedup.has(key)) continue;
-
     let u;
     try { u = new URL(normalized); } catch { continue; }
+
+    const key = (`GET ${u.pathname}`).toLowerCase();
+    if (dedup.has(key)) continue;
 
     dedup.set(key, {
       method: 'GET',
@@ -308,7 +321,7 @@ function extractEndpoints(scrapeResult) {
       baseUrl,
     );
     for (const ep of rawEndpoints) {
-      const key = ep.fullUrl.toLowerCase();
+      const key = (ep.method.toUpperCase() + ' ' + ep.path).toLowerCase();
       if (!dedup.has(key)) {
         dedup.set(key, ep);
       }
@@ -323,14 +336,16 @@ function extractEndpoints(scrapeResult) {
       baseUrl,
     );
     for (const ep of htmlEndpoints) {
-      const key = ep.fullUrl.toLowerCase();
+      const key = (ep.method.toUpperCase() + ' ' + ep.path).toLowerCase();
       if (!dedup.has(key)) {
         dedup.set(key, ep);
       }
     }
   }
 
-  return Array.from(dedup.values());
+  // Filter all collected endpoints through isApiLike (catches regex-extracted non-API URLs)
+  const allEndpoints = Array.from(dedup.values());
+  return allEndpoints.filter((ep) => isApiLike(ep.fullUrl));
 }
 
 /**

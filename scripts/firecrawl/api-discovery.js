@@ -20,6 +20,7 @@ const {
   groupEndpoints,
   formatEndpointsMd,
   isApiLike,
+  normalizeUrl,
 } = require('../../src/firecrawl/extract');
 const {
   loadProgress,
@@ -56,13 +57,15 @@ function urlToSlug(urlStr) {
 
 const args = process.argv.slice(2);
 
-/** @type {{ dryRun: boolean, relogin: boolean, batchSize: number, reloginIntervalMin: number, saveFailures: boolean }} */
+/** @type {{ dryRun: boolean, relogin: boolean, batchSize: number, reloginIntervalMin: number, saveFailures: boolean, maxPages: number, maxQueue: number }} */
 const cli = {
   dryRun: false,
   relogin: false,
   batchSize: 20,
   reloginIntervalMin: 10,
   saveFailures: false,
+  maxPages: 500,
+  maxQueue: 2000,
 };
 
 for (let i = 0; i < args.length; i++) {
@@ -89,6 +92,22 @@ for (let i = 0; i < args.length; i++) {
     }
   } else if (arg === '--save-failures') {
     cli.saveFailures = true;
+  } else if (arg === '--max-pages' && i + 1 < args.length) {
+    const parsed = parseInt(args[++i], 10);
+    if (isNaN(parsed) || parsed < 1) {
+      console.error(`Warning: invalid --max-pages value "${args[i]}", using default 500`);
+      cli.maxPages = 500;
+    } else {
+      cli.maxPages = parsed;
+    }
+  } else if (arg === '--max-queue' && i + 1 < args.length) {
+    const parsed = parseInt(args[++i], 10);
+    if (isNaN(parsed) || parsed < 1) {
+      console.error(`Warning: invalid --max-queue value "${args[i]}", using default 2000`);
+      cli.maxQueue = 2000;
+    } else {
+      cli.maxQueue = parsed;
+    }
   } else if (arg.startsWith('--')) {
     console.error(`Warning: unknown flag "${arg}" — ignored`);
   }
@@ -101,11 +120,12 @@ if (cli.dryRun) {
   const TEST_EMAIL = process.env.TEST_EMAIL || '';
   const TEST_PASSWORD = process.env.TEST_PASSWORD || '';
 
+  const SITE_URL_DRY = process.env.TARGET_SITE_URL || 'https://www.rakuten.co.jp';
   let baseUrl = '';
   try {
-    baseUrl = new URL(TARGET_LOGIN_URL).origin;
+    baseUrl = new URL(SITE_URL_DRY).origin;
   } catch {
-    baseUrl = '(unable to parse TARGET_LOGIN_URL)';
+    baseUrl = '(unable to parse TARGET_SITE_URL)';
   }
 
   const publicSeedUrls = [
@@ -115,28 +135,13 @@ if (cli.dryRun) {
   ];
 
   const authedSeedUrls = [
-    'https://cart.rakuten.co.jp/',
     'https://my.rakuten.co.jp/',
-    'https://order.rakuten.co.jp/',
-  ];
-
-  const knownApiPatterns = [
-    'https://www.rakuten.co.jp/api/',
-    'https://www.rakuten.co.jp/rest/',
-    'https://www.rakuten.co.jp/v1/',
-    'https://www.rakuten.co.jp/v2/',
-    'https://www.rakuten.co.jp/service/',
-    'https://www.rakuten.co.jp/gateway/',
-    'https://www.rakuten.co.jp/ichiba/',
-    'https://www.rakuten.co.jp/user/',
-    'https://www.rakuten.co.jp/cart/',
-    'https://www.rakuten.co.jp/order/',
-    'https://www.rakuten.co.jp/product/',
-    'https://www.rakuten.co.jp/search/',
-    'https://www.rakuten.co.jp/auth/',
+    'https://checkout.rakuten.co.jp/',
+    'https://member.id.rakuten.co.jp/',
   ];
 
   const knownApiHosts = [
+    'https://webservice.rakuten.co.jp/explorer/api/',
     'https://login.account.rakuten.com/v2/login/start',
     'https://login.account.rakuten.com/v2/login/complete',
     'https://login.account.rakuten.com/util/gc',
@@ -153,6 +158,8 @@ if (cli.dryRun) {
   console.log(`  Batch size:           ${cli.batchSize}`);
   console.log(`  Re-login interval:    ${cli.reloginIntervalMin} min`);
   console.log(`  Save failures:        ${cli.saveFailures ? 'YES' : 'no'}`);
+  console.log(`  Max pages:           ${cli.maxPages}`);
+  console.log(`  Max queue:           ${cli.maxQueue}`);
   console.log(`  Force re-login:       ${cli.relogin ? 'YES' : 'no'}`);
   console.log(`  Auth mode:            HTTP (checkCredentials + impit)`);
   console.log(`  Location:             ${config.location.country} [${config.location.languages.join(', ')}]`);
@@ -168,10 +175,6 @@ if (cli.dryRun) {
   for (const url of authedSeedUrls) {
     console.log(`    - ${url}`);
   }
-  console.log('  Known API path patterns:');
-  for (const url of knownApiPatterns) {
-    console.log(`    - ${url}`);
-  }
   console.log('  Known API hosts:');
   for (const url of knownApiHosts) {
     console.log(`    - ${url}`);
@@ -181,6 +184,10 @@ if (cli.dryRun) {
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────
+
+// Live HTTP session — declared outside try so the finally block can close it.
+/** @type {object|null} */
+let session = null;
 
 (async () => {
   try {
@@ -206,12 +213,15 @@ if (cli.dryRun) {
       process.exitCode = 1; return;
     }
 
-    // Derive base URL from login URL
+    // Derive base URL from TARGET_SITE_URL (defaults to www.rakuten.co.jp).
+    // NOTE: TARGET_LOGIN_URL points to login.account.rakuten.com — a different
+    // host — and must NOT be used for site-wide discovery (mapSite, OpenAPI checks).
+    const SITE_URL = process.env.TARGET_SITE_URL || 'https://www.rakuten.co.jp';
     let baseUrl;
     try {
-      baseUrl = new URL(TARGET_LOGIN_URL).origin;
+      baseUrl = new URL(SITE_URL).origin;
     } catch {
-      log.error(`TARGET_LOGIN_URL is not a valid URL: "${TARGET_LOGIN_URL}"`);
+      log.error(`TARGET_SITE_URL is not a valid URL: "${SITE_URL}"`);
       process.exitCode = 1; return;
     }
 
@@ -229,11 +239,6 @@ if (cli.dryRun) {
      * @type {number}
      */
     let loginTimestamp = 0;
-    /**
-     * Live HTTP session from loginViaHttp (impit session, held in memory).
-     * @type {object|null}
-     */
-    let session = null;
 
     // ══════════════════════════════════════════════════════════════════
     // Phase 0: Resume Check
@@ -302,17 +307,14 @@ if (cli.dryRun) {
       log.info('Performing post-auth verification...');
       const verifyResult = await fetchPageViaHttp('https://my.rakuten.co.jp/', session, { timeout: 30000 });
 
-      // Check if result indicates login failure
+      // Check if result indicates login failure (redirected to login page).
+      // A 200 from my.rakuten.co.jp is success — don't flag on content keywords
+      // like 'ログイン'/'sign in' which appear on logged-in pages too (logout links, nav).
       const redirectUrl = (verifyResult.url || '').toLowerCase();
-      const rawHtml = (verifyResult.rawHtml || '').toLowerCase();
 
       if (
         redirectUrl.includes('login.account.rakuten.com') ||
-        redirectUrl.includes('/sso/authorize') ||
-        verifyResult.metadata?.statusCode === 302 ||
-        verifyResult.metadata?.statusCode === 303 ||
-        rawHtml.includes('ログイン') ||
-        rawHtml.includes('sign in')
+        redirectUrl.includes('/sso/authorize')
       ) {
         log.error('Post-auth verification failed — redirected to login page. Auth may have failed.');
         process.exitCode = 1; return;
@@ -394,20 +396,6 @@ if (cli.dryRun) {
       log.info('  Priority 2: Mapping site via Firecrawl...');
 
       try {
-        const apiLinks = await mapSite(baseUrl, { limit: 500, search: 'api' });
-        const apiLikeLinks = apiLinks.filter((l) => isApiLike(l.url));
-        for (const link of apiLikeLinks) {
-          if (!scrapedSet.has(link.url) && !queuedSet.has(link.url)) {
-            state.urls_queued.push(link.url);
-            queuedSet.add(link.url);
-          }
-        }
-        log.info(`    Found ${apiLikeLinks.length} API-like URLs from "api" search`);
-      } catch (mapErr) {
-        log.warn(`    mapSite search=api failed: ${mapErr.message}`);
-      }
-
-      try {
         const allLinks = await mapSite(baseUrl, { limit: 500 });
         const allApiLinks = allLinks.filter((l) => isApiLike(l.url));
         let addedCount = 0;
@@ -436,9 +424,9 @@ if (cli.dryRun) {
 
       /** @type {Array<{ url: string, authed: boolean }>} */
       const authedPages = [
-        { url: 'https://cart.rakuten.co.jp/', authed: true },
         { url: 'https://my.rakuten.co.jp/', authed: true },
-        { url: 'https://order.rakuten.co.jp/', authed: true },
+        { url: 'https://checkout.rakuten.co.jp/', authed: true },
+        { url: 'https://member.id.rakuten.co.jp/', authed: true },
       ];
 
       const allSeedPages = [...seedPages, ...authedPages];
@@ -451,8 +439,8 @@ if (cli.dryRun) {
           const seedEndpoints = extractEndpoints(seedResult);
           for (const ep of seedEndpoints) {
             // Deduplicate against existing endpoints_found
-            const existingUrls = new Set(state.endpoints_found.map((e) => e.fullUrl.toLowerCase()));
-            if (!existingUrls.has(ep.fullUrl.toLowerCase())) {
+            const existingKeys = new Set(state.endpoints_found.map((e) => (e.method.toUpperCase() + ' ' + e.path).toLowerCase()));
+            if (!existingKeys.has((ep.method.toUpperCase() + ' ' + ep.path).toLowerCase())) {
               state.endpoints_found.push(ep);
             }
           }
@@ -470,24 +458,12 @@ if (cli.dryRun) {
         }
       }
 
-      // ── Priority 4: Known Rakuten API patterns ───────────────────
+      // ── Priority 4: Known Rakuten API hosts ─────────────────────
 
-      log.info('  Priority 4: Adding known API path patterns...');
-
-      const apiPathPatterns = [
-        '/api/', '/rest/', '/v1/', '/v2/', '/service/', '/gateway/',
-        '/ichiba/', '/user/', '/cart/', '/order/', '/product/', '/search/', '/auth/',
-      ];
-
-      for (const pattern of apiPathPatterns) {
-        const url = `https://www.rakuten.co.jp${pattern}`;
-        if (!scrapedSet.has(url) && !queuedSet.has(url)) {
-          state.urls_queued.push(url);
-          queuedSet.add(url);
-        }
-      }
+      log.info('  Priority 4: Adding known API hosts...');
 
       const knownApiHosts = [
+        'https://webservice.rakuten.co.jp/explorer/api/',
         'https://login.account.rakuten.com/v2/login/start',
         'https://login.account.rakuten.com/v2/login/complete',
         'https://login.account.rakuten.com/util/gc',
@@ -496,14 +472,15 @@ if (cli.dryRun) {
         'https://rat.rakuten.co.jp/',
       ];
 
-      for (const url of knownApiHosts) {
-        if (!scrapedSet.has(url) && !queuedSet.has(url)) {
+      for (const raw of knownApiHosts) {
+        const url = normalizeUrl(raw, baseUrl);
+        if (url && !scrapedSet.has(url) && !queuedSet.has(url)) {
           state.urls_queued.push(url);
           queuedSet.add(url);
         }
       }
 
-      log.info(`    Added ${apiPathPatterns.length + knownApiHosts.length} known API URLs`);
+      log.info(`    Added ${knownApiHosts.length} known API URLs`);
 
       // ─── Save progress after seeding ─────────────────────────────
 
@@ -561,15 +538,19 @@ if (cli.dryRun) {
     function isAuthFailure(result) {
       if (!result) return false;
 
-      // Check HTTP status code for redirect
       const statusCode = result.metadata?.statusCode;
-      if (statusCode === 302 || statusCode === 303) return true;
-
-      // Check URL for login redirect
       const url = (result.url || '').toLowerCase();
-      if (url.includes('login.account.rakuten.com') || url.includes('/sso/authorize')) return true;
 
-      // Check rawHtml for Cloudflare challenge markers
+      // Auth failure = redirected (302/303) to login page.
+      // A 405 from a login API endpoint (POST-only) is NOT auth failure —
+      // it's just the wrong HTTP method. A 200 from login.account.rakuten.com
+      // is also not auth failure (we're intentionally scraping login pages).
+      if ((statusCode === 302 || statusCode === 303) &&
+          (url.includes('login.account.rakuten.com') || url.includes('/sso/authorize'))) {
+        return true;
+      }
+
+      // Cloudflare challenge page
       const rawHtml = (result.rawHtml || '').toLowerCase();
       if (
         rawHtml.includes('cf-challenge') ||
@@ -627,6 +608,26 @@ if (cli.dryRun) {
     // ─── Main loop ────────────────────────────────────────────────
 
     while (state.urls_queued.length > 0) {
+      // Safety cap: stop if queue exceeds max-queue limit
+      if (state.urls_queued.length > cli.maxQueue) {
+        log.warn(`Queue size ${state.urls_queued.length} exceeds --max-queue limit ${cli.maxQueue}. Stopping to prevent runaway.`);
+        state.status = 'paused_queue_limit';
+        saveProgress(state);
+        writeOutput();
+        printSummary();
+        process.exitCode = 0; return;
+      }
+
+      // Safety cap: stop if total scraped pages exceeds max-pages limit
+      if (state.urls_scraped.length >= cli.maxPages) {
+        log.info(`Reached --max-pages limit ${cli.maxPages}. Stopping.`);
+        state.status = 'paused_page_limit';
+        saveProgress(state);
+        writeOutput();
+        printSummary();
+        process.exitCode = 0; return;
+      }
+
       // Take next batch
       const batch = state.urls_queued.splice(0, cli.batchSize);
       state.current_batch = batch;
@@ -755,11 +756,12 @@ if (cli.dryRun) {
       state.urls_failed.push(...batchFailed);
 
       // Merge batch endpoints into state (dedup by fullUrl, case-insensitive)
-      const existingUrls = new Set(state.endpoints_found.map((e) => e.fullUrl.toLowerCase()));
+      const existingKeys = new Set(state.endpoints_found.map((e) => (e.method.toUpperCase() + ' ' + e.path).toLowerCase()));
       for (const ep of batchEndpoints) {
-        if (!existingUrls.has(ep.fullUrl.toLowerCase())) {
+        const key = (ep.method.toUpperCase() + ' ' + ep.path).toLowerCase();
+        if (!existingKeys.has(key)) {
           state.endpoints_found.push(ep);
-          existingUrls.add(ep.fullUrl.toLowerCase());
+          existingKeys.add(key);
         }
       }
 
