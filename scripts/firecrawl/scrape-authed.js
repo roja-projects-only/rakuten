@@ -1,28 +1,36 @@
 #!/usr/bin/env node
 
 /**
- * Scrape a single page using a saved Firecrawl profile (authenticated).
+ * Self-login and scrape a single URL via HTTP-based auth (no Firecrawl profile).
+ *
+ * Logs in via loginViaHttp, fetches a URL with fetchPageViaHttp, writes output JSON,
+ * and releases the session.
  *
  * Usage:
- *   node scripts/firecrawl/scrape-authed.js <url> [--formats <list>] [--screenshot] [--no-main-content] [--profile <name>] [--dry-run]
+ *   node scripts/firecrawl/scrape-authed.js <url> [--email <email>] [--password <pwd>] [--timeout <ms>] [--dry-run]
  *
  * Examples:
  *   node scripts/firecrawl/scrape-authed.js https://www.rakuten.co.jp
- *   node scripts/firecrawl/scrape-authed.js https://www.rakuten.co.jp --screenshot
- *   node scripts/firecrawl/scrape-authed.js https://www.rakuten.co.jp --formats markdown,html --screenshot
- *   node scripts/firecrawl/scrape-authed.js https://www.rakuten.co.jp --dry-run
- *   node scripts/firecrawl/scrape-authed.js https://www.rakuten.co.jp --profile my-custom-profile
+ *   node scripts/firecrawl/scrape-authed.js https://example.com --email user@example.com --password pass
+ *   node scripts/firecrawl/scrape-authed.js https://example.com --timeout 60000 --dry-run
  *
- * Default profile: FIRECRAWL_PROFILE_NAME from .env (or 'rakuten-explorer').
+ * Default credentials come from TEST_EMAIL and TEST_PASSWORD env vars.
+ * Default login URL comes from TARGET_LOGIN_URL env var.
  */
+
+// LOCAL-ONLY: not for production services.
+// @ts-check
+
+'use strict';
 
 // Load dotenv FIRST — two levels deep from root (scripts/firecrawl/)
 const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '..', '..', '.env') });
 
+const fs = require('fs');
 const { config, validateConfig } = require('../../src/firecrawl/config');
-const { scrapePage } = require('../../src/firecrawl/scrape');
-const { loadProfileMetadata } = require('../../src/firecrawl/auth');
+const { loginViaHttp, closeHttpSession } = require('../../src/firecrawl/auth');
+const { fetchPageViaHttp } = require('../../src/firecrawl/scrape');
 const { createLogger } = require('../../src/shared/logger');
 
 const log = createLogger('firecrawl:scrape-authed');
@@ -30,26 +38,23 @@ const log = createLogger('firecrawl:scrape-authed');
 // ── CLI arg parsing (no external deps) ──────────────────────────────
 const args = process.argv.slice(2);
 
-/** @type {{ url: string, formats: string[], screenshot: boolean, onlyMainContent: boolean, profileName: string|null, dryRun: boolean }} */
+/** @type {{ url: string, email: string, password: string, timeout: number, dryRun: boolean }} */
 const cli = {
   url: '',
-  formats: ['markdown'],
-  screenshot: false,
-  onlyMainContent: true,
-  profileName: null,
+  email: '',
+  password: '',
+  timeout: 30000,
   dryRun: false,
 };
 
 for (let i = 0; i < args.length; i++) {
   const arg = args[i];
-  if (arg === '--formats' && i + 1 < args.length) {
-    cli.formats = args[++i].split(',').map((s) => s.trim()).filter(Boolean);
-  } else if (arg === '--screenshot') {
-    cli.screenshot = true;
-  } else if (arg === '--no-main-content') {
-    cli.onlyMainContent = false;
-  } else if (arg === '--profile' && i + 1 < args.length) {
-    cli.profileName = args[++i];
+  if (arg === '--email' && i + 1 < args.length) {
+    cli.email = args[++i];
+  } else if (arg === '--password' && i + 1 < args.length) {
+    cli.password = args[++i];
+  } else if (arg === '--timeout' && i + 1 < args.length) {
+    cli.timeout = parseInt(args[++i], 10) || 30000;
   } else if (arg === '--dry-run') {
     cli.dryRun = true;
   } else if (arg.startsWith('--')) {
@@ -59,66 +64,142 @@ for (let i = 0; i < args.length; i++) {
   }
 }
 
+// Apply defaults from env
+cli.email = cli.email || process.env.TEST_EMAIL || '';
+cli.password = cli.password || process.env.TEST_PASSWORD || '';
+
+const targetLoginUrl = process.env.TARGET_LOGIN_URL || '';
+
+// ── Helpers ──────────────────────────────────────────────────────────
+
+/**
+ * Masks an email for display: first 2 + '...' + last 2 characters.
+ * Returns '(not set)' for falsy values.
+ *
+ * @param {string} email
+ * @returns {string}
+ */
+function maskEmail(email) {
+  if (!email) return '(not set)';
+  if (email.length <= 2) return '***';
+  return email.slice(0, 2) + '...' + email.slice(-2);
+}
+
+/**
+ * Compute a filesystem-safe slug from a URL.
+ *
+ * @param {string} urlStr
+ * @returns {string}
+ */
+function urlToSlug(urlStr) {
+  try {
+    const u = new URL(urlStr);
+    const raw = u.hostname + u.pathname;
+    const slug = raw.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+    return slug.slice(0, 50).replace(/-+$/g, '');
+  } catch {
+    return 'unknown';
+  }
+}
+
 // ── Dry-run: print config and exit before validateConfig ────────────
 if (cli.dryRun) {
-  const profileName = cli.profileName || config.profileName;
-  const profileMeta = loadProfileMetadata(profileName);
-
-  console.log('── Firecrawl Scrape (Authed) — Dry Run ───────────────');
+  console.log('── Firecrawl HTTP Scrape (Authed) — Dry Run ────────────');
   console.log(`  URL:              ${cli.url || '(none — required)'}`);
-  console.log(`  Formats:          ${cli.formats.join(', ')}`);
-  console.log(`  Screenshot:       ${cli.screenshot ? 'YES' : 'no'}`);
-  console.log(`  Only main content: ${cli.onlyMainContent ? 'YES' : 'no'}`);
-  console.log(`  Profile name:     ${profileName}`);
+  console.log(`  Email:            ${maskEmail(cli.email)}`);
+  console.log(`  Password:         ${cli.password ? '*****' : '(not set)'}`);
+  console.log(`  Auth mode:        HTTP`);
+  console.log(`  Timeout:          ${cli.timeout}ms`);
+  console.log(`  Profile name:     ${config.profileName}`);
   console.log(`  Location:         ${config.location.country} [${config.location.languages.join(', ')}]`);
-  console.log(`  Request delay:    ${config.requestDelayMs}ms`);
   console.log(`  API key set:      ${config.apiKey ? 'YES' : 'NO'}`);
-
-  if (profileMeta) {
-    console.log(`  Profile metadata: found (saved at ${profileMeta.savedAt})`);
-  } else {
-    console.log(`  Profile metadata: MISSING`);
-    console.log(`  → Run "node scripts/firecrawl/login.js" first to save a profile.`);
-    console.log(`  → Continuing without profile will do a public scrape.`);
-  }
-
+  console.log(`  Config hash:      ${config.hash}`);
   console.log('───────────────────────────────────────────────────────');
   process.exit(0);
 }
 
 // ── Main ─────────────────────────────────────────────────────────────
 (async () => {
+  let session = null;
+
   try {
     validateConfig();
 
     if (!cli.url) {
       log.error('URL is required. Usage: node scripts/firecrawl/scrape-authed.js <url>');
-      process.exit(1);
+      process.exitCode = 1; return;
     }
 
-    const result = await scrapePage(cli.url, {
-      profile: cli.profileName || true,
-      formats: cli.formats,
-      screenshot: cli.screenshot,
-      onlyMainContent: cli.onlyMainContent,
-    });
+    if (!cli.email || !cli.password) {
+      log.error('EMAIL and PASSWORD are required. Set TEST_EMAIL/TEST_PASSWORD in .env or pass --email/--password.');
+      process.exitCode = 1; return;
+    }
 
-    console.log(`\n✓ Scrape successful`);
+    if (!targetLoginUrl) {
+      log.error('TARGET_LOGIN_URL is required — set it in .env');
+      process.exitCode = 1; return;
+    }
+
+    // Login via HTTP
+    log.info('Logging in via HTTP...');
+    const loginResult = await loginViaHttp(
+      { email: cli.email, password: cli.password },
+      { targetUrl: targetLoginUrl, timeoutMs: 60000 },
+    );
+
+    if (!loginResult.success) {
+      console.error(`\n✗ Login failed: ${loginResult.error || loginResult.message}`);
+      process.exitCode = 1; return;
+    }
+
+    session = loginResult.session;
+    log.info('Login successful, fetching page...');
+
+    // Fetch the target page
+    const result = await fetchPageViaHttp(cli.url, session, { timeout: cli.timeout });
+
+    // Write output JSON
+    const ts = new Date();
+    const fileSafeTs = ts.toISOString().replace(/[:.]/g, '-');
+    const slug = urlToSlug(cli.url);
+    const filename = `scrape-http-${slug}-${fileSafeTs}.json`;
+    const dir = path.resolve(__dirname, '..', '..', 'data', 'firecrawl');
+    fs.mkdirSync(dir, { recursive: true });
+    const outputFile = path.join(dir, filename);
+
+    const output = {
+      metadata: {
+        timestamp: ts.toISOString(),
+        configHash: config.hash,
+        url: cli.url,
+        authed: true,
+        source: 'http',
+      },
+      url: result.url,
+      rawHtmlLength: result.rawHtml.length,
+      links: result.links,
+      pageMetadata: result.metadata,
+      success: result.success,
+    };
+    if (result.error) {
+      output.error = result.error;
+    }
+
+    fs.writeFileSync(outputFile, JSON.stringify(output, null, 2), 'utf-8');
+    log.info(`Scrape output saved to ${outputFile}`);
+
+    // Print summary
+    console.log(`\n✓ HTTP scrape completed`);
     console.log(`  URL:          ${result.url}`);
-    console.log(`  Output file:  ${result.outputFile || '(not saved)'}`);
-
-    if (result.markdown) {
-      const preview = result.markdown.slice(0, 200).replace(/\n/g, ' ');
-      console.log(`  Markdown:     ${preview}${result.markdown.length > 200 ? '...' : ''}`);
-      console.log(`  Markdown len: ${result.markdown.length} chars`);
-    } else {
-      console.log('  Markdown:     (none)');
-    }
-
-    console.log(`  Screenshot:   ${result.screenshot ? `saved (${result.screenshot.length} bytes)` : 'no'}`);
+    console.log(`  Status code:  ${result.metadata.statusCode}`);
+    console.log(`  Raw HTML:     ${result.rawHtml.length} bytes`);
+    console.log(`  Links:        ${result.links.length}`);
+    console.log(`  Output:       ${outputFile}`);
   } catch (err) {
-    log.error(`Scrape failed: ${err.message}`);
+    log.error(`Scrape-authed failed: ${err.message}`);
     if (err.stack) log.debug(err.stack);
-    process.exit(1);
+    process.exitCode = 1; return;
+  } finally {
+    closeHttpSession(session);
   }
-})();
+})().then(() => process.exit(process.exitCode || 0));

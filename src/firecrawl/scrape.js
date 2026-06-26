@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const { getClient } = require('./client');
 const { config } = require('./config');
-const { loadProfileMetadata } = require('./auth');
+const { extractLinksFromHtml } = require('./extract');
 const { createLogger } = require('../shared/logger');
 
 const log = createLogger('firecrawl:scrape');
@@ -31,17 +31,72 @@ function urlToSlug(urlStr) {
 }
 
 /**
+ * Fetch a page over plain HTTP (no Firecrawl) using the given session's
+ * HTTP client.  Returns a synthetic result object matching the shape that
+ * `extractEndpoints()` consumes.
+ *
+ * @param {string} url - The URL to fetch.
+ * @param {{ client: import('axios').AxiosInstance, proxiedClient?: import('axios').AxiosInstance }} session
+ *   Session object with `.client` and/or `.proxiedClient`.
+ * @param {object} [options={}] - Options.
+ * @param {number} [options.timeout=30000] - Request timeout in ms.
+ * @param {number} [options.maxRedirects=10] - Max redirects to follow.
+ * @returns {Promise<{url: string, rawHtml: string, html: null, links: Array<{url: string}>, markdown: null, metadata: {statusCode: number}, success: boolean, error?: string}>}
+ */
+async function fetchPageViaHttp(url, session, options = {}) {
+  const { timeout = 30000, maxRedirects = 10 } = options;
+
+  const client = session.proxiedClient || session.client;
+
+  const headers = {
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'ja,en;q=0.8',
+  };
+
+  try {
+    const response = await client.get(url, { timeout, headers, maxRedirects });
+
+    log.info(`HTTP fetch ${url} → ${response.status}`);
+
+    const rawHtml = typeof response.data === 'string'
+      ? response.data
+      : String(response.data ?? '');
+
+    return {
+      url: response.request?.res?.responseUrl || url,
+      rawHtml,
+      html: null,
+      links: extractLinksFromHtml(rawHtml, url),
+      markdown: null,
+      metadata: { statusCode: response.status },
+      success: response.status >= 200 && response.status < 400,
+    };
+  } catch (err) {
+    log.warn(`HTTP fetch failed for ${url}: ${err.message}`);
+    return {
+      url,
+      rawHtml: '',
+      html: null,
+      links: [],
+      markdown: null,
+      metadata: { statusCode: 0 },
+      success: false,
+      error: err.message,
+    };
+  }
+}
+
+/**
  * Scrapes a single page via Firecrawl's /v2/scrape endpoint.
  *
- * Supports public (no profile) and authenticated (saved Firecrawl profile)
- * scraping. If `profile` is a string, it is used as the profile name. If
- * `profile` is `true`, the profile name is loaded from `config.profileName`
- * via `loadProfileMetadata`. If `profile` is `null`/`false`/`undefined`, no
- * profile is used (public scrape).
+ * Supports public (no profile) and named-profile Firecrawl scraping.
+ * `profile` accepts a profile name (string) or null/undefined (public scrape).
+ * `profile === true` is no longer supported (HTTP auth pivot) and is treated
+ * as a public scrape with a warning.
  *
  * @param {string} url - The URL to scrape.
  * @param {object} [options={}] - Scrape options.
- * @param {string|boolean|null} [options.profile=null] - Profile name (string), `true` (use config), or null/undefined (public).
+ * @param {string|null} [options.profile=null] - Profile name (string) or null/undefined (public).
  * @param {string[]} [options.formats=['markdown']] - Output formats for Firecrawl.
  * @param {boolean} [options.onlyMainContent=true] - Extract only the main content of the page.
  * @param {number} [options.timeout=60000] - Timeout in milliseconds.
@@ -66,12 +121,7 @@ async function scrapePage(url, options = {}) {
   if (typeof profile === 'string') {
     profileName = profile;
   } else if (profile === true) {
-    const meta = loadProfileMetadata(config.profileName);
-    if (meta) {
-      profileName = config.profileName;
-    } else {
-      log.warn('No saved profile metadata found. Continuing as public scrape.');
-    }
+    log.warn('profile=true is no longer supported (HTTP auth pivot). Treating as public scrape.');
   }
   // else null/false/undefined => public scrape (no profile)
 
@@ -225,4 +275,4 @@ async function scrapeBatch(urls, options = {}) {
   return { ...summary, outputFile };
 }
 
-module.exports = { scrapePage, scrapeBatch };
+module.exports = { scrapePage, scrapeBatch, fetchPageViaHttp };

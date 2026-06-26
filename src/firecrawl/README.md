@@ -1,7 +1,7 @@
 # Firecrawl Local Utility
 
-Local-only Firecrawl wrapper for mapping public Rakuten endpoints and exploring
-authenticated areas via browser-based scraping. **Not for production services.**
+Local-only Firecrawl wrapper for mapping public Rakuten endpoints and
+authenticated page fetching via HTTP login. **Not for production services.**
 Used only by `scripts/firecrawl/`.
 
 For script usage and setup, see [../../docs/FIRECRAWL.md](../../docs/FIRECRAWL.md).
@@ -12,20 +12,23 @@ For script usage and setup, see [../../docs/FIRECRAWL.md](../../docs/FIRECRAWL.m
 
 The production credential checker (`src/worker/`, `src/shared/http/flow.js`)
 validates Rakuten credentials by replaying Rakuten's login API at the HTTP level
-— crafted requests with fingerprinting, RAT payloads, and PoW cres. It never
+— crafted requests with fingerprinting, RAT payloads, and PoW crs. It never
 sees the rendered page.
 
 This utility fills the gap the API checker cannot: **what does Rakuten actually
-show a logged-in user?** It uses Firecrawl's cloud browser (with the `enhanced`
-residential proxy and JP locale) to:
+show a logged-in user?** It uses two complementary approaches:
 
-1. **Map** public endpoints — discover what URLs exist on rakuten.co.jp via
-   sitemap + SERP, without needing credentials.
-2. **Log in** with real credentials through a real browser session — filling the
-   login form, handling 2FA, and persisting the authenticated profile
-   server-side for reuse.
-3. **Explore** authenticated pages — scrape the rendered content (markdown,
-   HTML, screenshots, links) of pages only visible to logged-in users.
+- **Public URL discovery** — Firecrawl's `/v2/map` endpoint (with the `enhanced`
+  residential proxy and JP locale) to discover what URLs exist on rakuten.co.jp
+  via sitemap + SERP, without needing credentials.
+- **Authenticated page fetching** — the production HTTP login flow
+  (`checkCredentials` with `deferCloseOnValid: true`) for a live impit session,
+  then plain HTTP GETs (Axios) to fetch rendered pages. No Firecrawl browser
+  interaction, no profiles, no 2FA pause.
+
+Firecrawl is now used only for public URL discovery (`mapSite` / `/v2/map`) and
+optional public page scraping. Authenticated page fetching uses the production
+HTTP login flow directly (impit), which is free and bypasses Cloudflare.
 
 This is an exploratory and debugging tool, not a production data pipeline. It
 exists to answer "what's behind the login wall?" without manually browsing.
@@ -38,29 +41,35 @@ exists to answer "what's behind the login wall?" without manually browsing.
 
 ```
                     Firecrawl Cloud API (api.firecrawl.dev)
-                              │
-                 ┌────────────┼────────────┐
-                 ▼            ▼            ▼
-            /v2/map      /v2/scrape   /v2/scrape/{id}/interact
-                 │            │            │
-                 │            │            │
-        map.js         scrape.js        auth.js
-        mapSite()      scrapePage()    loginAndPersist()
-        mapAndSave()   scrapeBatch()   loadProfileMetadata()
-                 │            │            │
-                 └────────────┴────────────┘
-                              │
-                         client.js
-                    (singleton + rate-limit Proxy)
-                              │
-                         config.js
-                    (env validation + frozen config)
-                              │
-                    scripts/firecrawl/*.js
-                    (CLI entry points)
-                              │
-                    data/firecrawl/*.json
-                    (output, gitignored)
+                               │
+                  ┌────────────┼────────────┐
+                  ▼            ▼            │
+             /v2/map      /v2/scrape        │
+                  │            │            │
+                  │            │            │
+             map.js        scrape.js      auth.js
+             mapSite()     scrapePage()   loginViaHttp()
+             mapAndSave()  scrapeBatch()  closeHttpSession()
+                                       │  writeLoginOutput()
+                                  fetchPageViaHttp()
+                                  extractLinksFromHtml()
+                  │            │            │
+                  └────────────┴────────────┘
+                               │
+                          client.js
+                     (singleton + rate-limit Proxy)
+                               │
+                     ┌─────────┴─────────┐
+                     ▼                   ▼
+                config.js        Production impit HTTP
+            (env validation)   (checkCredentials, Axios)
+                               (bypasses Firecrawl)
+                               │
+                     scripts/firecrawl/*.js
+                     (CLI entry points)
+                               │
+                     data/firecrawl/*.json
+                     (output, gitignored)
 ```
 
 ### Module responsibilities
@@ -70,41 +79,51 @@ exists to answer "what's behind the login wall?" without manually browsing.
 | `config.js` | Reads `FIRECRAWL_*` env vars, validates `FIRECRAWL_API_KEY` exists, applies defaults (proxy=enhanced, country=JP, languages=ja, delay=10000ms), computes a config hash for output metadata. Exports a frozen config object. | `config`, `validateConfig()` |
 | `client.js` | Creates a singleton Firecrawl SDK client (`new Firecrawl({ apiKey })`). Wraps it in a Proxy that adds a post-call delay (`FIRECRAWL_REQUEST_DELAY_MS`) after every async method to respect rate limits. Excludes `Object.prototype` methods from wrapping. | `getClient()`, `withRateLimit()` |
 | `map.js` | Wraps Firecrawl's `/v2/map` endpoint. Discovers URLs from sitemap + SERP with JP locale. Saves results to `data/firecrawl/map-{ts}.json` with embedded metadata. | `mapSite()`, `mapAndSave()` |
-| `auth.js` | Browser-based login flow: scrapes the login page (no formats — saves credits), extracts `scrapeId`, fills credentials via `interact` (natural language prompt or raw Playwright code), detects/handles 2FA via stdin, waits for redirect, calls `stopInteraction` to persist the profile server-side. Stores local profile metadata in `data/firecrawl/profiles/`. | `loginAndPersist()`, `loadProfileMetadata()` |
-| `scrape.js` | Wraps Firecrawl's `/v2/scrape` endpoint. Supports public (no profile) and authenticated (saved profile) scraping. Optional formats: markdown, html, rawHtml, links, images, screenshot. Batch mode iterates URLs with configurable concurrency. | `scrapePage()`, `scrapeBatch()` |
+| `auth.js` | **HTTP-based login** via production `checkCredentials` (impit session reuse). Logs in with credentials, returns a live impit session for downstream HTTP fetches. Closes sessions safely. Writes lightweight login result logs. No Firecrawl interaction. | `loginViaHttp()`, `closeHttpSession()`, `writeLoginOutput()` |
+| `scrape.js` | Two paths: (1) Firecrawl `/v2/scrape` via `scrapePage()` / `scrapeBatch()` — supports public and named-profile scraping with optional formats (markdown, html, rawHtml, links, images, screenshot). (2) HTTP fetch via `fetchPageViaHttp(url, session, options)` — fetches a page over HTTP using a logged-in impit session; returns synthetic result compatible with `extractEndpoints`. Note: `profile===true` is no longer supported. | `scrapePage()`, `scrapeBatch()`, `fetchPageViaHttp()` |
+| `extract.js` | HTML-to-endpoint extraction: parses page links and raw HTML for API-like URLs, deduplicates, groups by category, and formats as Markdown. | `extractEndpoints()`, `extractLinksFromHtml(html, baseUrl)`, `groupEndpoints()`, `formatEndpointsMd()` |
 
 ### Authentication flow (auth.js)
 
 ```
-1. scrape(loginUrl, { profile: { name, saveChanges: true }, formats: [] })
-   → creates browser session, returns scrapeId
-2. interact(scrapeId, { prompt: "Fill email + password, click submit" })
-   → fills login form in the cloud browser
-3. interact(scrapeId, { prompt: "Check if 2FA appeared" })
-   → if 2FA detected: prompt user for code via stdin
-   → interact(scrapeId, { prompt: "Fill 2FA code, submit" })
-4. interact(scrapeId, { prompt: "Wait for redirect, report URL" })
-   → confirms login succeeded
-5. stopInteraction(scrapeId)
-   → saves profile server-side (cookies, localStorage)
-6. saveProfileMetadata() → local JSON in data/firecrawl/profiles/
+1. loginViaHttp({ email, password }, { targetUrl })
+   → calls checkCredentials(…, { deferCloseOnValid: true })
+   → POW_SKIP_CONNECTION_TEST=1 set internally for local PoW
+   → returns { success: true, session: impitSession } on VALID
+   → returns { success: false, status, message } on failure
+
+2. Fetch authed pages with session.client.get(url)
+   or via fetchPageViaHttp(url, session, { timeout, maxRedirects })
+   → returns synthetic { url, rawHtml, links, metadata: { statusCode }, success }
+
+3. closeHttpSession(session)
+   → wraps sessionManager.closeSession()
+   → safe to call on null/undefined
 ```
 
-The saved profile is then reused by `scrape.js` with `saveChanges: false`
-(read-only) for authenticated scraping — no re-login needed until the ~15 min
-session expires.
+The session is **in-memory only** — there is no persisted profile, no server-side
+session storage, no ~15 min expiry. Each script invocation re-logins. The session
+object contains the Axios client (and optional proxied client) from
+`checkCredentials`, ready for direct HTTP requests.
+
+- Credentials are passed through `checkCredentials`, never logged.
+- `POW_SKIP_CONNECTION_TEST=1` is set automatically so the PoW service does not
+  attempt a network connectivity test (not needed for local/dev use).
+- The Firecrawl rate-limit Proxy does **not** apply to HTTP auth calls — they
+  bypass Firecrawl entirely.
 
 ### Rate limiting
 
-`client.js` wraps every SDK method in a Proxy that awaits a configurable delay
-(`FIRECRAWL_REQUEST_DELAY_MS`, default 10s) after each call completes. This
-applies to `map`, `scrape`, `interact`, and `stopInteraction` uniformly.
+The Firecrawl rate-limit Proxy in `client.js` wraps only Firecrawl SDK methods
+(`map`, `scrape`). HTTP auth and page fetching (`loginViaHttp`,
+`fetchPageViaHttp`) bypass Firecrawl entirely and are not subject to the delay.
 
-For the login flow (4-5 sequential interact calls), the 10s delay adds 40-50s
-of overhead. Set `FIRECRAWL_REQUEST_DELAY_MS=0` for login to avoid this:
+For Firecrawl SDK calls, `FIRECRAWL_REQUEST_DELAY_MS` (default 10s) applies
+after each call completes:
 
 ```bash
-FIRECRAWL_REQUEST_DELAY_MS=0 node scripts/firecrawl/login.js
+FIRECRAWL_REQUEST_DELAY_MS=0 node scripts/firecrawl/login.js  # no effect on HTTP auth
+FIRECRAWL_REQUEST_DELAY_MS=0 node scripts/firecrawl/map-public.js  # speeds up map
 ```
 
 ### Output format
@@ -117,7 +136,7 @@ Every output file embeds a `metadata` object for reproducibility:
     "timestamp": "2026-06-26T12:00:00.000Z",
     "configHash": "f255bc29",
     "profileName": "rakuten-explorer",
-    "script": "map-public",
+    "script": "login-http",
     "baseUrl": "https://www.rakuten.co.jp",
     "linkCount": 247
   },
@@ -151,29 +170,28 @@ a silent one.
 
 ## Security notes
 
-- Credentials (email/password) are **never logged** at any level. The
-  `buildLoginPrompt()` function in `auth.js` constructs the interact prompt with
-  plaintext credentials but is never called inside a log statement.
+- Credentials (email/password) are **never logged** at any level. They are
+  passed directly to `checkCredentials`, which handles them internally.
 - Error messages from the SDK are logged at `debug` level only (not `error`),
   to prevent credential leakage if the SDK includes request bodies in errors.
 - `--dry-run` masks the password as `*****` and the email as first 2 + last 2
   characters.
-- Profile metadata stored locally (`data/firecrawl/profiles/`) contains only
-  `profileName`, `scrapeId`, `loginUrl`, `savedAt`, `configHash` — no
-  credentials. The actual session state (cookies, localStorage) lives on
-  Firecrawl's servers.
+- The login result saved to `data/firecrawl/login-{timestamp}.json` contains
+  only `status` and `success` — no credentials, no session tokens.
+- Sessions are in-memory only and closed on every code path (success, error, or
+  finally block).
 
 ---
 
 ## Limitations
 
-- **Session expiry:** Profiles expire ~15 minutes after login. Re-run
-  `login.js` to refresh.
-- **2FA:** Firecrawl cannot solve 2FA automatically. The login script prompts
-  for the code via stdin with a 5-minute timeout.
-- **Captchas:** No native captcha solving. The `enhanced` proxy avoids most,
-  but hCaptcha/Turnstile may still trigger.
-- **Rate limits:** Default 10s delay between calls. Adjust via
-  `FIRECRAWL_REQUEST_DELAY_MS`.
+- **No persisted sessions:** Each script invocation re-logins. The session is
+  in-memory only and closed after the script completes.
+- **Captchas:** The HTTP flow uses the same fingerprinting / PoW as the
+  production checker, which handles most Cloudflare challenges. Firecrawl's
+  `enhanced` proxy avoids most captchas for public scraping.
+- **Rate limits:** Default 10s delay between Firecrawl SDK calls. Adjust via
+  `FIRECRAWL_REQUEST_DELAY_MS`. HTTP auth/fetch calls are not rate-limited by
+  this utility.
 - **ToS:** Authenticated scraping may violate Rakuten's Terms of Service. Use
   responsibly.
