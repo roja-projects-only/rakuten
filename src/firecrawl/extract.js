@@ -19,6 +19,20 @@ const API_SUBDOMAIN_PATTERNS = ['api.', 'gateway.', 'webservice.', 'token.', 'ch
 /** Hosts that match an API subdomain pattern but are NOT API endpoints (exclusion list). */
 const API_HOST_EXCLUSIONS = ['webservice.faq.rakuten.net'];
 
+/**
+ * Per-host path requirements for hosts where not all paths are APIs.
+ * If a host is listed here, the pathname must start with one of the
+ * listed prefixes (in addition to the host matching an API subdomain).
+ * Hosts NOT listed here use the default stage-1 behavior (any path passes).
+ *
+ * Example: webservice.rakuten.co.jp has /explorer/api/ (real APIs),
+ * /documentation/ (API docs), /guide/ (guides), /app/ (app pages).
+ * Only /explorer/api/ paths are actual API endpoints.
+ */
+const HOST_PATH_REQUIREMENTS = {
+  'webservice.rakuten.co.jp': ['/explorer/api/'],
+};
+
 /** File extensions that are definitely not API endpoints */
 const STATIC_EXT_RE = /\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2)([?#]|$)/i;
 
@@ -54,10 +68,10 @@ const GROUP_ORDER = [
  * Check if a URL looks like an API endpoint using a two-stage filter.
  *
  * Stage 1 (host): If the hostname starts with a known API subdomain
- *   (api., gateway., webservice., token., challenger.), the URL passes
- *   regardless of path structure. This catches real Rakuten APIs like
- *   webservice.rakuten.co.jp/explorer/api/IchibaItem/Search whose path
- *   does NOT start with /api/.
+ *   (api., gateway., webservice., token., challenger.), the URL passes.
+ *   Some hosts have a per-host path requirement (HOST_PATH_REQUIREMENTS)
+ *   to reject non-API paths on API-capable hosts (e.g. webservice.rakuten.co.jp
+ *   requires /explorer/api/ — rejects /documentation/, /guide/, /app/).
  *
  * Stage 2 (path): If the host is NOT API-known, require the pathname
  *   to START WITH an API prefix (/api/, /rest/, /v1/, /v2/, /v3/,
@@ -65,6 +79,7 @@ const GROUP_ORDER = [
  *   search.rakuten.co.jp/search/mall/api/551169 false positives).
  *
  * Static asset extensions (.js, .css, .png, etc.) are always excluded.
+ * Known non-API hosts (e.g. webservice.faq.rakuten.net) are always rejected.
  *
  * @param {string} url - The URL to inspect.
  * @returns {boolean} `true` if the URL appears to be an API endpoint.
@@ -81,9 +96,16 @@ function isApiLike(url) {
     // Exclude known non-API hosts that match subdomain patterns (e.g. FAQ help centers)
     if (API_HOST_EXCLUSIONS.includes(hostname)) return false;
 
-    // Stage 1: API-known host passes regardless of path
+    // Stage 1: API-known host passes (with optional per-host path refinement)
     for (const pattern of API_SUBDOMAIN_PATTERNS) {
-      if (hostname.startsWith(pattern) || hostname.includes('.' + pattern)) return true;
+      if (hostname.startsWith(pattern) || hostname.includes('.' + pattern)) {
+        // Per-host path requirement: if this host has a stricter rule, enforce it
+        const requiredPrefixes = HOST_PATH_REQUIREMENTS[hostname];
+        if (requiredPrefixes) {
+          return requiredPrefixes.some((p) => pathname.startsWith(p));
+        }
+        return true;
+      }
     }
 
     // Stage 2: non-API-known host must be a Rakuten domain AND have an API-like path prefix
