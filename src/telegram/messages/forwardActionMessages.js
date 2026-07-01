@@ -16,6 +16,9 @@
 
 const { escapeV2, codeV2, boldV2 } = require('./helpers');
 
+// Import target address from addressManager for single source of truth
+const { TARGET_ADDRESS } = require('../../shared/capture/addressManager');
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Address-change reason variations (Japanese)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -31,10 +34,10 @@ const ADDRESS_CHANGE_REASONS = [
   '配送先を勤務先に変更いたします。',
 ];
 
-// Hardcoded destination for the address-change form
-const DESTINATION_POSTAL_CODE = '306-0608';
-const DESTINATION_ADDRESS = '茨城県坂東市幸神平1 C棟06室 PHHNPKPF';
-const DESTINATION_PHONE = '09085588190';
+// Destination from addressManager (single source of truth)
+const DESTINATION_POSTAL_CODE = TARGET_ADDRESS.postalCode;
+const DESTINATION_ADDRESS = `茨城県${TARGET_ADDRESS.city}${TARGET_ADDRESS.street}`;
+const DESTINATION_PHONE = `${TARGET_ADDRESS.telFirst}-${TARGET_ADDRESS.telSecond}-${TARGET_ADDRESS.telLast}`;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Parser
